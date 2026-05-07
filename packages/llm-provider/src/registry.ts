@@ -8,6 +8,7 @@ import {
   getOAuthToken,
   OPENAI_INFERENCE_BASE_URL,
   transformAnthropicOAuthBody,
+  transformAnthropicOAuthResponse,
   transformCodexOAuthBody,
 } from "@openacme/auth";
 
@@ -150,7 +151,11 @@ const providerFactories: Record<
           ? { ...init, body: newBody as RequestInit["body"] }
           : init;
         if (DEBUG) console.error("[openacme] →", url, rewritten?.body);
-        return fetch(url as string | URL, { ...rewritten, headers });
+        const res = await fetch(url as string | URL, { ...rewritten, headers });
+        // OAuth-only: strip the mcp_<PascalCase> prefix from tool names in the
+        // response, otherwise the SDK's tool-call dispatcher fails with
+        // AI_NoSuchToolError because the local registry holds unprefixed names.
+        return isOAuth ? transformAnthropicOAuthResponse(res) : res;
       },
     });
     return provider(config.model);

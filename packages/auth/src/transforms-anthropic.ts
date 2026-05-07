@@ -43,6 +43,91 @@ function prefixName(name: string): string {
   return `${TOOL_PREFIX}${name.charAt(0).toUpperCase()}${name.slice(1)}`;
 }
 
+/** Inverse of {@link prefixName}: strip "mcp_" and restore lowercase leading char. */
+function unprefixName(name: string): string {
+  return `${name.charAt(0).toLowerCase()}${name.slice(1)}`;
+}
+
+/**
+ * Rewrite `"name": "mcp_<X>"` back to its original form in raw response text.
+ * Operates on text so it works for both non-streaming JSON bodies and
+ * individual SSE event chunks. Without this, the SDK receives prefixed names
+ * in `tool_use` blocks and 400s with `AI_NoSuchToolError` because the local
+ * registry holds unprefixed names.
+ */
+export function stripToolPrefix(text: string): string {
+  return text.replace(
+    /"name"\s*:\s*"mcp_([^"]+)"/g,
+    (_match, name: string) => `"name": "${unprefixName(name)}"`,
+  );
+}
+
+/**
+ * Wrap an Anthropic OAuth fetch response so tool names in the body are
+ * unprefixed before the SDK parses them. Streaming SSE bodies are split on
+ * `\n\n` event boundaries so a `mcp_*` token is never bisected; non-OK
+ * responses pass through with raw-byte prefix stripping (so error JSON is
+ * still readable for the SDK's error path).
+ */
+export function transformAnthropicOAuthResponse(response: Response): Response {
+  if (!response.body) return response;
+
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+
+  if (!response.ok) {
+    const reader = response.body.getReader();
+    const passthrough = new ReadableStream({
+      async pull(controller) {
+        const { done, value } = await reader.read();
+        if (done) {
+          controller.close();
+          return;
+        }
+        const text = decoder.decode(value, { stream: true });
+        controller.enqueue(encoder.encode(stripToolPrefix(text)));
+      },
+    });
+    return new Response(passthrough, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    });
+  }
+
+  const reader = response.body.getReader();
+  let buffer = "";
+  const stream = new ReadableStream({
+    async pull(controller) {
+      for (;;) {
+        const boundary = buffer.indexOf("\n\n");
+        if (boundary !== -1) {
+          const completeEvent = buffer.slice(0, boundary + 2);
+          buffer = buffer.slice(boundary + 2);
+          controller.enqueue(encoder.encode(stripToolPrefix(completeEvent)));
+          return;
+        }
+        const { done, value } = await reader.read();
+        if (done) {
+          if (buffer) {
+            controller.enqueue(encoder.encode(stripToolPrefix(buffer)));
+            buffer = "";
+          }
+          controller.close();
+          return;
+        }
+        buffer += decoder.decode(value, { stream: true });
+      }
+    },
+  });
+
+  return new Response(stream, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
+}
+
 function extractFirstUserMessageText(messages: Message[]): string {
   const userMsg = messages.find((m) => m.role === "user");
   if (!userMsg) return "";

@@ -31,13 +31,15 @@
   ],
   "scripts": {
     "build": "tsc --build",
-    "check-types": "tsc --noEmit",
-    "dev": "tsc --watch"
+    "check-types": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+    "dev": "tsc --watch",
+    "test": "vitest run"
   },
   "dependencies": {},
   "devDependencies": {
     "@repo/typescript-config": "workspace:*",
     "@types/node": "^22.15.3",
-    "typescript": "5.9.2"
+    "typescript": "5.9.2",
+    "vitest": "^2.1.0"
   }
 }

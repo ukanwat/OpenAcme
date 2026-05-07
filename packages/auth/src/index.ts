@@ -27,7 +27,11 @@ export {
 
 export { openBrowser, looksHeadless } from "./browser.js";
 
-export { transformAnthropicOAuthBody } from "./transforms-anthropic.js";
+export {
+  transformAnthropicOAuthBody,
+  transformAnthropicOAuthResponse,
+  stripToolPrefix,
+} from "./transforms-anthropic.js";
 export { transformCodexOAuthBody, normalizeCodexModel } from "./transforms-openai.js";
 
 export {

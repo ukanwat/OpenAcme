@@ -7,6 +7,7 @@
     "lint": "turbo run lint",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
     "check-types": "turbo run check-types",
+    "test": "turbo run test",
     "agent": "pnpm --filter @openacme/cli cli",
     "agent:start": "pnpm --filter @openacme/cli cli start",
     "agent:setup": "pnpm --filter @openacme/cli cli setup",
