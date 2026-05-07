@@ -1,9 +1,7 @@
 name: Release
 
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
 
 concurrency:
   group: release-${{ github.ref }}
@@ -16,7 +14,6 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
-      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -57,4 +54,3 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_CONFIG_PROVENANCE: "true"
