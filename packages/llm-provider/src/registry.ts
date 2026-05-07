@@ -7,6 +7,7 @@ import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import {
   getOAuthToken,
   OPENAI_INFERENCE_BASE_URL,
+  readAuthFile,
   transformAnthropicOAuthBody,
   transformAnthropicOAuthResponse,
   transformCodexOAuthBody,
@@ -40,6 +41,29 @@ function anthropicSupports1mContext(model: string): boolean {
   return major > 4 || (major === 4 && effMinor >= 6);
 }
 
+/**
+ * Resolve whether a request should take the OAuth path. Honors the explicit
+ * `config.auth === "oauth"` first; otherwise silently falls back to OAuth
+ * when no API key is configured AND a token exists in auth.json. This makes
+ * `openacme login` "just work" without requiring the agent definition to
+ * carry an explicit `auth: oauth` field — which is the common case for
+ * agents created via the web UI before it grew an auth-mode picker.
+ */
+function shouldUseOAuth(
+  provider: "openai" | "anthropic",
+  config: ModelConfig,
+  envVar: string,
+  dataDir: string,
+): boolean {
+  if (config.auth === "oauth") return true;
+  if (config.apiKey || process.env[envVar]) return false;
+  try {
+    return !!readAuthFile(dataDir)[provider]?.access_token;
+  } catch {
+    return false;
+  }
+}
+
 /** Strip temperature/top_p/top_k from an Anthropic body (Claude 4.7+ contract). */
 function stripAnthropicSamplingParams(body: unknown): unknown {
   if (typeof body !== "string") return body;
@@ -66,8 +90,8 @@ const providerFactories: Record<
   (config: ModelConfig) => LanguageModel
 > = {
   openai: (config) => {
-    if (config.auth === "oauth") {
-      const dataDir = resolveDataDir();
+    const dataDir = resolveDataDir();
+    if (shouldUseOAuth("openai", config, "OPENAI_API_KEY", dataDir)) {
       const provider = createOpenAI({
         apiKey: "oauth-placeholder", // overridden by fetch
         baseURL: OPENAI_INFERENCE_BASE_URL,
@@ -104,8 +128,8 @@ const providerFactories: Record<
 
   anthropic: (config) => {
     const stripSampling = anthropicForbidsSamplingParams(config.model);
-    const isOAuth = config.auth === "oauth";
-    const dataDir = isOAuth ? resolveDataDir() : "";
+    const dataDir = resolveDataDir();
+    const isOAuth = shouldUseOAuth("anthropic", config, "ANTHROPIC_API_KEY", dataDir);
     const provider = createAnthropic({
       apiKey: isOAuth
         ? "oauth-placeholder"

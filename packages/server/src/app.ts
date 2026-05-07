@@ -4,6 +4,7 @@ import { streamSSE } from "hono/streaming";
 import { AgentManager } from "./agent-manager.js";
 import { AgentDefinitionSchema, type Config, type AgentDefinition } from "@openacme/config";
 import { listProviders } from "@openacme/llm-provider";
+import { readAuthFile } from "@openacme/auth";
 import { registry as toolRegistry } from "@openacme/tools";
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
@@ -240,28 +241,39 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
   // ── API Keys ──
   const envPath = path.join(config.dataDir, ".env");
 
-  // Get which API keys are configured (not the actual values)
+  // Get which API keys are configured (not the actual values).
+  // A provider is "configured" if either an API key is present (.env or
+  // process.env) OR there is an OAuth entry in auth.json (subscription auth).
   app.get("/api/keys", (c) => {
     const providers = listProviders();
     const configured: Record<string, boolean> = {};
+    const sources: Record<string, "api_key" | "oauth"> = {};
 
-    // Parse .env file using dotenv
     let envVars: Record<string, string> = {};
     if (fs.existsSync(envPath)) {
       const envContent = fs.readFileSync(envPath, "utf-8");
       envVars = dotenv.parse(envContent);
     }
 
+    const authFile = readAuthFile(config.dataDir);
+
     for (const provider of providers) {
-      if (provider.envVar) {
-        // Check if set in process.env or in .env file
-        const inEnv = !!process.env[provider.envVar];
-        const inFile = !!envVars[provider.envVar];
-        configured[provider.id] = inEnv || inFile;
-      }
+      const hasApiKey =
+        !!provider.envVar &&
+        (!!process.env[provider.envVar] || !!envVars[provider.envVar]);
+
+      const hasOAuth =
+        (provider.id === "openai" || provider.id === "anthropic") &&
+        !!authFile[provider.id]?.access_token;
+
+      configured[provider.id] = hasApiKey || hasOAuth;
+      // Prefer api_key source if both are present (matches registry resolution
+      // when config.auth is unset/api_key).
+      if (hasApiKey) sources[provider.id] = "api_key";
+      else if (hasOAuth) sources[provider.id] = "oauth";
     }
 
-    return c.json({ configured, envPath });
+    return c.json({ configured, sources, envPath });
   });
 
   // Save an API key to the .env file

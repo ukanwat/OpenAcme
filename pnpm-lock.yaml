@@ -353,6 +353,9 @@ importers:
       '@openacme/agent-core':
         specifier: workspace:*
         version: link:../agent-core
+      '@openacme/auth':
+        specifier: workspace:*
+        version: link:../auth
       '@openacme/config':
         specifier: workspace:*
         version: link:../config
