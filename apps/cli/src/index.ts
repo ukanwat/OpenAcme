@@ -1,10 +1,20 @@
 #!/usr/bin/env node
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import figlet from "figlet";
 import gradient from "gradient-string";
 import { setupCommand } from "./commands/setup.js";
 import { startCommand } from "./commands/start.js";
 import { chatCommand } from "./commands/chat.js";
+
+const pkg = JSON.parse(
+  readFileSync(
+    resolve(dirname(fileURLToPath(import.meta.url)), "..", "package.json"),
+    "utf8",
+  ),
+) as { version: string };
 
 const coolGradient = gradient(["#0ea5e9", "#7dd3fc", "#ffffff"]);
 
@@ -19,7 +29,7 @@ const program = new Command();
 program
   .name("openacme")
   .description("OpenAcme — AI agent platform with multi-LLM support")
-  .version("0.0.1");
+  .version(pkg.version);
 
 // Default action: start the server (when no command given)
 program
