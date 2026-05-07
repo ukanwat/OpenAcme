@@ -10,9 +10,14 @@
     "agent": "pnpm --filter @openacme/cli cli",
     "agent:start": "pnpm --filter @openacme/cli cli start",
     "agent:setup": "pnpm --filter @openacme/cli cli setup",
-    "agent:chat": "pnpm --filter @openacme/cli cli chat"
+    "agent:chat": "pnpm --filter @openacme/cli cli chat",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "release": "turbo run build --filter='@openacme/*' && changeset publish"
   },
   "devDependencies": {
+    "@changesets/changelog-github": "^0.7.0",
+    "@changesets/cli": "^2.31.0",
     "@playwright/cli": "^0.1.12",
     "@playwright/test": "^1.59.1",
     "prettier": "^3.7.4",
