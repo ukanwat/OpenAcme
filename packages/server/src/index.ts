@@ -7,6 +7,11 @@ import { createApp } from "./app.js";
  */
 export async function startServer(dataDirOverride?: string) {
   const config = loadConfig(dataDirOverride);
+  // Make the resolved data dir discoverable by the LLM provider's OAuth path
+  // without invasive signature changes.
+  if (!process.env["OPENACME_DATA_DIR"]) {
+    process.env["OPENACME_DATA_DIR"] = config.dataDir;
+  }
   const { app, manager } = await createApp(config);
 
   // Initialize MCP connections for all agents

@@ -14,6 +14,13 @@ export const ProviderSchema = z.enum([
 export type Provider = z.infer<typeof ProviderSchema>;
 
 /**
+ * Authentication mode for a model: API key (default) or OAuth subscription.
+ * OAuth tokens live in `~/.openacme/auth.json` — see `@openacme/auth`.
+ */
+export const AuthModeSchema = z.enum(["api_key", "oauth"]);
+export type AuthMode = z.infer<typeof AuthModeSchema>;
+
+/**
  * Model configuration — which provider and model to use.
  */
 export const ModelConfigSchema = z.object({
@@ -21,6 +28,7 @@ export const ModelConfigSchema = z.object({
   model: z.string().default("anthropic/claude-sonnet-4-20250514"),
   baseUrl: z.string().optional(),
   apiKey: z.string().optional(),
+  auth: AuthModeSchema.default("api_key"),
   headers: z.record(z.string()).optional(),
 });
 export type ModelConfig = z.infer<typeof ModelConfigSchema>;

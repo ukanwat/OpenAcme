@@ -1,1 +1,1 @@
-{"root":["./src/index.ts","./src/commands/chat.ts","./src/commands/setup.ts","./src/commands/start.ts"],"version":"5.9.2"}
+{"root":["./src/index.ts","./src/commands/chat.ts","./src/commands/login.ts","./src/commands/logout.ts","./src/commands/setup.ts","./src/commands/start.ts"],"version":"5.9.2"}

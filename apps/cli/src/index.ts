@@ -5,9 +5,12 @@ import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import figlet from "figlet";
 import gradient from "gradient-string";
+import { resolveDataDir } from "@openacme/config";
 import { setupCommand } from "./commands/setup.js";
 import { startCommand } from "./commands/start.js";
 import { chatCommand } from "./commands/chat.js";
+import { loginCommand } from "./commands/login.js";
+import { logoutCommand } from "./commands/logout.js";
 
 const pkg = JSON.parse(
   readFileSync(
@@ -65,5 +68,31 @@ program
   .option("-a, --agent <id>", "Agent ID to chat with (default: first agent)")
   .option("-d, --data-dir <path>", "Data directory (default: ~/.openacme)")
   .action(chatCommand);
+
+program
+  .command("login")
+  .description("Sign in with ChatGPT or Claude (use your subscription instead of API credits)")
+  .option("-p, --provider <name>", "openai or anthropic")
+  .option("--device", "Use device-code flow (works on SSH/headless)")
+  .option("-d, --data-dir <path>", "Data directory (default: ~/.openacme)")
+  .action(loginCommand);
+
+program
+  .command("logout")
+  .description("Sign out — remove stored OAuth tokens")
+  .option("-p, --provider <name>", "openai or anthropic")
+  .option("-d, --data-dir <path>", "Data directory (default: ~/.openacme)")
+  .action(logoutCommand);
+
+// Resolve the data dir once so the LLM provider's OAuth path can find auth.json
+// without us threading the path through every call site.
+const initialDataDir = resolveDataDir(
+  process.argv.includes("--data-dir")
+    ? process.argv[process.argv.indexOf("--data-dir") + 1]
+    : process.argv.includes("-d")
+      ? process.argv[process.argv.indexOf("-d") + 1]
+      : undefined,
+);
+process.env["OPENACME_DATA_DIR"] = initialDataDir;
 
 program.parse();

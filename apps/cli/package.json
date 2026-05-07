@@ -32,6 +32,7 @@
   },
   "dependencies": {
     "@clack/prompts": "^1.3.0",
+    "@openacme/auth": "workspace:*",
     "@openacme/config": "workspace:*",
     "@openacme/llm-provider": "workspace:*",
     "@openacme/server": "workspace:*",
