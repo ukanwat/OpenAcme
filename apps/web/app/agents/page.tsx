@@ -1,7 +1,38 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
+import { Bot, Plus, Trash2, Save, Check } from "lucide-react";
+import { toast } from "sonner";
 import { Sidebar } from "../components/Sidebar";
+import { API_BASE } from "../lib/api";
+import type { ToolInfo, ProviderInfo, ModelPreset } from "../lib/types";
+import { Button } from "@/app/components/ui/button";
+import { Input } from "@/app/components/ui/input";
+import { Textarea } from "@/app/components/ui/textarea";
+import { Label } from "@/app/components/ui/label";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from "@/app/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/app/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/app/components/ui/select";
+import { cn } from "@/app/lib/utils";
 
 interface Agent {
   id: string;
@@ -12,168 +43,229 @@ interface Agent {
   skills: string[];
 }
 
-// Use same origin when served from the API server, otherwise fallback to localhost
-const API_BASE = typeof window !== "undefined" && window.location.port === "3210"
-  ? ""
-  : (process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:3210");
+interface FormState {
+  id: string;
+  name: string;
+  provider: string;
+  model: string;
+  persona: string;
+  tools: string[];
+}
 
-const PROVIDERS = ["openrouter", "openai", "anthropic", "google", "ollama"];
-const DEFAULT_TOOLS = [
-  "shell",
-  "read_file",
-  "write_file",
-  "list_files",
-  "search_files",
-  "session_search",
-];
+const CUSTOM_MODEL = "__custom__";
+
+const FALLBACK_FORM: FormState = {
+  id: "",
+  name: "",
+  provider: "openrouter",
+  model: "",
+  persona: "You are a helpful AI assistant.",
+  tools: [],
+};
 
 export default function AgentsPage() {
   const [agents, setAgents] = useState<Agent[]>([]);
+  const [tools, setTools] = useState<ToolInfo[]>([]);
+  const [providers, setProviders] = useState<ProviderInfo[]>([]);
+
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
   const [isCreating, setIsCreating] = useState(false);
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
-  // Form state
-  const [formData, setFormData] = useState({
-    id: "",
-    name: "",
-    provider: "openrouter",
-    model: "anthropic/claude-sonnet-4-20250514",
-    persona: "You are a helpful AI assistant.",
-    tools: DEFAULT_TOOLS.join(", "),
-  });
+  const [formData, setFormData] = useState<FormState>(FALLBACK_FORM);
+  const [isCustomModel, setIsCustomModel] = useState(false);
 
+  // ── Loaders ──────────────────────────────────────────────────────────────
   useEffect(() => {
-    loadAgents();
+    const ctrl = new AbortController();
+    void loadAll(ctrl.signal);
+    return () => ctrl.abort();
   }, []);
 
-  const loadAgents = async () => {
+  const loadAll = async (signal?: AbortSignal) => {
     try {
-      const res = await fetch(`${API_BASE}/api/agents`);
-      if (res.ok) {
-        const data = await res.json();
-        setAgents(data);
+      const [agentsRes, toolsRes, providersRes] = await Promise.all([
+        fetch(`${API_BASE}/api/agents`, { signal }),
+        fetch(`${API_BASE}/api/tools`, { signal }),
+        fetch(`${API_BASE}/api/models`, { signal }),
+      ]);
+      if (agentsRes.ok) setAgents(await agentsRes.json());
+      if (toolsRes.ok) {
+        const data = (await toolsRes.json()) as { tools: ToolInfo[] };
+        setTools(data.tools ?? []);
       }
-    } catch {
-      setError("Failed to load agents. Is the server running?");
+      if (providersRes.ok) {
+        setProviders((await providersRes.json()) as ProviderInfo[]);
+      }
+    } catch (e) {
+      if ((e as Error).name === "AbortError") return;
+      toast.error("Failed to load page data", {
+        description: "Is the server running?",
+      });
     }
   };
 
+  const reloadAgents = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/agents`);
+      if (res.ok) setAgents(await res.json());
+    } catch {
+      /* handled by mount loader's toast */
+    }
+  };
+
+  // ── Derived ──────────────────────────────────────────────────────────────
+  const currentProvider = useMemo(
+    () => providers.find((p) => p.id === formData.provider),
+    [providers, formData.provider]
+  );
+
+  const presets: ModelPreset[] = currentProvider?.models ?? [];
+
+  const toolsByToolset = useMemo(() => {
+    const map = new Map<string, ToolInfo[]>();
+    for (const t of tools) {
+      const list = map.get(t.toolset) ?? [];
+      list.push(t);
+      map.set(t.toolset, list);
+    }
+    return [...map.entries()].sort(([a], [b]) => a.localeCompare(b));
+  }, [tools]);
+
+  // ── Form helpers ─────────────────────────────────────────────────────────
+  const onProviderChange = (provider: string) => {
+    const newPresets =
+      providers.find((p) => p.id === provider)?.models ?? [];
+    const stillValid = newPresets.some((m) => m.id === formData.model);
+    setFormData((prev) => ({
+      ...prev,
+      provider,
+      model: stillValid ? prev.model : newPresets[0]?.id ?? "",
+    }));
+    setIsCustomModel(stillValid ? isCustomModel : newPresets.length === 0);
+  };
+
+  const onModelSelect = (value: string) => {
+    if (value === CUSTOM_MODEL) {
+      setFormData((prev) => ({ ...prev, model: "" }));
+      setIsCustomModel(true);
+    } else {
+      setFormData((prev) => ({ ...prev, model: value }));
+      setIsCustomModel(false);
+    }
+  };
+
+  const toggleTool = (name: string) => {
+    setFormData((prev) => ({
+      ...prev,
+      tools: prev.tools.includes(name)
+        ? prev.tools.filter((t) => t !== name)
+        : [...prev.tools, name],
+    }));
+  };
+
+  const buildAgentBody = () => ({
+    name: formData.name,
+    model: { provider: formData.provider, model: formData.model },
+    persona: formData.persona,
+    tools: formData.tools,
+  });
+
+  // ── CRUD ─────────────────────────────────────────────────────────────────
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError("");
-    setSuccess("");
-
     try {
       const res = await fetch(`${API_BASE}/api/agents`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           id: formData.id || formData.name.toLowerCase().replace(/\s+/g, "-"),
-          name: formData.name,
-          model: {
-            provider: formData.provider,
-            model: formData.model,
-          },
-          persona: formData.persona,
-          tools: formData.tools.split(",").map((t) => t.trim()).filter(Boolean),
+          ...buildAgentBody(),
         }),
       });
-
       if (res.ok) {
-        setSuccess("Agent created successfully!");
+        toast.success("Agent created");
         setIsCreating(false);
         resetForm();
-        loadAgents();
+        reloadAgents();
       } else {
         const data = await res.json();
-        setError(data.error || "Failed to create agent");
+        toast.error("Failed to create agent", { description: data.error });
       }
     } catch {
-      setError("Failed to create agent");
+      toast.error("Failed to create agent");
     }
   };
 
   const handleUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedAgent) return;
-    setError("");
-    setSuccess("");
-
     try {
       const res = await fetch(`${API_BASE}/api/agents/${selectedAgent.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: formData.name,
-          model: {
-            provider: formData.provider,
-            model: formData.model,
-          },
-          persona: formData.persona,
-          tools: formData.tools.split(",").map((t) => t.trim()).filter(Boolean),
-        }),
+        body: JSON.stringify(buildAgentBody()),
       });
-
       if (res.ok) {
-        setSuccess("Agent updated successfully!");
-        loadAgents();
+        const updated = (await res.json()) as Agent;
+        setSelectedAgent(updated);
+        toast.success("Agent updated");
+        reloadAgents();
       } else {
         const data = await res.json();
-        setError(data.error || "Failed to update agent");
+        toast.error("Failed to update agent", { description: data.error });
       }
     } catch {
-      setError("Failed to update agent");
+      toast.error("Failed to update agent");
     }
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm(`Delete agent "${id}"?`)) return;
-    setError("");
-
+    setConfirmDelete(null);
     try {
-      const res = await fetch(`${API_BASE}/api/agents/${id}`, {
-        method: "DELETE",
-      });
-
+      const res = await fetch(`${API_BASE}/api/agents/${id}`, { method: "DELETE" });
       if (res.ok) {
-        setSuccess("Agent deleted");
+        toast.success("Agent deleted");
         if (selectedAgent?.id === id) {
           setSelectedAgent(null);
           resetForm();
         }
-        loadAgents();
+        reloadAgents();
       } else {
-        setError("Failed to delete agent");
+        toast.error("Failed to delete agent");
       }
     } catch {
-      setError("Failed to delete agent");
+      toast.error("Failed to delete agent");
     }
   };
 
   const selectAgent = (agent: Agent) => {
+    const provPresets =
+      providers.find((p) => p.id === agent.model.provider)?.models ?? [];
+    const matchedPreset = provPresets.some((m) => m.id === agent.model.model);
     setSelectedAgent(agent);
     setIsCreating(false);
+    setIsCustomModel(!matchedPreset);
     setFormData({
       id: agent.id,
       name: agent.name,
       provider: agent.model.provider,
       model: agent.model.model,
       persona: agent.persona,
-      tools: agent.tools.join(", "),
+      tools: agent.tools,
     });
   };
 
   const resetForm = () => {
+    const defaultProvider = providers[0]?.id ?? FALLBACK_FORM.provider;
+    const defaultModel =
+      providers.find((p) => p.id === defaultProvider)?.models[0]?.id ?? "";
     setFormData({
-      id: "",
-      name: "",
-      provider: "openrouter",
-      model: "anthropic/claude-sonnet-4-20250514",
-      persona: "You are a helpful AI assistant.",
-      tools: DEFAULT_TOOLS.join(", "),
+      ...FALLBACK_FORM,
+      provider: defaultProvider,
+      model: defaultModel,
     });
+    setIsCustomModel(defaultModel === "");
   };
 
   const startCreate = () => {
@@ -182,122 +274,87 @@ export default function AgentsPage() {
     resetForm();
   };
 
+  const showForm = selectedAgent || isCreating;
+
+  // Select value: when in custom mode show CUSTOM_MODEL, otherwise the model id.
+  // Empty string would disable the trigger's "selected" state, so guard against it.
+  const modelSelectValue = isCustomModel
+    ? CUSTOM_MODEL
+    : formData.model || (presets[0]?.id ?? CUSTOM_MODEL);
+
   return (
-    <div className="app-layout">
+    <div className="flex h-screen w-screen overflow-hidden">
       <Sidebar />
 
-      <main className="main-content">
-        <header className="chat-header">
-          <div className="chat-header-title">
-            <h2>Agent Management</h2>
+      <main className="flex flex-1 flex-col overflow-hidden">
+        <header className="flex h-14 shrink-0 items-center justify-between border-b px-6">
+          <div>
+            <h2 className="text-sm font-semibold">Agents</h2>
+            <p className="text-xs text-muted-foreground">
+              {agents.length} configured
+            </p>
           </div>
+          <Button size="sm" onClick={startCreate}>
+            <Plus className="size-4" />
+            New agent
+          </Button>
         </header>
 
-        <div className="settings-container" style={{ maxWidth: "900px" }}>
-          {/* Status messages */}
-          {error && (
-            <div
-              style={{
-                padding: "12px 16px",
-                background: "rgba(239,68,68,0.1)",
-                border: "1px solid rgba(239,68,68,0.2)",
-                borderRadius: "8px",
-                color: "#ef4444",
-                marginBottom: "16px",
-              }}
-            >
-              {error}
-            </div>
-          )}
-          {success && (
-            <div
-              style={{
-                padding: "12px 16px",
-                background: "rgba(34,197,94,0.1)",
-                border: "1px solid rgba(34,197,94,0.2)",
-                borderRadius: "8px",
-                color: "#22c55e",
-                marginBottom: "16px",
-              }}
-            >
-              {success}
-            </div>
-          )}
-
-          <div style={{ display: "flex", gap: "24px" }}>
-            {/* Agent List */}
-            <div style={{ width: "280px", flexShrink: 0 }}>
-              <div className="settings-group">
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    marginBottom: "12px",
-                  }}
+        <div className="flex flex-1 overflow-hidden">
+          <aside className="w-72 shrink-0 overflow-y-auto border-r p-4">
+            <div className="space-y-2">
+              {agents.length === 0 && (
+                <p className="text-sm text-muted-foreground px-1">
+                  No agents yet. Create your first one.
+                </p>
+              )}
+              {agents.map((agent) => (
+                <button
+                  key={agent.id}
+                  onClick={() => selectAgent(agent)}
+                  className={cn(
+                    "flex w-full items-start gap-3 rounded-lg border p-3 text-left transition-colors",
+                    selectedAgent?.id === agent.id
+                      ? "border-primary/50 bg-primary/5"
+                      : "border-border hover:bg-accent/40"
+                  )}
                 >
-                  <h3 style={{ margin: 0 }}>Agents</h3>
-                  <button className="new-chat-btn" onClick={startCreate} style={{ width: "auto", padding: "6px 12px" }}>
-                    + New
-                  </button>
-                </div>
-                {agents.map((agent) => (
-                  <div
-                    key={agent.id}
-                    onClick={() => selectAgent(agent)}
-                    style={{
-                      padding: "12px",
-                      background:
-                        selectedAgent?.id === agent.id
-                          ? "var(--accent-glow)"
-                          : "var(--bg-tertiary)",
-                      borderRadius: "8px",
-                      marginBottom: "8px",
-                      cursor: "pointer",
-                      border:
-                        selectedAgent?.id === agent.id
-                          ? "1px solid var(--accent-primary)"
-                          : "1px solid var(--border)",
-                    }}
-                  >
-                    <div
-                      style={{
-                        fontWeight: 500,
-                        color: "var(--text-primary)",
-                        marginBottom: "4px",
-                      }}
-                    >
-                      {agent.name}
-                    </div>
-                    <div
-                      style={{
-                        fontSize: "12px",
-                        color: "var(--text-secondary)",
-                      }}
-                    >
+                  <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+                    <Bot className="size-4" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium">{agent.name}</div>
+                    <div className="truncate font-mono text-[11px] text-muted-foreground">
                       {agent.model.provider}/{agent.model.model.split("/").pop()}
                     </div>
                   </div>
-                ))}
-                {agents.length === 0 && (
-                  <div style={{ color: "var(--text-muted)", fontSize: "13px" }}>
-                    No agents configured
-                  </div>
-                )}
-              </div>
+                </button>
+              ))}
             </div>
+          </aside>
 
-            {/* Agent Form */}
-            <div style={{ flex: 1 }}>
-              {(selectedAgent || isCreating) && (
-                <form onSubmit={isCreating ? handleCreate : handleUpdate}>
-                  <div className="settings-group">
-                    <h3>{isCreating ? "Create Agent" : "Edit Agent"}</h3>
-
-                    <div className="settings-field">
-                      <label>Name</label>
-                      <input
-                        type="text"
+          <div className="flex-1 overflow-y-auto p-6">
+            {showForm ? (
+              <form
+                onSubmit={isCreating ? handleCreate : handleUpdate}
+                className="mx-auto max-w-2xl"
+              >
+                <Card>
+                  <CardHeader>
+                    <CardTitle>
+                      {isCreating ? "Create agent" : "Edit agent"}
+                    </CardTitle>
+                    <CardDescription>
+                      {isCreating
+                        ? "Configure a new agent's model, persona, and tools."
+                        : "Update this agent's configuration."}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-5">
+                    <div className="grid gap-2">
+                      <Label htmlFor="name">Name</Label>
+                      <Input
+                        id="name"
                         value={formData.name}
                         onChange={(e) =>
                           setFormData({ ...formData, name: e.target.value })
@@ -308,127 +365,271 @@ export default function AgentsPage() {
                     </div>
 
                     {isCreating && (
-                      <div className="settings-field">
-                        <label>ID (optional, auto-generated from name)</label>
-                        <input
-                          type="text"
+                      <div className="grid gap-2">
+                        <Label htmlFor="id">ID (optional)</Label>
+                        <Input
+                          id="id"
                           value={formData.id}
                           onChange={(e) =>
                             setFormData({ ...formData, id: e.target.value })
                           }
-                          placeholder="my-agent"
+                          placeholder="my-agent (auto-generated from name)"
                         />
                       </div>
                     )}
 
-                    <div className="settings-field">
-                      <label>Provider</label>
-                      <select
-                        value={formData.provider}
-                        onChange={(e) =>
-                          setFormData({ ...formData, provider: e.target.value })
-                        }
-                      >
-                        {PROVIDERS.map((p) => (
-                          <option key={p} value={p}>
-                            {p}
-                          </option>
-                        ))}
-                      </select>
+                    <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+                      <div className="grid gap-2">
+                        <Label htmlFor="provider">Provider</Label>
+                        <Select
+                          value={formData.provider}
+                          onValueChange={onProviderChange}
+                        >
+                          <SelectTrigger id="provider">
+                            <SelectValue placeholder="Select a provider" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {providers.map((p) => (
+                              <SelectItem key={p.id} value={p.id}>
+                                {p.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div className="grid gap-2">
+                        <Label htmlFor="model">Model</Label>
+                        {presets.length > 0 ? (
+                          <Select
+                            value={modelSelectValue}
+                            onValueChange={onModelSelect}
+                          >
+                            <SelectTrigger id="model">
+                              <SelectValue placeholder="Select a model" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {presets.map((m) => (
+                                <SelectItem key={m.id} value={m.id}>
+                                  <div className="flex flex-col items-start">
+                                    <span>{m.label}</span>
+                                    {m.hint && (
+                                      <span className="text-[10px] text-muted-foreground">
+                                        {m.hint}
+                                      </span>
+                                    )}
+                                  </div>
+                                </SelectItem>
+                              ))}
+                              <SelectItem value={CUSTOM_MODEL}>
+                                <span className="text-muted-foreground">
+                                  Custom model id…
+                                </span>
+                              </SelectItem>
+                            </SelectContent>
+                          </Select>
+                        ) : null}
+                        {(isCustomModel || presets.length === 0) && (
+                          <Input
+                            id={presets.length === 0 ? "model" : "model-custom"}
+                            value={formData.model}
+                            onChange={(e) =>
+                              setFormData({ ...formData, model: e.target.value })
+                            }
+                            placeholder="Enter model id"
+                            className="font-mono text-xs"
+                            required
+                          />
+                        )}
+                      </div>
                     </div>
 
-                    <div className="settings-field">
-                      <label>Model</label>
-                      <input
-                        type="text"
-                        value={formData.model}
-                        onChange={(e) =>
-                          setFormData({ ...formData, model: e.target.value })
-                        }
-                        placeholder="anthropic/claude-sonnet-4-20250514"
-                        required
-                      />
-                    </div>
-
-                    <div className="settings-field">
-                      <label>Persona</label>
-                      <textarea
+                    <div className="grid gap-2">
+                      <Label htmlFor="persona">Persona</Label>
+                      <Textarea
+                        id="persona"
                         value={formData.persona}
                         onChange={(e) =>
                           setFormData({ ...formData, persona: e.target.value })
                         }
                         placeholder="You are a helpful AI assistant."
-                        rows={3}
-                        style={{
-                          width: "100%",
-                          padding: "10px 14px",
-                          borderRadius: "8px",
-                          background: "var(--bg-tertiary)",
-                          border: "1px solid var(--border)",
-                          color: "var(--text-primary)",
-                          fontFamily: "var(--font-sans)",
-                          fontSize: "14px",
-                          resize: "vertical",
-                        }}
+                        rows={4}
                       />
                     </div>
 
-                    <div className="settings-field">
-                      <label>Tools (comma-separated)</label>
-                      <input
-                        type="text"
-                        value={formData.tools}
-                        onChange={(e) =>
-                          setFormData({ ...formData, tools: e.target.value })
-                        }
-                        placeholder="shell, read_file, write_file"
-                      />
-                    </div>
+                    <ToolPicker
+                      groups={toolsByToolset}
+                      selected={formData.tools}
+                      onToggle={toggleTool}
+                    />
+                  </CardContent>
+                </Card>
 
-                    <div style={{ display: "flex", gap: "12px", marginTop: "16px" }}>
-                      <button
-                        type="submit"
-                        className="new-chat-btn"
-                        style={{ width: "auto", padding: "10px 20px" }}
+                <div className="mt-4 flex items-center justify-between">
+                  <div>
+                    {selectedAgent && (
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => setConfirmDelete(selectedAgent.id)}
                       >
-                        {isCreating ? "Create Agent" : "Save Changes"}
-                      </button>
-                      {selectedAgent && (
-                        <button
-                          type="button"
-                          onClick={() => handleDelete(selectedAgent.id)}
-                          style={{
-                            padding: "10px 20px",
-                            borderRadius: "8px",
-                            background: "rgba(239,68,68,0.1)",
-                            border: "1px solid rgba(239,68,68,0.3)",
-                            color: "#ef4444",
-                            cursor: "pointer",
-                          }}
-                        >
-                          Delete
-                        </button>
-                      )}
-                    </div>
+                        <Trash2 className="size-4" />
+                        Delete
+                      </Button>
+                    )}
                   </div>
-                </form>
-              )}
-
-              {!selectedAgent && !isCreating && (
-                <div
-                  style={{
-                    padding: "48px",
-                    textAlign: "center",
-                    color: "var(--text-muted)",
-                  }}
-                >
-                  <p>Select an agent to edit or create a new one</p>
+                  <Button type="submit">
+                    <Save className="size-4" />
+                    {isCreating ? "Create" : "Save changes"}
+                  </Button>
                 </div>
-              )}
-            </div>
+              </form>
+            ) : (
+              <div className="flex h-full items-center justify-center">
+                <div className="text-center">
+                  <div className="mx-auto mb-3 flex size-12 items-center justify-center rounded-2xl bg-muted">
+                    <Bot className="size-5 text-muted-foreground" />
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    Select an agent to edit, or create a new one.
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </main>
+
+      <Dialog
+        open={confirmDelete !== null}
+        onOpenChange={(open) => !open && setConfirmDelete(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete agent?</DialogTitle>
+            <DialogDescription>
+              This will permanently delete the agent <span className="font-mono">{confirmDelete}</span>. This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setConfirmDelete(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => confirmDelete && handleDelete(confirmDelete)}
+            >
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
+  );
+}
+
+// ─── Tool picker ─────────────────────────────────────────────────────────────
+function ToolPicker({
+  groups,
+  selected,
+  onToggle,
+}: {
+  groups: [string, ToolInfo[]][];
+  selected: string[];
+  onToggle: (name: string) => void;
+}) {
+  if (groups.length === 0) {
+    return (
+      <div className="grid gap-2">
+        <Label>Tools</Label>
+        <p className="text-sm text-muted-foreground">
+          No tools registered on the server yet.
+        </p>
+      </div>
+    );
+  }
+  const total = groups.reduce((acc, [, list]) => acc + list.length, 0);
+  return (
+    <div className="grid gap-3">
+      <div className="flex items-center justify-between">
+        <Label>Tools</Label>
+        <span className="text-[11px] text-muted-foreground">
+          {selected.length} of {total} selected
+        </span>
+      </div>
+      <div className="space-y-4">
+        {groups.map(([toolset, list]) => {
+          const selectedInGroup = list.filter((t) =>
+            selected.includes(t.name)
+          ).length;
+          return (
+            <div key={toolset}>
+              <div className="mb-2 flex items-center gap-2">
+                <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+                  {toolset}
+                </span>
+                {selectedInGroup > 0 && (
+                  <span className="text-[10px] text-muted-foreground">
+                    ({selectedInGroup}/{list.length})
+                  </span>
+                )}
+              </div>
+              <div className="grid grid-cols-1 gap-1.5 md:grid-cols-2">
+                {list.map((tool) => (
+                  <ToolToggle
+                    key={tool.name}
+                    tool={tool}
+                    checked={selected.includes(tool.name)}
+                    onClick={() => onToggle(tool.name)}
+                  />
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ToolToggle({
+  tool,
+  checked,
+  onClick,
+}: {
+  tool: ToolInfo;
+  checked: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={checked}
+      className={cn(
+        "flex items-start gap-2.5 rounded-md border p-2.5 text-left transition-colors",
+        checked
+          ? "border-primary/50 bg-primary/5"
+          : "border-border hover:bg-accent/40"
+      )}
+    >
+      <div
+        className={cn(
+          "mt-0.5 flex size-4 shrink-0 items-center justify-center rounded border transition-colors",
+          checked
+            ? "border-primary bg-primary text-primary-foreground"
+            : "border-border bg-background"
+        )}
+      >
+        {checked && <Check className="size-3" strokeWidth={3} />}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="truncate font-mono text-xs font-medium">{tool.name}</div>
+        <div className="line-clamp-2 text-[11px] text-muted-foreground">
+          {tool.description}
+        </div>
+      </div>
+    </button>
   );
 }

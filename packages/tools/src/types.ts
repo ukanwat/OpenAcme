@@ -44,3 +44,14 @@ export interface ToolDefinition {
     parameters: Record<string, unknown>;
   };
 }
+
+/**
+ * Serializable tool description suitable for sending to UI clients.
+ * Mirrors the subset of {@link ToolEntry} fields that are safe to expose.
+ */
+export interface ToolInfo {
+  name: string;
+  description: string;
+  toolset: string;
+  emoji?: string;
+}

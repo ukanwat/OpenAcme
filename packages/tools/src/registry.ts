@@ -1,5 +1,5 @@
 import { zodToJsonSchema } from "zod-to-json-schema";
-import type { ToolEntry, ToolDefinition } from "./types.js";
+import type { ToolEntry, ToolDefinition, ToolInfo } from "./types.js";
 
 /**
  * Singleton tool registry — mirrors Hermes tools/registry.py ToolRegistry.
@@ -53,6 +53,25 @@ export class ToolRegistry {
    */
   getAllToolNames(): string[] {
     return [...this._tools.keys()].sort();
+  }
+
+  /**
+   * Serializable description of every registered tool — used by API clients
+   * (web UI, etc.) to render tool pickers without leaking handler internals.
+   */
+  getInfo(): ToolInfo[] {
+    return [...this._tools.values()]
+      .map((entry) => ({
+        name: entry.name,
+        description: entry.description,
+        toolset: entry.toolset,
+        emoji: entry.emoji,
+      }))
+      .sort((a, b) =>
+        a.toolset === b.toolset
+          ? a.name.localeCompare(b.name)
+          : a.toolset.localeCompare(b.toolset)
+      );
   }
 
   /**

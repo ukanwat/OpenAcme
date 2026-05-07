@@ -1,7 +1,32 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
+import { BookOpen, Plus, Search, Trash2, Loader2 } from "lucide-react";
+import { toast } from "sonner";
 import { Sidebar } from "../components/Sidebar";
+import { API_BASE } from "../lib/api";
+import { Button } from "@/app/components/ui/button";
+import { Input } from "@/app/components/ui/input";
+import { Textarea } from "@/app/components/ui/textarea";
+import { Label } from "@/app/components/ui/label";
+import { Badge } from "@/app/components/ui/badge";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from "@/app/components/ui/card";
+import { Skeleton } from "@/app/components/ui/skeleton";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/app/components/ui/dialog";
+import { cn } from "@/app/lib/utils";
 
 interface SkillIndexEntry {
   name: string;
@@ -17,20 +42,12 @@ interface Skill {
   relatedSkills: string[];
 }
 
-// Use same origin when served from the API server, otherwise fallback to localhost
-const API_BASE = typeof window !== "undefined" && window.location.port === "3210"
-  ? ""
-  : (process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:3210");
-
 export default function SkillsPage() {
   const [skills, setSkills] = useState<SkillIndexEntry[]>([]);
   const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
   const [loading, setLoading] = useState(true);
 
-  // Create form state
   const [isCreating, setIsCreating] = useState(false);
   const [formData, setFormData] = useState({
     name: "",
@@ -39,23 +56,27 @@ export default function SkillsPage() {
     body: "",
   });
   const [saving, setSaving] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
   useEffect(() => {
-    loadSkills();
+    const ctrl = new AbortController();
+    loadSkills(ctrl.signal);
+    return () => ctrl.abort();
   }, []);
 
-  const loadSkills = async () => {
+  const loadSkills = async (signal?: AbortSignal) => {
     try {
       setLoading(true);
-      const res = await fetch(`${API_BASE}/api/skills`);
+      const res = await fetch(`${API_BASE}/api/skills`, { signal });
       if (res.ok) {
         const data = await res.json();
         setSkills(data);
       } else {
-        setError("Failed to load skills");
+        toast.error("Failed to load skills");
       }
-    } catch {
-      setError("Failed to load skills. Is the server running?");
+    } catch (e) {
+      if ((e as Error).name === "AbortError") return;
+      toast.error("Failed to load skills", { description: "Is the server running?" });
     } finally {
       setLoading(false);
     }
@@ -66,23 +87,21 @@ export default function SkillsPage() {
     try {
       const res = await fetch(`${API_BASE}/api/skills/${encodeURIComponent(name)}`);
       if (res.ok) {
-        const data = await res.json();
-        setSelectedSkill(data);
+        setSelectedSkill(await res.json());
+      } else {
+        toast.error("Failed to load skill details");
       }
     } catch {
-      setError("Failed to load skill details");
+      toast.error("Failed to load skill details");
     }
   };
 
   const createSkill = async () => {
     if (!formData.name.trim() || !formData.description.trim()) {
-      setError("Name and description are required");
+      toast.error("Name and description are required");
       return;
     }
-
     setSaving(true);
-    setError("");
-
     try {
       const res = await fetch(`${API_BASE}/api/skills`, {
         method: "POST",
@@ -90,46 +109,41 @@ export default function SkillsPage() {
         body: JSON.stringify({
           name: formData.name.trim(),
           description: formData.description.trim(),
-          tags: formData.tags.split(",").map(t => t.trim()).filter(Boolean),
+          tags: formData.tags.split(",").map((t) => t.trim()).filter(Boolean),
           body: formData.body,
         }),
       });
-
       if (res.ok) {
-        setSuccess("Skill created successfully!");
+        toast.success("Skill created");
         setFormData({ name: "", description: "", tags: "", body: "" });
         setIsCreating(false);
         loadSkills();
-        setTimeout(() => setSuccess(""), 3000);
       } else {
         const data = await res.json();
-        setError(data.error || "Failed to create skill");
+        toast.error("Failed to create skill", { description: data.error });
       }
     } catch {
-      setError("Failed to create skill");
+      toast.error("Failed to create skill");
     } finally {
       setSaving(false);
     }
   };
 
   const deleteSkill = async (name: string) => {
-    if (!confirm(`Delete skill "${name}"?`)) return;
-
+    setConfirmDelete(null);
     try {
       const res = await fetch(`${API_BASE}/api/skills/${encodeURIComponent(name)}`, {
         method: "DELETE",
       });
-
       if (res.ok) {
-        setSuccess("Skill deleted");
+        toast.success("Skill deleted");
         setSelectedSkill(null);
         loadSkills();
-        setTimeout(() => setSuccess(""), 3000);
       } else {
-        setError("Failed to delete skill");
+        toast.error("Failed to delete skill");
       }
     } catch {
-      setError("Failed to delete skill");
+      toast.error("Failed to delete skill");
     }
   };
 
@@ -151,325 +165,263 @@ export default function SkillsPage() {
   }, [skills]);
 
   return (
-    <div className="app-layout">
+    <div className="flex h-screen w-screen overflow-hidden">
       <Sidebar />
 
-      <main className="main-content">
-        <header className="chat-header">
-          <div className="chat-header-title">
-            <h2>Skills</h2>
-            <span className="chat-header-model">{skills.length} skills</span>
+      <main className="flex flex-1 flex-col overflow-hidden">
+        <header className="flex h-14 shrink-0 items-center justify-between border-b px-6">
+          <div>
+            <h2 className="text-sm font-semibold">Skills</h2>
+            <p className="text-xs text-muted-foreground">{skills.length} skills</p>
           </div>
-        </header>
-
-        {/* Status messages */}
-        {error && (
-          <div style={{ padding: "12px 24px", background: "rgba(239,68,68,0.1)", color: "#ef4444", fontSize: "13px" }}>
-            {error}
-            <button onClick={() => setError("")} style={{ marginLeft: "12px", background: "none", border: "none", color: "#ef4444", cursor: "pointer" }}>Dismiss</button>
-          </div>
-        )}
-        {success && (
-          <div style={{ padding: "12px 24px", background: "rgba(34,197,94,0.1)", color: "#22c55e", fontSize: "13px" }}>
-            {success}
-          </div>
-        )}
-
-        <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
-          {/* Skills List */}
-          <div
-            style={{
-              width: "360px",
-              borderRight: "1px solid var(--border)",
-              display: "flex",
-              flexDirection: "column",
-              overflow: "hidden",
+          <Button
+            size="sm"
+            onClick={() => {
+              setIsCreating(true);
+              setSelectedSkill(null);
             }}
           >
-            {/* Header with Create button */}
-            <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ fontWeight: 500, color: "var(--text-primary)" }}>Skills</span>
-              <button
-                onClick={() => { setIsCreating(true); setSelectedSkill(null); }}
-                style={{
-                  padding: "6px 12px",
-                  borderRadius: "6px",
-                  background: "var(--accent-primary)",
-                  border: "none",
-                  color: "white",
-                  fontSize: "13px",
-                  cursor: "pointer",
-                }}
-              >
-                + New
-              </button>
-            </div>
+            <Plus className="size-4" />
+            New skill
+          </Button>
+        </header>
 
-            {/* Search */}
-            <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)" }}>
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search skills..."
-                style={{
-                  width: "100%",
-                  padding: "8px 12px",
-                  borderRadius: "6px",
-                  background: "var(--bg-tertiary)",
-                  border: "1px solid var(--border)",
-                  color: "var(--text-primary)",
-                  fontSize: "13px",
-                }}
-              />
-            </div>
-
-            {/* Tags */}
-            {allTags.length > 0 && (
-              <div style={{ padding: "8px 16px", borderBottom: "1px solid var(--border)", display: "flex", flexWrap: "wrap", gap: "4px" }}>
-                {allTags.slice(0, 10).map((tag) => (
-                  <button
-                    key={tag}
-                    onClick={() => setSearchQuery(tag)}
-                    style={{
-                      padding: "2px 8px",
-                      borderRadius: "100px",
-                      background: searchQuery === tag ? "var(--accent-glow)" : "var(--bg-tertiary)",
-                      border: searchQuery === tag ? "1px solid var(--accent-primary)" : "1px solid var(--border)",
-                      color: searchQuery === tag ? "var(--accent-secondary)" : "var(--text-muted)",
-                      fontSize: "11px",
-                      cursor: "pointer",
-                    }}
-                  >
-                    {tag}
-                  </button>
-                ))}
+        <div className="flex flex-1 overflow-hidden">
+          <aside className="flex w-80 shrink-0 flex-col border-r">
+            <div className="space-y-3 border-b p-4">
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search skills…"
+                  className="pl-8"
+                />
               </div>
-            )}
+              {allTags.length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  {allTags.slice(0, 8).map((tag) => (
+                    <button
+                      key={tag}
+                      onClick={() =>
+                        setSearchQuery((s) => (s === tag ? "" : tag))
+                      }
+                    >
+                      <Badge
+                        variant={searchQuery === tag ? "default" : "secondary"}
+                        className="cursor-pointer"
+                      >
+                        {tag}
+                      </Badge>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
 
-            {/* Skills List */}
-            <div style={{ flex: 1, overflow: "auto", padding: "8px" }}>
+            <div className="flex-1 overflow-y-auto p-2">
               {loading && (
-                <div style={{ padding: "24px", textAlign: "center", color: "var(--text-muted)" }}>Loading...</div>
+                <div className="space-y-2 p-2">
+                  {Array.from({ length: 4 }).map((_, i) => (
+                    <Skeleton key={i} className="h-14 w-full bg-muted" />
+                  ))}
+                </div>
               )}
 
               {!loading && filteredSkills.length === 0 && (
-                <div style={{ padding: "24px", textAlign: "center", color: "var(--text-muted)" }}>
-                  {skills.length === 0 ? "No skills yet. Create one!" : "No matching skills"}
+                <div className="px-3 py-8 text-center text-sm text-muted-foreground">
+                  {skills.length === 0
+                    ? "No skills yet. Create one to get started."
+                    : "No matching skills."}
                 </div>
               )}
 
-              {filteredSkills.map((skill) => (
-                <div
-                  key={skill.name}
-                  onClick={() => loadSkillDetail(skill.name)}
-                  style={{
-                    padding: "10px 12px",
-                    background: selectedSkill?.name === skill.name ? "var(--accent-glow)" : "var(--bg-tertiary)",
-                    borderRadius: "6px",
-                    marginBottom: "6px",
-                    cursor: "pointer",
-                    border: selectedSkill?.name === skill.name ? "1px solid var(--accent-primary)" : "1px solid var(--border)",
-                  }}
-                >
-                  <div style={{ fontWeight: 500, color: "var(--text-primary)", marginBottom: "2px", fontSize: "14px" }}>
-                    {skill.name}
-                  </div>
-                  <div style={{ fontSize: "12px", color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {skill.description}
-                  </div>
-                </div>
-              ))}
+              {!loading &&
+                filteredSkills.map((skill) => (
+                  <button
+                    key={skill.name}
+                    onClick={() => loadSkillDetail(skill.name)}
+                    className={cn(
+                      "flex w-full flex-col items-start gap-1 rounded-md px-3 py-2 text-left transition-colors",
+                      selectedSkill?.name === skill.name
+                        ? "bg-accent text-accent-foreground"
+                        : "hover:bg-accent/50"
+                    )}
+                  >
+                    <span className="truncate text-sm font-medium w-full">
+                      {skill.name}
+                    </span>
+                    <span className="line-clamp-2 text-xs text-muted-foreground">
+                      {skill.description}
+                    </span>
+                  </button>
+                ))}
             </div>
-          </div>
+          </aside>
 
-          {/* Skill Detail / Create Form */}
-          <div style={{ flex: 1, overflow: "auto", padding: "24px" }}>
+          <div className="flex-1 overflow-y-auto p-6">
             {isCreating ? (
-              <div style={{ maxWidth: "700px" }}>
-                <h3 style={{ fontSize: "20px", fontWeight: 600, marginBottom: "20px", color: "var(--text-primary)" }}>
-                  Create New Skill
-                </h3>
-
-                <div style={{ marginBottom: "16px" }}>
-                  <label style={{ display: "block", marginBottom: "6px", fontSize: "13px", color: "var(--text-secondary)" }}>Name</label>
-                  <input
-                    type="text"
-                    value={formData.name}
-                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                    placeholder="my-skill"
-                    style={{ width: "100%", padding: "10px 12px", borderRadius: "6px", background: "var(--bg-tertiary)", border: "1px solid var(--border)", color: "var(--text-primary)", fontSize: "14px" }}
-                  />
-                </div>
-
-                <div style={{ marginBottom: "16px" }}>
-                  <label style={{ display: "block", marginBottom: "6px", fontSize: "13px", color: "var(--text-secondary)" }}>Description</label>
-                  <input
-                    type="text"
-                    value={formData.description}
-                    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                    placeholder="A brief description of what this skill does"
-                    style={{ width: "100%", padding: "10px 12px", borderRadius: "6px", background: "var(--bg-tertiary)", border: "1px solid var(--border)", color: "var(--text-primary)", fontSize: "14px" }}
-                  />
-                </div>
-
-                <div style={{ marginBottom: "16px" }}>
-                  <label style={{ display: "block", marginBottom: "6px", fontSize: "13px", color: "var(--text-secondary)" }}>Tags (comma-separated)</label>
-                  <input
-                    type="text"
-                    value={formData.tags}
-                    onChange={(e) => setFormData({ ...formData, tags: e.target.value })}
-                    placeholder="automation, testing, deployment"
-                    style={{ width: "100%", padding: "10px 12px", borderRadius: "6px", background: "var(--bg-tertiary)", border: "1px solid var(--border)", color: "var(--text-primary)", fontSize: "14px" }}
-                  />
-                </div>
-
-                <div style={{ marginBottom: "20px" }}>
-                  <label style={{ display: "block", marginBottom: "6px", fontSize: "13px", color: "var(--text-secondary)" }}>Instructions (Markdown)</label>
-                  <textarea
-                    value={formData.body}
-                    onChange={(e) => setFormData({ ...formData, body: e.target.value })}
-                    placeholder="Detailed instructions for the agent..."
-                    rows={12}
-                    style={{ width: "100%", padding: "12px", borderRadius: "6px", background: "var(--bg-tertiary)", border: "1px solid var(--border)", color: "var(--text-primary)", fontSize: "14px", fontFamily: "var(--font-mono)", resize: "vertical" }}
-                  />
-                </div>
-
-                <div style={{ display: "flex", gap: "12px" }}>
-                  <button
-                    onClick={createSkill}
-                    disabled={saving}
-                    style={{
-                      padding: "10px 20px",
-                      borderRadius: "6px",
-                      background: "var(--accent-primary)",
-                      border: "none",
-                      color: "white",
-                      fontSize: "14px",
-                      cursor: saving ? "not-allowed" : "pointer",
-                      opacity: saving ? 0.7 : 1,
-                    }}
-                  >
-                    {saving ? "Creating..." : "Create Skill"}
-                  </button>
-                  <button
-                    onClick={() => setIsCreating(false)}
-                    style={{
-                      padding: "10px 20px",
-                      borderRadius: "6px",
-                      background: "var(--bg-tertiary)",
-                      border: "1px solid var(--border)",
-                      color: "var(--text-primary)",
-                      fontSize: "14px",
-                      cursor: "pointer",
-                    }}
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
+              <Card className="mx-auto max-w-3xl">
+                <CardHeader>
+                  <CardTitle>Create skill</CardTitle>
+                  <CardDescription>
+                    Skills are markdown documents agents can dynamically load.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-5">
+                  <div className="grid gap-2">
+                    <Label htmlFor="skill-name">Name</Label>
+                    <Input
+                      id="skill-name"
+                      value={formData.name}
+                      onChange={(e) =>
+                        setFormData({ ...formData, name: e.target.value })
+                      }
+                      placeholder="my-skill"
+                    />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="skill-desc">Description</Label>
+                    <Input
+                      id="skill-desc"
+                      value={formData.description}
+                      onChange={(e) =>
+                        setFormData({ ...formData, description: e.target.value })
+                      }
+                      placeholder="What this skill does"
+                    />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="skill-tags">Tags (comma-separated)</Label>
+                    <Input
+                      id="skill-tags"
+                      value={formData.tags}
+                      onChange={(e) =>
+                        setFormData({ ...formData, tags: e.target.value })
+                      }
+                      placeholder="automation, testing"
+                    />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="skill-body">Instructions (Markdown)</Label>
+                    <Textarea
+                      id="skill-body"
+                      value={formData.body}
+                      onChange={(e) =>
+                        setFormData({ ...formData, body: e.target.value })
+                      }
+                      placeholder="Detailed instructions for the agent…"
+                      rows={14}
+                    />
+                  </div>
+                  <div className="flex gap-2 justify-end">
+                    <Button variant="outline" onClick={() => setIsCreating(false)}>
+                      Cancel
+                    </Button>
+                    <Button onClick={createSkill} disabled={saving}>
+                      {saving && <Loader2 className="size-4 animate-spin" />}
+                      Create skill
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
             ) : selectedSkill ? (
-              <div style={{ maxWidth: "700px" }}>
-                <div style={{ marginBottom: "20px", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                  <div>
-                    <h2 style={{ fontSize: "22px", fontWeight: 600, marginBottom: "6px", color: "var(--text-primary)" }}>
-                      {selectedSkill.name}
-                    </h2>
-                    <p style={{ fontSize: "14px", color: "var(--text-secondary)", lineHeight: 1.5 }}>
-                      {selectedSkill.description}
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => deleteSkill(selectedSkill.name)}
-                    style={{
-                      padding: "6px 12px",
-                      borderRadius: "6px",
-                      background: "rgba(239,68,68,0.1)",
-                      border: "1px solid rgba(239,68,68,0.3)",
-                      color: "#ef4444",
-                      fontSize: "13px",
-                      cursor: "pointer",
-                    }}
-                  >
-                    Delete
-                  </button>
-                </div>
-
-                {selectedSkill.tags.length > 0 && (
-                  <div style={{ display: "flex", gap: "6px", marginBottom: "20px", flexWrap: "wrap" }}>
-                    {selectedSkill.tags.map((tag) => (
-                      <span
-                        key={tag}
-                        style={{
-                          padding: "4px 10px",
-                          borderRadius: "100px",
-                          background: "var(--accent-glow)",
-                          border: "1px solid var(--accent-primary)",
-                          color: "var(--accent-secondary)",
-                          fontSize: "12px",
-                        }}
-                      >
-                        {tag}
-                      </span>
-                    ))}
-                  </div>
-                )}
-
-                {selectedSkill.relatedSkills.length > 0 && (
-                  <div style={{ marginBottom: "20px" }}>
-                    <h4 style={{ fontSize: "13px", fontWeight: 500, color: "var(--text-muted)", marginBottom: "8px" }}>Related Skills</h4>
-                    <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
-                      {selectedSkill.relatedSkills.map((name) => (
-                        <button
-                          key={name}
-                          onClick={() => loadSkillDetail(name)}
-                          style={{
-                            padding: "4px 10px",
-                            borderRadius: "6px",
-                            background: "var(--bg-tertiary)",
-                            border: "1px solid var(--border)",
-                            color: "var(--text-primary)",
-                            fontSize: "12px",
-                            cursor: "pointer",
-                          }}
-                        >
-                          {name}
-                        </button>
-                      ))}
+              <div className="mx-auto max-w-3xl space-y-4">
+                <Card>
+                  <CardHeader className="flex flex-row items-start justify-between gap-4">
+                    <div>
+                      <CardTitle className="text-xl">{selectedSkill.name}</CardTitle>
+                      <CardDescription className="mt-1.5">
+                        {selectedSkill.description}
+                      </CardDescription>
                     </div>
-                  </div>
-                )}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setConfirmDelete(selectedSkill.name)}
+                    >
+                      <Trash2 className="size-4" />
+                      Delete
+                    </Button>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    {selectedSkill.tags.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5">
+                        {selectedSkill.tags.map((tag) => (
+                          <Badge key={tag} variant="secondary">
+                            {tag}
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
 
-                <div>
-                  <h4 style={{ fontSize: "13px", fontWeight: 500, color: "var(--text-muted)", marginBottom: "10px" }}>Instructions</h4>
-                  <div
-                    style={{
-                      background: "var(--bg-tertiary)",
-                      border: "1px solid var(--border)",
-                      borderRadius: "8px",
-                      padding: "16px",
-                      fontSize: "14px",
-                      lineHeight: 1.6,
-                      color: "var(--text-primary)",
-                      whiteSpace: "pre-wrap",
-                      fontFamily: "var(--font-mono)",
-                    }}
-                  >
-                    {selectedSkill.body || "(No instructions)"}
-                  </div>
-                </div>
+                    {selectedSkill.relatedSkills.length > 0 && (
+                      <div>
+                        <Label className="mb-2 block">Related</Label>
+                        <div className="flex flex-wrap gap-1.5">
+                          {selectedSkill.relatedSkills.map((name) => (
+                            <Button
+                              key={name}
+                              variant="outline"
+                              size="xs"
+                              onClick={() => loadSkillDetail(name)}
+                            >
+                              {name}
+                            </Button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    <div>
+                      <Label className="mb-2 block">Instructions</Label>
+                      <pre className="rounded-md border bg-muted/40 p-4 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words text-foreground">
+                        {selectedSkill.body || "(No instructions)"}
+                      </pre>
+                    </div>
+                  </CardContent>
+                </Card>
               </div>
             ) : (
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "var(--text-muted)" }}>
-                <div style={{ textAlign: "center" }}>
-                  <div style={{ fontSize: "48px", marginBottom: "16px" }}>📚</div>
-                  <p>Select a skill or create a new one</p>
+              <div className="flex h-full items-center justify-center">
+                <div className="text-center">
+                  <div className="mx-auto mb-3 flex size-12 items-center justify-center rounded-2xl bg-muted">
+                    <BookOpen className="size-5 text-muted-foreground" />
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    Select a skill or create a new one.
+                  </p>
                 </div>
               </div>
             )}
           </div>
         </div>
       </main>
+
+      <Dialog
+        open={confirmDelete !== null}
+        onOpenChange={(open) => !open && setConfirmDelete(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete skill?</DialogTitle>
+            <DialogDescription>
+              This will permanently delete <span className="font-mono">{confirmDelete}</span>.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setConfirmDelete(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => confirmDelete && deleteSkill(confirmDelete)}
+            >
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -3,7 +3,7 @@ import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
 import { AgentManager } from "./agent-manager.js";
 import { AgentDefinitionSchema, type Config, type AgentDefinition } from "@openacme/config";
-import { listProviders } from "@openacme/llm-provider";
+import { listProviders, MODEL_PRESETS } from "@openacme/llm-provider";
 import { readAuthFile } from "@openacme/auth";
 import { registry as toolRegistry } from "@openacme/tools";
 import { randomUUID } from "node:crypto";
@@ -139,6 +139,14 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
 
     return streamSSE(c, async (stream) => {
       try {
+        // Emit the resolved session id first so the client can pin it across turns
+        // (when called without a sessionId, the server creates one — without this
+        // chunk the client would create a fresh session on every send).
+        await stream.writeSSE({
+          event: "session",
+          data: JSON.stringify({ type: "session", sessionId: effectiveSessionId }),
+        });
+
         for await (const chunk of manager.chat(
           agentId,
           effectiveSessionId,
@@ -162,14 +170,21 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
   });
 
   // ── Models ──
+  // Returns each provider augmented with its curated model presets so the
+  // UI can render a model dropdown without a second round-trip.
   app.get("/api/models", (c) => {
-    return c.json(listProviders());
+    return c.json(
+      listProviders().map((p) => ({
+        ...p,
+        models: MODEL_PRESETS[p.id] ?? [],
+      }))
+    );
   });
 
   // ── Tools ──
   app.get("/api/tools", (c) => {
     return c.json({
-      tools: toolRegistry.getAllToolNames(),
+      tools: toolRegistry.getInfo(),
       toolsets: toolRegistry.getToolsets(),
     });
   });
