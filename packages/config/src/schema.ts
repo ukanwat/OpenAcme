@@ -1,0 +1,105 @@
+import { z } from "zod";
+
+/**
+ * Supported LLM provider identifiers.
+ */
+export const ProviderSchema = z.enum([
+  "openai",
+  "anthropic",
+  "openrouter",
+  "google",
+  "ollama",
+  "custom",
+]);
+export type Provider = z.infer<typeof ProviderSchema>;
+
+/**
+ * Model configuration — which provider and model to use.
+ */
+export const ModelConfigSchema = z.object({
+  provider: ProviderSchema.default("openrouter"),
+  model: z.string().default("anthropic/claude-sonnet-4-20250514"),
+  baseUrl: z.string().optional(),
+  apiKey: z.string().optional(),
+  headers: z.record(z.string()).optional(),
+});
+export type ModelConfig = z.infer<typeof ModelConfigSchema>;
+
+/**
+ * MCP server configuration — how to connect to an external MCP server.
+ */
+export const MCPServerConfigSchema = z.object({
+  command: z.string().optional(),
+  args: z.array(z.string()).optional(),
+  url: z.string().optional(),
+  env: z.record(z.string()).optional(),
+  headers: z.record(z.string()).optional(),
+  timeout: z.number().default(120),
+  connectTimeout: z.number().default(60),
+  allowedTools: z.array(z.string()).optional(),
+});
+export type MCPServerConfig = z.infer<typeof MCPServerConfigSchema>;
+
+/**
+ * Agent definition — a named agent with its own config.
+ */
+export const AgentDefinitionSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  model: ModelConfigSchema.default({}),
+  persona: z.string().default("You are a helpful AI assistant."),
+  tools: z.array(z.string()).default(["shell", "read_file", "write_file", "list_files", "search_files", "session_search"]),
+  mcpServers: z.record(MCPServerConfigSchema).default({}),
+  skills: z.array(z.string()).default([]),
+});
+export type AgentDefinition = z.infer<typeof AgentDefinitionSchema>;
+
+/**
+ * Server configuration.
+ */
+export const ServerConfigSchema = z.object({
+  port: z.number().default(3210),
+  host: z.string().default("127.0.0.1"),
+});
+export type ServerConfig = z.infer<typeof ServerConfigSchema>;
+
+/**
+ * Agent behavior configuration.
+ */
+export const AgentBehaviorSchema = z.object({
+  maxSteps: z.number().default(10),
+  maxIterations: z.number().default(90),
+});
+export type AgentBehavior = z.infer<typeof AgentBehaviorSchema>;
+
+/**
+ * Skills configuration.
+ */
+export const SkillsConfigSchema = z.object({
+  directory: z.string().default("skills"),
+  autoGenerate: z.boolean().default(false),
+});
+export type SkillsConfig = z.infer<typeof SkillsConfigSchema>;
+
+/**
+ * Root configuration schema — maps to config.yaml
+ */
+export const ConfigSchema = z.object({
+  dataDir: z.string().default("~/.openacme"),
+  model: ModelConfigSchema.default({}),
+  agents: z.array(AgentDefinitionSchema).default([
+    {
+      id: "default",
+      name: "Default Agent",
+      model: {},
+      persona: "You are a helpful AI assistant.",
+      tools: ["shell", "read_file", "write_file", "list_files", "search_files", "session_search"],
+      mcpServers: {},
+      skills: [],
+    },
+  ]),
+  server: ServerConfigSchema.default({}),
+  behavior: AgentBehaviorSchema.default({}),
+  skills: SkillsConfigSchema.default({}),
+});
+export type Config = z.infer<typeof ConfigSchema>;
