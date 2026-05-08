@@ -56,7 +56,20 @@ export const AgentDefinitionSchema = z.object({
   name: z.string(),
   model: ModelConfigSchema.default({}),
   persona: z.string().default("You are a helpful AI assistant."),
-  tools: z.array(z.string()).default(["shell", "read_file", "write_file", "list_files", "search_files", "session_search"]),
+  tools: z
+    .array(z.string())
+    .default([
+      "shell",
+      "read_file",
+      "write_file",
+      "edit",
+      "apply_patch",
+      "list_files",
+      "search_files",
+      "session_search",
+      "web_search",
+      "web_extract",
+    ]),
   mcpServers: z.record(MCPServerConfigSchema).default({}),
   skills: z.array(z.string()).default([]),
 });
@@ -90,6 +103,17 @@ export const SkillsConfigSchema = z.object({
 export type SkillsConfig = z.infer<typeof SkillsConfigSchema>;
 
 /**
+ * Web tools configuration — search provider + key resolution.
+ * If `searchApiKey` is unset the agent reads from env vars at call-time
+ * (OPENACME_SEARCH_API_KEY, then TAVILY_API_KEY / EXA_API_KEY / BRAVE_API_KEY).
+ */
+export const WebConfigSchema = z.object({
+  searchProvider: z.enum(["tavily", "exa", "brave"]).default("tavily"),
+  searchApiKey: z.string().optional(),
+});
+export type WebConfig = z.infer<typeof WebConfigSchema>;
+
+/**
  * Root configuration schema — maps to config.yaml
  */
 export const ConfigSchema = z.object({
@@ -101,7 +125,18 @@ export const ConfigSchema = z.object({
       name: "Default Agent",
       model: {},
       persona: "You are a helpful AI assistant.",
-      tools: ["shell", "read_file", "write_file", "list_files", "search_files", "session_search"],
+      tools: [
+        "shell",
+        "read_file",
+        "write_file",
+        "edit",
+        "apply_patch",
+        "list_files",
+        "search_files",
+        "session_search",
+        "web_search",
+        "web_extract",
+      ],
       mcpServers: {},
       skills: [],
     },
@@ -109,5 +144,6 @@ export const ConfigSchema = z.object({
   server: ServerConfigSchema.default({}),
   behavior: AgentBehaviorSchema.default({}),
   skills: SkillsConfigSchema.default({}),
+  web: WebConfigSchema.default({}),
 });
 export type Config = z.infer<typeof ConfigSchema>;

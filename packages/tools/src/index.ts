@@ -10,3 +10,7 @@ export {
 import "./builtins/shell.js";
 import "./builtins/file.js";
 import "./builtins/session-search.js";
+import "./builtins/edit.js";
+import "./builtins/apply-patch.js";
+import "./builtins/web-extract.js";
+import "./builtins/web-search.js";
