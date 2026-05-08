@@ -1,15 +1,10 @@
-import { Box, Text } from "ink";
+import React from "react";
+import { Box, Text, render } from "ink";
 import BigText from "ink-big-text";
 import Gradient from "ink-gradient";
-import { Logo } from "./Logo.js";
+import { Logo } from "./components/Logo.js";
 
-export function Banner({
-  agentName,
-  modelLabel,
-}: {
-  agentName: string;
-  modelLabel: string;
-}) {
+function StartupBanner({ version }: { version: string }) {
   return (
     <Box
       flexDirection="column"
@@ -29,10 +24,15 @@ export function Banner({
       </Box>
       <Box marginTop={0}>
         <Text dimColor>
-          {agentName} · <Text color="cyan">{modelLabel}</Text> · Type{" "}
-          <Text color="yellow">/help</Text> for commands
+          Agent platform · <Text color="cyan">v{version}</Text>
         </Text>
       </Box>
     </Box>
   );
+}
+
+export async function showBanner(version: string): Promise<void> {
+  const instance = render(<StartupBanner version={version} />);
+  instance.unmount();
+  await instance.waitUntilExit();
 }

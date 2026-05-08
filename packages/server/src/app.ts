@@ -116,6 +116,15 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
     return c.json(messages);
   });
 
+  app.delete("/api/sessions/:id", (c) => {
+    const id = c.req.param("id");
+    const session = manager.sessionStore.get(id);
+    if (!session) return c.json({ error: "Session not found" }, 404);
+    // messages cascade-delete via FK; FTS triggers keep the index in sync
+    manager.sessionStore.delete(id);
+    return c.json({ success: true });
+  });
+
   // ── Chat (SSE streaming) ──
   app.post("/api/chat", async (c) => {
     let body: Record<string, unknown>;

@@ -3,14 +3,13 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
-import figlet from "figlet";
-import gradient from "gradient-string";
 import { resolveDataDir } from "@openacme/config";
 import { setupCommand } from "./commands/setup.js";
 import { startCommand } from "./commands/start.js";
 import { chatCommand } from "./commands/chat.js";
 import { loginCommand } from "./commands/login.js";
 import { logoutCommand } from "./commands/logout.js";
+import { showBanner } from "./tui/banner.js";
 
 const pkg = JSON.parse(
   readFileSync(
@@ -18,14 +17,6 @@ const pkg = JSON.parse(
     "utf8",
   ),
 ) as { version: string };
-
-const coolGradient = gradient(["#0ea5e9", "#7dd3fc", "#ffffff"]);
-
-// Show banner
-function showBanner() {
-  const banner = figlet.textSync("OpenAcme", { font: "Slant" });
-  console.log(coolGradient(banner));
-}
 
 const program = new Command();
 
@@ -41,7 +32,7 @@ program
   .option("--no-browser", "Don't open browser automatically")
   .action(async (opts) => {
     // If no subcommand, start the server
-    showBanner();
+    await showBanner(pkg.version);
     await startCommand(opts);
   });
 
@@ -58,7 +49,7 @@ program
   .option("-p, --port <number>", "Server port", "3210")
   .option("--no-browser", "Don't open browser automatically")
   .action(async (opts) => {
-    showBanner();
+    await showBanner(pkg.version);
     await startCommand(opts);
   });
 

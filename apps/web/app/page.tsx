@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { ArrowUp, Bot, User, Wrench, Sparkles, MessageSquare } from "lucide-react";
+import { ArrowUp, Bot, User, Wrench, Sparkles, MessageSquare, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Sidebar } from "./components/Sidebar";
 import { Markdown } from "./components/Markdown";
@@ -393,6 +393,26 @@ export default function ChatPage() {
     setActiveSessionId("");
   };
 
+  const deleteSession = useCallback(
+    async (id: string) => {
+      if (!window.confirm("Delete this chat? This cannot be undone.")) return;
+      try {
+        const res = await fetch(`${API_BASE}/api/sessions/${id}`, { method: "DELETE" });
+        if (!res.ok) throw new Error(await res.text());
+        setSessions((prev) => prev.filter((s) => s.id !== id));
+        if (activeSessionId === id) {
+          setActiveSessionId("");
+          setMessages([]);
+        }
+      } catch (err) {
+        toast.error("Failed to delete chat", {
+          description: err instanceof Error ? err.message : String(err),
+        });
+      }
+    },
+    [activeSessionId]
+  );
+
   return (
     <div className="flex h-screen w-screen overflow-hidden">
       <Sidebar>
@@ -438,24 +458,36 @@ export default function ChatPage() {
             </Button>
           </div>
           {sessions.slice(0, 30).map((s) => (
-            <button
+            <div
               key={s.id}
-              onClick={() => {
-                if (s.agentId && s.agentId !== activeAgentId) {
-                  setActiveAgentId(s.agentId);
-                }
-                setActiveSessionId(s.id);
-              }}
               className={cn(
-                "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors",
+                "group flex w-full items-center rounded-md transition-colors",
                 s.id === activeSessionId
                   ? "bg-sidebar-accent text-sidebar-accent-foreground"
                   : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground"
               )}
             >
-              <MessageSquare className="size-3.5 shrink-0" />
-              <span className="truncate">{s.title || "New conversation"}</span>
-            </button>
+              <button
+                onClick={() => {
+                  if (s.agentId && s.agentId !== activeAgentId) {
+                    setActiveAgentId(s.agentId);
+                  }
+                  setActiveSessionId(s.id);
+                }}
+                className="flex flex-1 min-w-0 items-center gap-2 px-2 py-1.5 text-left text-sm"
+              >
+                <MessageSquare className="size-3.5 shrink-0" />
+                <span className="truncate">{s.title || "New conversation"}</span>
+              </button>
+              <button
+                onClick={() => deleteSession(s.id)}
+                title="Delete chat"
+                aria-label="Delete chat"
+                className="mr-1 rounded p-1 opacity-0 transition-opacity hover:bg-destructive/15 hover:text-destructive group-hover:opacity-100 focus:opacity-100 focus:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              >
+                <Trash2 className="size-3" />
+              </button>
+            </div>
           ))}
         </div>
       </Sidebar>

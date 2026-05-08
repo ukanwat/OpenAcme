@@ -1,159 +1,228 @@
-# Turborepo starter
+<div align="center">
 
-This Turborepo starter is maintained by the Turborepo core team.
+# ◢◤ OpenAcme
 
-## Using this example
+**A local-first TypeScript agent platform.**
+Streaming tool-calls. Multi-provider LLMs. ChatGPT & Claude OAuth. MCP. Built-in CLI + web UI.
 
-Run the following command:
+<sub>Pre-1.0 · Single-author · Evolving fast — expect breaking changes.</sub>
 
-```sh
-npx create-turbo@latest
-```
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178c6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Node](https://img.shields.io/badge/Node-%E2%89%A518-43853d?logo=node.js&logoColor=white)](https://nodejs.org/)
+[![pnpm](https://img.shields.io/badge/pnpm-9-f69220?logo=pnpm&logoColor=white)](https://pnpm.io/)
+[![Turborepo](https://img.shields.io/badge/Turborepo-monorepo-ef4444)](https://turborepo.com/)
+[![License](https://img.shields.io/badge/License-MIT-blue)](./LICENSE)
 
-## What's inside?
+</div>
 
-This Turborepo includes the following packages/apps:
+---
 
-### Apps and Packages
+## ✦ Why OpenAcme
 
-- `docs`: a [Next.js](https://nextjs.org/) app
-- `web`: another [Next.js](https://nextjs.org/) app
-- `@repo/ui`: a stub React component library shared by both `web` and `docs` applications
-- `@repo/eslint-config`: `eslint` configurations (includes `eslint-config-next` and `eslint-config-prettier`)
-- `@repo/typescript-config`: `tsconfig.json`s used throughout the monorepo
+> Most agent platforms ask you to pay for API credits *and* a subscription. OpenAcme lets your existing ChatGPT or Claude subscription drive the agent — locally, with full session history, MCP tools, and a chat UI you actually own.
 
-Each package/app is 100% [TypeScript](https://www.typescriptlang.org/).
+- 🔌 **Bring your own model.** Six providers, one config — swap them per agent.
+- 🔑 **Sign in, don't pay twice.** OAuth into ChatGPT (Plus/Pro) or Claude (Pro/Max); API keys remain a fallback.
+- 🛠 **Tools that compose.** Built-in shell + filesystem + session search; add any MCP server and its tools show up automatically.
+- 💾 **Sessions stay yours.** SQLite + FTS5 in `~/.openacme/`; no cloud, no telemetry, no external state.
+- 🧠 **Skills as context.** Drop `SKILL.md` files in; the agent gets a tag-indexed summary, fetches the body on demand.
+- 🖥 **Two interfaces, one runtime.** A React-on-Ink TUI and a Next.js web UI, both backed by the same Hono server.
 
-### Utilities
+---
 
-This Turborepo has some additional tools already setup for you:
-
-- [TypeScript](https://www.typescriptlang.org/) for static type checking
-- [ESLint](https://eslint.org/) for code linting
-- [Prettier](https://prettier.io) for code formatting
-
-### Build
-
-To build all apps and packages, run the following command:
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended):
+## ⚡ Quickstart
 
 ```sh
-cd my-turborepo
-turbo build
+git clone git@github.com:ukanwat/OpenAcme.git
+cd OpenAcme
+pnpm install              # pnpm 9 · Node ≥ 18
+pnpm build
+pnpm agent:setup          # interactive wizard → ~/.openacme/config.yaml
+pnpm agent                # launches server + opens the web UI
 ```
 
-Without global `turbo`, use your package manager:
+Or skip the browser:
 
 ```sh
-cd my-turborepo
-npx turbo build
-pnpm dlx turbo build
-pnpm exec turbo build
+pnpm agent:chat           # in-process terminal chat (no server)
 ```
 
-You can build a specific package by using a [filter](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters):
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed:
+### Sign in with a subscription
 
 ```sh
-turbo build --filter=docs
+pnpm agent login --provider anthropic    # Claude Pro / Max
+pnpm agent login --provider openai       # ChatGPT Plus / Pro
 ```
 
-Without global `turbo`:
+Tokens land in `~/.openacme/auth.json` (mode `0600`) and auto-refresh.
+The `@openacme/llm-provider` factories pick them up when no API key is configured.
+
+---
+
+## 🧭 Architecture
+
+<div align="center">
+
+```
+   ╭─────────────────────────╮         ╭─────────────────────────╮
+   │   apps/cli  ·  Ink TUI  │         │   apps/web  ·  Next.js  │
+   │   in-process Agent      │         │   POST /api/chat → SSE  │
+   ╰────────────┬────────────╯         ╰────────────┬────────────╯
+                │                                   │ HTTP
+                │                ╭──────────────────┴──────────────────╮
+                │                │   @openacme/server (Hono)           │
+                │                │   AgentManager · SSE streaming      │
+                │                ╰──┬───────────────┬───────────────┬──╯
+                │                   │               │               │
+        ╭───────┴────────╮  ╭──────────────╮  ╭──────────────╮  ╭──────────────────╮
+        │  agent-core    │  │   tools      │  │  mcp-client  │  │  llm-provider    │
+        │  Agent.chat()  │  │  registry +  │  │  stdio/SSE   │  │  6 providers +   │
+        │  streamText()  │  │  built-ins   │  │  → registry  │  │  OAuth fetch     │
+        ╰────────┬───────╯  ╰──────────────╯  ╰──────────────╯  ╰──────────────────╯
+                 │
+        ╭────────┴───────╮  ╭──────────────╮  ╭──────────────╮  ╭──────────────────╮
+        │      db        │  │    config    │  │    auth      │  │     skills       │
+        │  Drizzle +     │  │   Zod YAML   │  │  OAuth +     │  │   SKILL.md +     │
+        │  SQLite + FTS5 │  │   loader     │  │  token store │  │   progressive    │
+        ╰────────────────╯  ╰──────────────╯  ╰──────────────╯  ╰──────────────────╯
+```
+
+</div>
+
+For navigation density — request path, file:line refs, registry shapes, gotchas — see **[`CLAUDE.md`](./CLAUDE.md)**.
+
+---
+
+## ⚙ Configuration
+
+`~/.openacme/config.yaml` (YAML or JSON, validated by Zod):
+
+```yaml
+model:
+  provider: anthropic
+  model: claude-sonnet-4-20250514
+  auth: oauth                 # or api_key
+
+server:
+  port: 3210
+  host: 127.0.0.1             # loopback only by default
+
+behavior:
+  maxSteps: 10
+  maxIterations: 90
+
+skills:
+  directory: skills
+
+agents:
+  - id: default
+    name: Default
+    persona: You are a helpful AI assistant.
+    tools: [shell, read_file, write_file, list_files, search_files, session_search]
+    mcpServers: {}
+    skills: []
+```
+
+Per-agent `model` / `tools` / `mcpServers` / `skills` override the root.
+Schema source of truth: `packages/config/src/schema.ts`.
+
+---
+
+## 🧩 Workspace
+
+Turborepo + pnpm 9. `apps/*` for binaries and UIs, `packages/*` for libraries.
+
+| Package | Purpose |
+|---|---|
+| `apps/cli` | `openacme` binary — Commander + Ink TUI + Clack setup |
+| `apps/web` | Next.js chat / agents / skills / settings |
+| `apps/docs` | Docs site (placeholder) |
+| `@openacme/agent-core` | Agentic loop, streaming, history reconstruction |
+| `@openacme/server` | Hono HTTP server + `AgentManager` |
+| `@openacme/llm-provider` | Six provider factories with OAuth-aware fetch |
+| `@openacme/mcp-client` | MCP stdio + HTTP/SSE; tool discovery into the registry |
+| `@openacme/tools` | `ToolRegistry` + built-in tools |
+| `@openacme/db` | better-sqlite3 + Drizzle, FTS5-backed message search |
+| `@openacme/config` | Zod schema + YAML/JSON loader |
+| `@openacme/auth` | OAuth (ChatGPT, Claude), token store, body/response transforms |
+| `@openacme/skills` | `SKILL.md` discovery + progressive disclosure |
+| `@repo/*` | Internal tooling (ui, eslint-config, typescript-config) |
+
+---
+
+## 🔧 Built-in tools
+
+| Tool | What it does |
+|---|---|
+| `shell` | Run a shell command (timeout · 50KB output cap · destructive-pattern warning) |
+| `read_file` | Read a file, optionally `maxLines` |
+| `write_file` | Write a file, creating parent dirs |
+| `list_files` | List a directory |
+| `search_files` | Grep across files |
+| `session_search` | FTS5 search across past conversations |
+
+Plus any MCP-server tool, namespaced as `mcp-<server>__<tool>`.
+
+---
+
+## 🌐 Providers
+
+| Provider | Auth modes | Notes |
+|---|---|---|
+| **Anthropic** | API key · OAuth (Claude Pro/Max) | `context-1m` for 4.6+ · 4.7+ sampling-param strip · `mcp_` tool-id strip |
+| **OpenAI** | API key · OAuth (ChatGPT Plus/Pro) | OAuth flips to ChatGPT Responses API |
+| **OpenRouter** | API key | Default in `ConfigSchema` |
+| **Google** | API key | Standard Gemini |
+| **Ollama** | — | Local, OpenAI-compatible |
+| **Custom** | API key | Any OpenAI-compatible endpoint (`baseUrl` required) |
+
+Adding a provider: enum + factory in `packages/llm-provider/src/registry.ts`.
+
+---
+
+## 🛡 Privacy & local-first
+
+- Sessions, messages, and OAuth tokens live in **`~/.openacme/`** — no cloud, no telemetry.
+- Server binds to **`127.0.0.1`** by default. Change `server.host` only if you've thought about it.
+- The local web ↔ server channel has **no auth** today; assumes a trusted machine.
+- MCP env injection is filtered — credential-shaped vars are dropped unless you list them explicitly in `mcpServers[name].env`.
+- OAuth tokens are written atomically at mode `0600`. Never logged in plaintext.
+
+---
+
+## 📜 Scripts
 
 ```sh
-npx turbo build --filter=docs
-pnpm exec turbo build --filter=docs
-pnpm exec turbo build --filter=docs
+pnpm dev               # web + @openacme/server in parallel
+pnpm build             # build everything
+pnpm check-types       # tsc --noEmit across the workspace
+pnpm lint
+pnpm test              # vitest where present
+pnpm format            # prettier
+
+pnpm agent             # CLI (no subcommand → start)
+pnpm agent:setup       # interactive setup wizard
+pnpm agent:start       # server + web UI
+pnpm agent:chat        # terminal chat (in-process, no server)
+
+pnpm changeset         # declare a version bump
+pnpm version-packages
+pnpm release           # build @openacme/* + changeset publish
 ```
 
-### Develop
+Per-package: `pnpm --filter @openacme/<pkg> <script>`.
 
-To develop all apps and packages, run the following command:
+---
 
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended):
+## 🤝 Contributing
 
-```sh
-cd my-turborepo
-turbo dev
-```
+- **Release workflow** (Changesets, manual `gh workflow run`): see [`CONTRIBUTING.md`](./CONTRIBUTING.md).
+- **Codebase navigation** for AI assistants: [`CLAUDE.md`](./CLAUDE.md) is the dense map — request path, registries, gotchas, file:line refs.
 
-Without global `turbo`, use your package manager:
+---
 
-```sh
-cd my-turborepo
-npx turbo dev
-pnpm exec turbo dev
-pnpm exec turbo dev
-```
+<div align="center">
 
-You can develop a specific package by using a [filter](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters):
+**MIT** © [Utkarsh Kanwat](mailto:utkarsh@autonomyai.io) · [github.com/ukanwat/OpenAcme](https://github.com/ukanwat/OpenAcme)
 
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed:
-
-```sh
-turbo dev --filter=web
-```
-
-Without global `turbo`:
-
-```sh
-npx turbo dev --filter=web
-pnpm exec turbo dev --filter=web
-pnpm exec turbo dev --filter=web
-```
-
-### Remote Caching
-
-> [!TIP]
-> Vercel Remote Cache is free for all plans. Get started today at [vercel.com](https://vercel.com/signup?utm_source=remote-cache-sdk&utm_campaign=free_remote_cache).
-
-Turborepo can use a technique known as [Remote Caching](https://turborepo.dev/docs/core-concepts/remote-caching) to share cache artifacts across machines, enabling you to share build caches with your team and CI/CD pipelines.
-
-By default, Turborepo will cache locally. To enable Remote Caching you will need an account with Vercel. If you don't have an account you can [create one](https://vercel.com/signup?utm_source=turborepo-examples), then enter the following commands:
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended):
-
-```sh
-cd my-turborepo
-turbo login
-```
-
-Without global `turbo`, use your package manager:
-
-```sh
-cd my-turborepo
-npx turbo login
-pnpm exec turbo login
-pnpm exec turbo login
-```
-
-This will authenticate the Turborepo CLI with your [Vercel account](https://vercel.com/docs/concepts/personal-accounts/overview).
-
-Next, you can link your Turborepo to your Remote Cache by running the following command from the root of your Turborepo:
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed:
-
-```sh
-turbo link
-```
-
-Without global `turbo`:
-
-```sh
-npx turbo link
-pnpm exec turbo link
-pnpm exec turbo link
-```
-
-## Useful Links
-
-Learn more about the power of Turborepo:
-
-- [Tasks](https://turborepo.dev/docs/crafting-your-repository/running-tasks)
-- [Caching](https://turborepo.dev/docs/crafting-your-repository/caching)
-- [Remote Caching](https://turborepo.dev/docs/core-concepts/remote-caching)
-- [Filtering](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters)
-- [Configuration Options](https://turborepo.dev/docs/reference/configuration)
-- [CLI Usage](https://turborepo.dev/docs/reference/command-line-reference)
+</div>
