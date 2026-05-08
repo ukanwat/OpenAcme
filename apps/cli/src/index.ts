@@ -10,6 +10,12 @@ import { startCommand } from "./commands/start.js";
 import { chatCommand } from "./commands/chat.js";
 import { loginCommand } from "./commands/login.js";
 import { logoutCommand } from "./commands/logout.js";
+import {
+  skillsListCommand,
+  skillsViewCommand,
+  skillsAddCommand,
+  skillsRemoveCommand,
+} from "./commands/skills.js";
 import { showBanner } from "./tui/banner.js";
 
 const pkg = JSON.parse(
@@ -68,6 +74,34 @@ program
   .option("-p, --provider <name>", "openai or anthropic")
   .option("-d, --data-dir <path>", "Data directory (default: ~/.openacme)")
   .action(logoutCommand);
+
+const skills = program
+  .command("skills")
+  .description("Manage skills (Anthropic Agent Skills format)");
+
+skills
+  .command("list")
+  .description("List installed skills")
+  .option("-d, --data-dir <path>", "Data directory (default: ~/.openacme)")
+  .action(skillsListCommand);
+
+skills
+  .command("view <name>")
+  .description("Print a skill's full body")
+  .option("-d, --data-dir <path>", "Data directory (default: ~/.openacme)")
+  .action(skillsViewCommand);
+
+skills
+  .command("add <path>")
+  .description("Install a skill from a folder containing SKILL.md (or that file directly)")
+  .option("-d, --data-dir <path>", "Data directory (default: ~/.openacme)")
+  .action(skillsAddCommand);
+
+skills
+  .command("remove <name>")
+  .description("Delete an installed skill")
+  .option("-d, --data-dir <path>", "Data directory (default: ~/.openacme)")
+  .action(skillsRemoveCommand);
 
 // Resolve the data dir once so the LLM provider's OAuth path can find auth.json
 // without us threading the path through every call site.

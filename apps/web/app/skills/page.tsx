@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
-import { BookOpen, Plus, Search, Trash2, Loader2 } from "lucide-react";
+import { useState, useEffect, useMemo, useRef } from "react";
+import { BookOpen, Plus, Search, Trash2, Loader2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { Sidebar } from "../components/Sidebar";
 import { API_BASE } from "../lib/api";
@@ -34,12 +34,19 @@ interface SkillIndexEntry {
   tags: string[];
 }
 
+interface SkillResource {
+  relPath: string;
+  size: number;
+}
+
 interface Skill {
   name: string;
   description: string;
   tags: string[];
   body: string;
   relatedSkills: string[];
+  resources?: SkillResource[];
+  dirPath?: string;
 }
 
 export default function SkillsPage() {
@@ -56,7 +63,9 @@ export default function SkillsPage() {
     body: "",
   });
   const [saving, setSaving] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const ctrl = new AbortController();
@@ -129,6 +138,51 @@ export default function SkillsPage() {
     }
   };
 
+  const importFolder = async (files: FileList) => {
+    if (files.length === 0) return;
+
+    // Each File carries `webkitRelativePath` ("my-skill/SKILL.md", etc.).
+    // Send as multipart with the relative path as the field name so the
+    // server can reconstruct the directory structure.
+    const form = new FormData();
+    let hasSkillMd = false;
+    for (const file of Array.from(files)) {
+      const rel = file.webkitRelativePath || file.name;
+      form.append(rel, file);
+      const parts = rel.split("/");
+      if (parts.at(-1) === "SKILL.md") hasSkillMd = true;
+    }
+
+    if (!hasSkillMd) {
+      toast.error("Folder must contain a SKILL.md file");
+      return;
+    }
+
+    setImporting(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/skills/import`, {
+        method: "POST",
+        body: form,
+      });
+      if (res.ok) {
+        const data = await res.json();
+        toast.success(`Imported skill '${data.name}'`);
+        loadSkills();
+        if (data.name) loadSkillDetail(data.name);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        toast.error("Import failed", { description: data.error });
+      }
+    } catch (e) {
+      toast.error("Import failed", {
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setImporting(false);
+      if (folderInputRef.current) folderInputRef.current.value = "";
+    }
+  };
+
   const deleteSkill = async (name: string) => {
     setConfirmDelete(null);
     try {
@@ -174,16 +228,44 @@ export default function SkillsPage() {
             <h2 className="text-sm font-semibold">Skills</h2>
             <p className="text-xs text-muted-foreground">{skills.length} skills</p>
           </div>
-          <Button
-            size="sm"
-            onClick={() => {
-              setIsCreating(true);
-              setSelectedSkill(null);
-            }}
-          >
-            <Plus className="size-4" />
-            New skill
-          </Button>
+          <div className="flex items-center gap-2">
+            <input
+              ref={folderInputRef}
+              type="file"
+              hidden
+              // @ts-expect-error -- webkitdirectory + directory are non-standard
+              // attributes used to pick a folder in Chromium-based browsers.
+              webkitdirectory=""
+              directory=""
+              multiple
+              onChange={(e) => {
+                if (e.target.files) void importFolder(e.target.files);
+              }}
+            />
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={importing}
+              onClick={() => folderInputRef.current?.click()}
+            >
+              {importing ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Upload className="size-4" />
+              )}
+              Import folder
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => {
+                setIsCreating(true);
+                setSelectedSkill(null);
+              }}
+            >
+              <Plus className="size-4" />
+              New skill
+            </Button>
+          </div>
         </header>
 
         <div className="flex flex-1 overflow-hidden">
@@ -370,6 +452,30 @@ export default function SkillsPage() {
                             </Button>
                           ))}
                         </div>
+                      </div>
+                    )}
+
+                    {selectedSkill.resources && selectedSkill.resources.length > 0 && (
+                      <div>
+                        <Label className="mb-2 block">
+                          Resources ({selectedSkill.resources.length})
+                        </Label>
+                        <ul className="space-y-1 text-xs font-mono">
+                          {selectedSkill.resources.map((r) => (
+                            <li
+                              key={r.relPath}
+                              className="flex justify-between gap-4 text-muted-foreground"
+                            >
+                              <span className="truncate">{r.relPath}</span>
+                              <span className="shrink-0">{r.size}B</span>
+                            </li>
+                          ))}
+                        </ul>
+                        {selectedSkill.dirPath && (
+                          <p className="mt-2 text-xs text-muted-foreground">
+                            <span className="font-mono">{selectedSkill.dirPath}</span>
+                          </p>
+                        )}
                       </div>
                     )}
 

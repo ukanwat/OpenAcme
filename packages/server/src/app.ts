@@ -251,6 +251,160 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
     return c.json({ success: true });
   });
 
+  // Import a skill folder. Client sends multipart/form-data where each field
+  // name is the file's path relative to the skill root (e.g.
+  // `SKILL.md`, `scripts/run.py`) and the value is a File. The folder must
+  // contain a top-level `SKILL.md`. Caps: 200 entries, 10 MB total.
+  app.post("/api/skills/import", async (c) => {
+    const MAX_ENTRIES = 200;
+    const MAX_TOTAL_BYTES = 10 * 1024 * 1024;
+
+    let form: Record<string, string | File | (string | File)[]>;
+    try {
+      form = await c.req.parseBody({ all: true });
+    } catch {
+      return c.json({ error: "Expected multipart/form-data" }, 400);
+    }
+
+    const entries: { relPath: string; file: File }[] = [];
+    for (const [rawKey, raw] of Object.entries(form)) {
+      const values = Array.isArray(raw) ? raw : [raw];
+      for (const value of values) {
+        if (typeof value === "string") continue;
+        if (!(value instanceof File)) continue;
+        entries.push({ relPath: rawKey, file: value });
+      }
+    }
+
+    if (entries.length === 0) {
+      return c.json({ error: "No files in upload" }, 400);
+    }
+    if (entries.length > MAX_ENTRIES) {
+      return c.json(
+        { error: `Too many files (max ${MAX_ENTRIES})` },
+        400
+      );
+    }
+
+    // Normalize, validate, dedupe paths. Strip an optional leading folder
+    // segment so users can drop in either `my-skill/SKILL.md` (the folder
+    // itself) or `SKILL.md` (its contents) and get the same result.
+    const normalized: { relPath: string; file: File }[] = [];
+    let totalBytes = 0;
+    let topPrefix: string | null = null;
+
+    for (const e of entries) {
+      const rel = e.relPath.replace(/\\/g, "/");
+      if (!rel || rel.includes("\0") || rel.startsWith("/") || /(^|\/)\.\.(\/|$)/.test(rel)) {
+        return c.json({ error: `Invalid path: ${e.relPath}` }, 400);
+      }
+      const parts = rel.split("/");
+      if (parts[0] && parts.length > 1) {
+        if (topPrefix === null) topPrefix = parts[0];
+        else if (topPrefix !== parts[0]) topPrefix = "";
+      } else {
+        topPrefix = "";
+      }
+      totalBytes += e.file.size;
+      if (totalBytes > MAX_TOTAL_BYTES) {
+        return c.json(
+          { error: `Upload exceeds ${MAX_TOTAL_BYTES} bytes` },
+          400
+        );
+      }
+      normalized.push({ relPath: rel, file: e.file });
+    }
+
+    const stripPrefix = topPrefix && topPrefix.length > 0 ? topPrefix + "/" : "";
+    const flat = normalized.map((e) => ({
+      relPath: stripPrefix && e.relPath.startsWith(stripPrefix)
+        ? e.relPath.slice(stripPrefix.length)
+        : e.relPath,
+      file: e.file,
+    }));
+
+    const skillMd = flat.find((e) => e.relPath === "SKILL.md");
+    if (!skillMd) {
+      return c.json({ error: "Upload must contain SKILL.md at the root" }, 400);
+    }
+
+    // Parse SKILL.md to derive the canonical name from frontmatter, falling
+    // back to the upload's top-level folder name.
+    let frontName: string | undefined;
+    try {
+      const text = await skillMd.file.text();
+      const match = text.match(/^---\n([\s\S]*?)\n---/);
+      if (match && match[1]) {
+        const nameLine = match[1]
+          .split("\n")
+          .find((l) => /^name\s*:/.test(l));
+        if (nameLine) {
+          frontName = nameLine
+            .replace(/^name\s*:/, "")
+            .trim()
+            .replace(/^["']|["']$/g, "");
+        }
+      }
+    } catch {
+      // ignore — falls through to fallback
+    }
+
+    const fallback = topPrefix && topPrefix.length > 0 ? topPrefix : "skill";
+    const safeName = (frontName || fallback)
+      .toLowerCase()
+      .replace(/[^a-z0-9-]/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "");
+
+    if (!safeName) {
+      return c.json({ error: "Could not derive a valid skill name" }, 400);
+    }
+
+    const skillsDir = path.resolve(config.dataDir, config.skills.directory);
+    const dest = path.join(skillsDir, safeName);
+
+    // Ensure dest is inside skillsDir (defense in depth against path tricks
+    // even though we sanitize the name above).
+    const normalizedDest = path.resolve(dest);
+    if (!normalizedDest.startsWith(path.resolve(skillsDir) + path.sep)) {
+      return c.json({ error: "Resolved path escapes skills directory" }, 400);
+    }
+
+    if (fs.existsSync(dest)) {
+      return c.json(
+        { error: `Skill '${safeName}' already exists. Delete it first.` },
+        409
+      );
+    }
+
+    fs.mkdirSync(dest, { recursive: true });
+
+    try {
+      for (const e of flat) {
+        const target = path.join(dest, e.relPath);
+        const targetReal = path.resolve(target);
+        if (!targetReal.startsWith(path.resolve(dest) + path.sep) && targetReal !== path.resolve(dest)) {
+          throw new Error(`Path escapes skill root: ${e.relPath}`);
+        }
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        const buf = Buffer.from(await e.file.arrayBuffer());
+        fs.writeFileSync(target, buf);
+      }
+    } catch (err) {
+      fs.rmSync(dest, { recursive: true, force: true });
+      return c.json(
+        { error: err instanceof Error ? err.message : String(err) },
+        500
+      );
+    }
+
+    // Reload the registry to pick up the new skill (and its companion files).
+    manager.skillRegistry.loadFromDirectory(skillsDir);
+    const skill = manager.skillRegistry.getSkill(safeName);
+
+    return c.json({ success: true, name: safeName, skill }, 201);
+  });
+
   // ── Config ──
   app.get("/api/config", (c) => {
     // Return safe subset (no API keys)

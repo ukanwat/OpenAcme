@@ -100,6 +100,7 @@ export const AgentDefinitionSchema = z.object({
       "list_files",
       "search_files",
       "session_search",
+      "skill_view",
       "web_search",
       "web_extract",
       "execute_code",

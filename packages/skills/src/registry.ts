@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import matter from "gray-matter";
-import { parseSkillFile } from "./parser.js";
+import { parseSkillDirectory } from "./parser.js";
 import type { Skill, SkillIndexEntry } from "./types.js";
 
 // Maximum skill file size: 1MB
@@ -53,10 +53,8 @@ export class SkillRegistry {
 
   private loadSkillFile(filePath: string, parentDir: string): void {
     try {
-      // Resolve symlinks to prevent path traversal
       const realPath = fs.realpathSync(filePath);
 
-      // Check file size before reading
       const stat = fs.statSync(realPath);
       if (stat.size > MAX_SKILL_FILE_SIZE) {
         console.warn(
@@ -65,9 +63,8 @@ export class SkillRegistry {
         return;
       }
 
-      const content = fs.readFileSync(realPath, "utf-8");
       const fallbackName = path.basename(parentDir);
-      const skill = parseSkillFile(content, filePath, fallbackName);
+      const skill = parseSkillDirectory(realPath, fallbackName);
       this.skills.set(skill.name, skill);
     } catch (error) {
       console.warn(
@@ -167,28 +164,27 @@ export class SkillRegistry {
     tags: string[],
     body: string
   ): Skill {
-    // Sanitize name for directory
-    const safeName = name.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-");
+    const safeName = name
+      .toLowerCase()
+      .replace(/[^a-z0-9-]/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "");
     const skillDir = path.join(skillsDir, safeName);
     const filePath = path.join(skillDir, "SKILL.md");
 
-    // Create directory if needed
     if (!fs.existsSync(skillDir)) {
       fs.mkdirSync(skillDir, { recursive: true });
     }
 
-    // Build SKILL.md content. Use gray-matter to serialize frontmatter so
-    // quotes / backslashes / newlines in user-supplied fields round-trip
-    // safely — string concatenation here used to produce invalid YAML.
-    const content = matter.stringify(body, {
-      name,
-      description,
-      metadata: { hermes: { tags } },
-    });
+    // Canonical (top-level) frontmatter — `tags` lives at the top of the
+    // YAML, not under `metadata.hermes`.
+    const fm: Record<string, unknown> = { name: safeName, description };
+    if (tags.length > 0) fm.tags = tags;
+
+    const content = matter.stringify(body, fm);
     fs.writeFileSync(filePath, content, "utf-8");
 
-    // Parse and add to registry
-    const skill = parseSkillFile(content, filePath, safeName);
+    const skill = parseSkillDirectory(filePath, safeName);
     this.skills.set(skill.name, skill);
 
     return skill;

@@ -11,6 +11,7 @@ import { CommandPalette } from "./components/CommandPalette.js";
 import { ModelPicker } from "./components/ModelPicker.js";
 import { AgentPicker } from "./components/AgentPicker.js";
 import { SessionPicker, type SessionRow } from "./components/SessionPicker.js";
+import { SkillsOverlay } from "./components/SkillsOverlay.js";
 import { dbMessagesToTuiMessages } from "./restore.js";
 
 interface Props {
@@ -99,7 +100,8 @@ export function App({ manager, agent }: Props) {
     input.startsWith("/") &&
     !state.modelPickerOpen &&
     !state.agentPickerOpen &&
-    !state.sessionPickerOpen;
+    !state.sessionPickerOpen &&
+    !state.skillsOverlayOpen;
   const matches = paletteOpen ? filterCommands(input) : [];
 
   // ── Submit ─────────────────────────────────────────────────────────────
@@ -174,6 +176,7 @@ export function App({ manager, agent }: Props) {
     state.modelPickerOpen ||
     state.agentPickerOpen ||
     state.sessionPickerOpen ||
+    state.skillsOverlayOpen ||
     state.status === "streaming";
 
   return (
@@ -269,6 +272,13 @@ export function App({ manager, agent }: Props) {
           />
         );
       })()}
+
+      {state.skillsOverlayOpen && (
+        <SkillsOverlay
+          skills={manager.skillRegistry.getIndex()}
+          onClose={() => dispatch({ type: "close-overlays" })}
+        />
+      )}
 
       {paletteOpen && (
         <CommandPalette query={input} selectedIndex={paletteIndex} />

@@ -8,6 +8,11 @@ export {
   type ResolveRootFn,
 } from "./builtins/session-search.js";
 export {
+  bindSkillView,
+  type SkillViewBindings,
+  type SkillViewEntry,
+} from "./builtins/skill.js";
+export {
   toolCallContext,
   getCurrentSessionId,
   type ToolCallContext,
@@ -23,3 +28,4 @@ import "./builtins/web-extract.js";
 import "./builtins/web-search.js";
 import "./builtins/execute_code.js";
 import "./builtins/process.js";
+import "./builtins/skill.js";

@@ -1,3 +1,8 @@
 export { SkillRegistry } from "./registry.js";
-export { parseSkillFile } from "./parser.js";
-export type { Skill, SkillFrontmatter, SkillIndexEntry } from "./types.js";
+export { parseSkillFile, parseSkillDirectory } from "./parser.js";
+export type {
+  Skill,
+  SkillFrontmatter,
+  SkillIndexEntry,
+  SkillResource,
+} from "./types.js";

@@ -61,6 +61,12 @@ export const COMMANDS: CommandDef[] = [
     category: "session",
     handler: (c) => c.dispatch({ type: "open-session-picker" }),
   },
+  {
+    name: "skills",
+    description: "Show skills available to this agent",
+    category: "agent",
+    handler: (c) => c.dispatch({ type: "open-skills-overlay" }),
+  },
 ];
 
 export function findCommand(input: string): CommandDef | undefined {

@@ -24,10 +24,12 @@ export function buildSystemPrompt(options: {
     );
   }
 
-  // Skills index (Level 0 — names + descriptions)
+  // Skills index (Level 0 — names + descriptions). Bodies aren't loaded
+  // until the agent calls `skill_view` for one that applies.
   if (options.skillsIndex) {
     parts.push(
-      `\n## Skills\nYou have the following skills available:\n${options.skillsIndex}`
+      `\n## Skills\nYou have the following skills available. Each entry is name + short description; ` +
+        `call \`skill_view\` with the name to load the full instructions when one applies.\n${options.skillsIndex}`
     );
   }
 

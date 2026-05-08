@@ -13,7 +13,11 @@ import {
   type SessionStore,
   type MessageStore,
 } from "@openacme/db";
-import { registry as toolRegistry, bindSessionSearch } from "@openacme/tools";
+import {
+  registry as toolRegistry,
+  bindSessionSearch,
+  bindSkillView,
+} from "@openacme/tools";
 import { MCPClient } from "@openacme/mcp-client";
 import { SkillRegistry, type SkillIndexEntry } from "@openacme/skills";
 import * as path from "node:path";
@@ -62,6 +66,30 @@ export class AgentManager {
     if (this.skillRegistry.size > 0) {
       console.log(`  📚 Loaded ${this.skillRegistry.size} skills`);
     }
+
+    // Wire the skill registry into the `skill_view` tool so agents can
+    // pull a skill's body + companion file list on demand. Same bind
+    // pattern as session_search to keep @openacme/tools independent of
+    // @openacme/skills at runtime.
+    bindSkillView({
+      lookup: (name) => {
+        const s = this.skillRegistry.getSkill(name);
+        return s
+          ? {
+              name: s.name,
+              description: s.description,
+              tags: s.tags,
+              body: s.body,
+              dirPath: s.dirPath,
+              resources: s.resources.map((r) => ({
+                relPath: r.relPath,
+                size: r.size,
+              })),
+            }
+          : null;
+      },
+      list: () => this.skillRegistry.getIndex(),
+    });
   }
 
   /**
