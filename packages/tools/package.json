@@ -30,7 +30,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc --build",
+    "build": "tsc --build && node -e \"require('fs').cpSync('src/builtins/python_repl','dist/builtins/python_repl',{recursive:true})\"",
     "check-types": "tsc --noEmit",
     "dev": "tsc --watch",
     "test": "vitest run",

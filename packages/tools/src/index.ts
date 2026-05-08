@@ -14,3 +14,5 @@ import "./builtins/edit.js";
 import "./builtins/apply-patch.js";
 import "./builtins/web-extract.js";
 import "./builtins/web-search.js";
+import "./builtins/execute_code.js";
+import "./builtins/process.js";

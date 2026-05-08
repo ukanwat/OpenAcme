@@ -102,6 +102,8 @@ export const AgentDefinitionSchema = z.object({
       "session_search",
       "web_search",
       "web_extract",
+      "execute_code",
+      "process",
     ]),
   mcpServers: z.record(MCPServerConfigSchema).default({}),
   skills: z.array(z.string()).default([]),
