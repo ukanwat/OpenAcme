@@ -1,1 +1,1 @@
-{"root":["./src/index.ts","./src/registry.ts","./src/types.ts","./src/builtins/file.ts","./src/builtins/shell.ts"],"version":"5.9.2"}
+{"root":["./src/index.ts","./src/registry.ts","./src/types.ts","./src/builtins/file.ts","./src/builtins/session-search.ts","./src/builtins/shell.ts"],"version":"5.9.2"}
