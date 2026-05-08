@@ -4,10 +4,12 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import {
   resolveDataDir,
-  saveConfig,
-  ConfigSchema,
+  readRawConfig,
+  writeRawConfig,
+  createAgentStore,
   type Provider,
   type AuthMode,
+  type AgentDefinition,
 } from "@openacme/config";
 import {
   listProviders,
@@ -22,8 +24,24 @@ import {
   looksHeadless,
 } from "@openacme/auth";
 
+const DEFAULT_PERSONA =
+  "You are a helpful AI assistant. You can execute shell commands, read and write files, and search the filesystem to help users with their tasks.";
+const DEFAULT_TOOLS = [
+  "shell",
+  "read_file",
+  "write_file",
+  "list_files",
+  "search_files",
+];
+const SAFE_AGENT_ID = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
+
 /**
- * Interactive setup wizard — configure provider, auth, and create first agent.
+ * Interactive setup wizard.
+ *
+ * On a fresh install: walks through provider → auth → model and creates
+ * the first agent. On a re-run with existing agents, asks whether you want
+ * to add another agent (and lets you skip auth by reusing an existing
+ * provider's config) or configure a new provider end-to-end.
  */
 export async function setupCommand(opts: { dataDir?: string }) {
   const dataDir = resolveDataDir(opts.dataDir);
@@ -33,6 +51,160 @@ export async function setupCommand(opts: { dataDir?: string }) {
   p.intro(coolGradient("OpenAcme Setup"));
 
   p.note(`Data directory: ${dataDir}`, "Configuration");
+
+  const agentsDir = path.join(dataDir, "agents");
+  const agentStore = createAgentStore(agentsDir);
+  const existingAgents = agentStore.list();
+
+  if (existingAgents.length === 0) {
+    return await configureProviderAndCreateAgent(dataDir, agentStore, []);
+  }
+
+  // Existing install — branch on intent.
+  const intent = await p.select<"reuse" | "configure" | "cancel">({
+    message: `You already have ${existingAgents.length} agent${existingAgents.length === 1 ? "" : "s"} configured. What do you want to do?`,
+    options: [
+      {
+        value: "reuse",
+        label: "Add a new agent (reuse an existing provider)",
+        hint: "skips auth — fastest",
+      },
+      {
+        value: "configure",
+        label: "Configure a new provider and create an agent for it",
+        hint: "OAuth or API key flow",
+      },
+      { value: "cancel", label: "Cancel", hint: "no changes" },
+    ],
+  });
+  if (p.isCancel(intent) || intent === "cancel") return cancel();
+
+  if (intent === "reuse") {
+    return await addAgentReusingProvider(agentsDir, agentStore, existingAgents);
+  }
+  return await configureProviderAndCreateAgent(dataDir, agentStore, existingAgents);
+}
+
+/**
+ * Add an agent that reuses one of the provider configs already in use by
+ * an existing agent. Skips auth entirely — the existing OAuth tokens or
+ * API key in `.env` already cover the new agent.
+ */
+async function addAgentReusingProvider(
+  agentsDir: string,
+  agentStore: ReturnType<typeof createAgentStore>,
+  existingAgents: AgentDefinition[]
+): Promise<void> {
+  // 1. Collect unique provider configs from existing agents. Two agents
+  // sharing the same (provider, auth, baseUrl) tuple appear once.
+  const seen = new Set<string>();
+  const reusable: Array<{
+    key: string;
+    label: string;
+    hint: string;
+    config: AgentDefinition["model"];
+  }> = [];
+  for (const a of existingAgents) {
+    const m = a.model;
+    const key = `${m.provider}:${m.auth ?? "api_key"}:${m.baseUrl ?? ""}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    reusable.push({
+      key,
+      label: `${m.provider} (${m.auth === "oauth" ? "OAuth" : "API key"})`,
+      hint: `from ${a.id}`,
+      config: m,
+    });
+  }
+
+  const choice = await p.select<string>({
+    message: "Which provider config do you want to reuse?",
+    options: reusable.map((r) => ({
+      value: r.key,
+      label: r.label,
+      hint: r.hint,
+    })),
+  });
+  if (p.isCancel(choice)) return cancel();
+  const baseConfig = reusable.find((r) => r.key === choice)!.config;
+
+  // 2. Pick a model for that provider.
+  const modelId = await pickModel(baseConfig.provider as Provider);
+  if (modelId === "cancelled") return cancel();
+
+  // 3. Pick a unique agent id.
+  const taken = new Set(existingAgents.map((a) => a.id));
+  const id = await p.text({
+    message: "Agent id",
+    placeholder: "code-reviewer",
+    validate: (v) => {
+      const trimmed = (v ?? "").trim();
+      if (!trimmed) return "Required";
+      if (!SAFE_AGENT_ID.test(trimmed))
+        return "Use letters, digits, _ . - (no leading dot or slashes)";
+      if (taken.has(trimmed)) return `id "${trimmed}" is already taken`;
+      return undefined;
+    },
+  });
+  if (p.isCancel(id)) return cancel();
+  const agentId = (id as string).trim();
+
+  // 4. Display name.
+  const defaultName = titleCase(agentId);
+  const name = await p.text({
+    message: "Agent name",
+    placeholder: defaultName,
+    initialValue: defaultName,
+    validate: (v) => ((v ?? "").trim() ? undefined : "Required"),
+  });
+  if (p.isCancel(name)) return cancel();
+
+  // 5. Save the new agent file.
+  const spin = p.spinner();
+  spin.start("Saving agent");
+  const newAgent: AgentDefinition = {
+    id: agentId,
+    name: (name as string).trim(),
+    model: { ...baseConfig, model: modelId },
+    persona: DEFAULT_PERSONA,
+    tools: DEFAULT_TOOLS,
+    mcpServers: {},
+    skills: [],
+  };
+  try {
+    agentStore.upsert(newAgent);
+  } catch (e) {
+    spin.stop("Save failed");
+    p.cancel(e instanceof Error ? e.message : String(e));
+    process.exit(1);
+  }
+  spin.stop(`Added agent: ${agentId}`);
+
+  p.note(
+    [
+      `Agent id: ${agentId}`,
+      `Provider: ${baseConfig.provider} (${baseConfig.auth === "oauth" ? "OAuth" : "API key"})`,
+      `Model: ${modelId}`,
+      `Agent file: ${path.join(agentsDir, agentId, "AGENT.md")}`,
+    ].join("\n"),
+    "Summary"
+  );
+
+  p.outro("Done. Re-run `openacme start` if the server is already running.");
+}
+
+/**
+ * The original setup flow — pick provider, run auth (OAuth or API key),
+ * pick a model, and create or update the first agent. When existing
+ * agents are present the user is prompted to choose between updating the
+ * default agent in place or adding a new one alongside.
+ */
+async function configureProviderAndCreateAgent(
+  dataDir: string,
+  agentStore: ReturnType<typeof createAgentStore>,
+  existingAgents: AgentDefinition[]
+): Promise<void> {
+  const agentsDir = path.join(dataDir, "agents");
 
   // 1. Provider
   const providers = listProviders();
@@ -47,17 +219,13 @@ export async function setupCommand(opts: { dataDir?: string }) {
   if (p.isCancel(providerId)) return cancel();
   const provider = providers.find((pr) => pr.id === providerId)!;
 
-  // 2. Auth method (OAuth vs API key) + collect credentials
+  // 2. Auth
   const auth = await collectAuth(provider, dataDir);
   if (auth === "cancelled") return cancel();
 
-  // 3. Model — pick from curated list, or "Custom"
+  // 3. Model
   const modelId = await pickModel(provider.id);
   if (modelId === "cancelled") return cancel();
-
-  // 4. Save (no confirm prompt — Ctrl-C during prompts is the abort)
-  const spin = p.spinner();
-  spin.start("Saving configuration");
 
   const modelConfig = {
     provider: provider.id as Provider,
@@ -66,29 +234,101 @@ export async function setupCommand(opts: { dataDir?: string }) {
     auth: auth.mode as AuthMode,
   };
 
-  const config = ConfigSchema.parse({
-    dataDir,
-    model: modelConfig,
-    agents: [
-      {
-        id: "default",
-        name: "Default Agent",
-        model: modelConfig,
-        persona:
-          "You are a helpful AI assistant. You can execute shell commands, read and write files, and search the filesystem to help users with their tasks.",
-        tools: ["shell", "read_file", "write_file", "list_files", "search_files"],
-        mcpServers: {},
-        skills: [],
-      },
-    ],
-  });
-  saveConfig(config);
-  spin.stop("Configuration saved.");
+  // 4. Replace-vs-add when an agent with a different provider exists.
+  const firstAgent = existingAgents[0];
+  const existingProvider = firstAgent?.model.provider;
+  let mode: "replace" | "add" = "replace";
+  if (firstAgent && existingProvider && existingProvider !== provider.id) {
+    const existingName = firstAgent.name || firstAgent.id;
+    const choice = await p.select<"replace" | "add">({
+      message: `You already have an agent "${existingName}" using ${existingProvider}. What do you want to do?`,
+      options: [
+        {
+          value: "add",
+          label: `Add a new agent for ${provider.name}`,
+          hint: "keeps your existing default untouched",
+        },
+        {
+          value: "replace",
+          label: `Update the default agent to use ${provider.name}`,
+          hint: `replaces ${existingProvider} on the default agent`,
+        },
+      ],
+    });
+    if (p.isCancel(choice)) return cancel();
+    mode = choice;
+  }
+
+  // 5. Save
+  const spin = p.spinner();
+  spin.start("Saving configuration");
+
+  let savedAgent: AgentDefinition;
+  let savedAction: string;
+
+  if (mode === "add") {
+    const taken = new Set(existingAgents.map((a) => a.id));
+    let newId: string = provider.id;
+    let suffix = 2;
+    while (taken.has(newId)) {
+      newId = `${provider.id}-${suffix}`;
+      suffix++;
+    }
+    savedAgent = {
+      id: newId,
+      name: `${provider.name} Agent`,
+      model: modelConfig,
+      persona: DEFAULT_PERSONA,
+      tools: DEFAULT_TOOLS,
+      mcpServers: {},
+      skills: [],
+    };
+    savedAction = `Added agent: ${newId}`;
+  } else if (firstAgent) {
+    savedAgent = { ...firstAgent, model: modelConfig };
+    savedAction = `Updated agent: ${firstAgent.id}`;
+  } else {
+    savedAgent = {
+      id: "default",
+      name: "Default Agent",
+      model: modelConfig,
+      persona: DEFAULT_PERSONA,
+      tools: DEFAULT_TOOLS,
+      mcpServers: {},
+      skills: [],
+    };
+    savedAction = `Created agent: ${savedAgent.id}`;
+  }
+
+  try {
+    agentStore.upsert(savedAgent);
+
+    // Update config.yaml's top-level `model` (platform default for newly-
+    // created agents) and strip the legacy `agents:` block if present.
+    const existingConfig = readRawConfig(dataDir);
+    const merged: Record<string, unknown> = {
+      ...existingConfig,
+      model: mode === "replace" ? modelConfig : (existingConfig.model ?? modelConfig),
+    };
+    delete merged.agents;
+    writeRawConfig(dataDir, merged);
+  } catch (e) {
+    // Without this, an exception inside upsert (e.g. YAML serializer
+    // choking on undefined values) leaves the spinner running forever and
+    // the user sees "something went wrong" with no explanation.
+    spin.stop("Save failed");
+    p.cancel(e instanceof Error ? e.message : String(e));
+    process.exit(1);
+  }
+
+  spin.stop(`${savedAction}.`);
 
   const summaryLines = [
     `Provider: ${provider.name}`,
     `Model: ${modelId}`,
     `Auth: ${auth.mode === "oauth" ? "OAuth subscription" : "API key"}`,
+    `Agent id: ${savedAgent.id}`,
+    `Agent file: ${path.join(agentsDir, savedAgent.id, "AGENT.md")}`,
     `Config: ${path.join(dataDir, "config.yaml")}`,
   ];
   if (auth.mode === "oauth") summaryLines.push(`Tokens: ${path.join(dataDir, "auth.json")}`);
@@ -96,6 +336,14 @@ export async function setupCommand(opts: { dataDir?: string }) {
   p.note(summaryLines.join("\n"), "Summary");
 
   p.outro("Setup complete! Run: openacme start");
+}
+
+function titleCase(s: string): string {
+  return s
+    .split(/[-_.\s]+/)
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
 }
 
 function providerHint(prov: ProviderInfo): string | undefined {

@@ -1,1 +1,1 @@
-{"root":["./src/index.ts","./src/loader.ts","./src/schema.ts"],"version":"5.9.2"}
+{"root":["./src/agent-store.ts","./src/index.ts","./src/loader.ts","./src/schema.ts"],"version":"5.9.2"}

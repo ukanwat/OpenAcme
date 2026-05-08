@@ -1,0 +1,20 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1778245927691,
+      "tag": "0000_parched_naoko",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1778245940657,
+      "tag": "0001_fts5_messages",
+      "breakpoints": true
+    }
+  ]
+}

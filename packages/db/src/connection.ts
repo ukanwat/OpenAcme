@@ -1,99 +1,46 @@
 import Database from "better-sqlite3";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
+import { drizzle } from "drizzle-orm/better-sqlite3";
+import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import { resolveDataDir, type Config } from "@openacme/config";
 
 /**
- * Initialize the SQLite database with all required tables.
- * Creates the database file if it doesn't exist.
+ * Open the SQLite database for OpenAcme and apply any pending migrations.
+ *
+ * Schema is owned by drizzle: edit `src/schema.ts`, run `pnpm db:generate`
+ * to produce a new migration in `drizzle/`, commit both. At runtime
+ * `drizzle-orm`'s migrator applies anything not yet recorded in
+ * `__drizzle_migrations`. Never write `ALTER TABLE` by hand — let
+ * drizzle-kit generate it from a schema diff.
+ *
+ * The package itself remains backed by raw better-sqlite3 prepared
+ * statements (see `stores/`). Drizzle is used for migrations only; the
+ * stores stay zero-overhead.
  */
 export function createDatabase(config: Config): Database.Database {
   const dataDir = resolveDataDir(config.dataDir);
   const dbPath = path.join(dataDir, "state.db");
-
   const db = new Database(dbPath);
-
-  // Enable WAL mode for better concurrent read performance
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
-
-  // Create tables
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS agents (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      config TEXT NOT NULL,
-      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-    );
-
-    CREATE TABLE IF NOT EXISTS sessions (
-      id TEXT PRIMARY KEY,
-      agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
-      title TEXT,
-      system_prompt TEXT,
-      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_sessions_agent_id ON sessions(agent_id);
-
-    CREATE TABLE IF NOT EXISTS messages (
-      id TEXT PRIMARY KEY,
-      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-      role TEXT NOT NULL,
-      content TEXT,
-      tool_calls TEXT,
-      tool_call_id TEXT,
-      tool_name TEXT,
-      created_at INTEGER NOT NULL DEFAULT (unixepoch())
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id);
-
-    CREATE TABLE IF NOT EXISTS user_profiles (
-      id TEXT PRIMARY KEY,
-      content TEXT NOT NULL DEFAULT '',
-      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-    );
-  `);
-
-  // Idempotent column add for DBs created before tool_name was tracked.
-  // better-sqlite3 throws "duplicate column name" on re-run; swallow it.
-  try {
-    db.exec(`ALTER TABLE messages ADD COLUMN tool_name TEXT`);
-  } catch (e) {
-    if (!/duplicate column name/i.test((e as Error).message)) throw e;
-  }
-
-  // Create FTS5 virtual table for cross-session search
-  // Using content-less FTS5 (external content) for space efficiency
-  db.exec(`
-    CREATE VIRTUAL TABLE IF NOT EXISTS fts_messages USING fts5(
-      content,
-      session_id UNINDEXED,
-      role UNINDEXED,
-      content='messages',
-      content_rowid='rowid'
-    );
-
-    -- Triggers to keep FTS index in sync
-    CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
-      INSERT INTO fts_messages(rowid, content, session_id, role)
-        VALUES (new.rowid, new.content, new.session_id, new.role);
-    END;
-
-    CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
-      INSERT INTO fts_messages(fts_messages, rowid, content, session_id, role)
-        VALUES ('delete', old.rowid, old.content, old.session_id, old.role);
-    END;
-
-    CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE ON messages BEGIN
-      INSERT INTO fts_messages(fts_messages, rowid, content, session_id, role)
-        VALUES ('delete', old.rowid, old.content, old.session_id, old.role);
-      INSERT INTO fts_messages(rowid, content, session_id, role)
-        VALUES (new.rowid, new.content, new.session_id, new.role);
-    END;
-  `);
-
+  applySchema(db);
   return db;
 }
+
+/**
+ * Apply all migrations to a database. Used by `createDatabase` and by
+ * tests to bootstrap an in-memory db.
+ */
+export function applySchema(db: Database.Database): void {
+  migrate(drizzle(db), { migrationsFolder: MIGRATIONS_FOLDER });
+}
+
+// Resolve the migrations folder relative to this module. Works in both
+// development (TS source under `src/`) and after build (JS under `dist/`)
+// since `drizzle/` is a sibling of both.
+const MIGRATIONS_FOLDER = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "drizzle"
+);

@@ -115,32 +115,14 @@ export type WebConfig = z.infer<typeof WebConfigSchema>;
 
 /**
  * Root configuration schema — maps to config.yaml
+ *
+ * Agents are not stored here. They live as folders under
+ * `<dataDir>/agents/<id>/AGENT.md`, one folder per agent. Any `agents:`
+ * key in older configs is silently ignored by Zod's default object stripping.
  */
 export const ConfigSchema = z.object({
   dataDir: z.string().default("~/.openacme"),
   model: ModelConfigSchema.default({}),
-  agents: z.array(AgentDefinitionSchema).default([
-    {
-      id: "default",
-      name: "Default Agent",
-      model: {},
-      persona: "You are a helpful AI assistant.",
-      tools: [
-        "shell",
-        "read_file",
-        "write_file",
-        "edit",
-        "apply_patch",
-        "list_files",
-        "search_files",
-        "session_search",
-        "web_search",
-        "web_extract",
-      ],
-      mcpServers: {},
-      skills: [],
-    },
-  ]),
   server: ServerConfigSchema.default({}),
   behavior: AgentBehaviorSchema.default({}),
   skills: SkillsConfigSchema.default({}),

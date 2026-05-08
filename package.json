@@ -1,5 +1,5 @@
 {
-  "name": "OpenAcme",
+  "name": "openacme",
   "private": true,
   "scripts": {
     "build": "turbo run build",

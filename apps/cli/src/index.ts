@@ -25,13 +25,17 @@ program
   .description("OpenAcme — AI agent platform with multi-LLM support")
   .version(pkg.version);
 
-// Default action: start the server (when no command given)
+// `start` is the default — running `openacme` with no subcommand dispatches
+// here. Defining options on the program level AND the subcommand caused
+// Commander to consume them at the program level and the subcommand action
+// would receive opts without dataDir/port/noBrowser.
 program
+  .command("start", { isDefault: true })
+  .description("Start the OpenAcme agent server")
   .option("-d, --data-dir <path>", "Data directory (default: ~/.openacme)")
   .option("-p, --port <number>", "Server port", "3210")
   .option("--no-browser", "Don't open browser automatically")
   .action(async (opts) => {
-    // If no subcommand, start the server
     await showBanner(pkg.version);
     await startCommand(opts);
   });
@@ -41,17 +45,6 @@ program
   .description("Interactive setup wizard — configure API keys and create first agent")
   .option("-d, --data-dir <path>", "Data directory (default: ~/.openacme)")
   .action(setupCommand);
-
-program
-  .command("start")
-  .description("Start the OpenAcme agent server")
-  .option("-d, --data-dir <path>", "Data directory (default: ~/.openacme)")
-  .option("-p, --port <number>", "Server port", "3210")
-  .option("--no-browser", "Don't open browser automatically")
-  .action(async (opts) => {
-    await showBanner(pkg.version);
-    await startCommand(opts);
-  });
 
 program
   .command("chat")

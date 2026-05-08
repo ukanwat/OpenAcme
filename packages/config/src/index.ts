@@ -22,6 +22,10 @@ export {
 export {
   loadConfig,
   saveConfig,
+  readRawConfig,
+  writeRawConfig,
   resolveDataDir,
   resolveConfigPath,
 } from "./loader.js";
+
+export { createAgentStore, type AgentStore } from "./agent-store.js";

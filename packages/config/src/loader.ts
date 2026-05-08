@@ -83,6 +83,39 @@ export function saveConfig(config: Config): void {
 }
 
 /**
+ * Read the existing config.yaml as a raw object (no Zod parse, no defaults).
+ * Returns {} if the file is absent or unreadable. Used when callers need to
+ * preserve user-set keys verbatim — going through `loadConfig` would
+ * materialize Zod defaults for every field, indistinguishable from values
+ * the user set explicitly.
+ */
+export function readRawConfig(dataDir: string): Record<string, unknown> {
+  const configPath = path.join(resolveDataDir(dataDir), "config.yaml");
+  if (!fs.existsSync(configPath)) return {};
+  try {
+    return (parseYaml(fs.readFileSync(configPath, "utf-8")) as Record<string, unknown>) ?? {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Write a raw object to config.yaml verbatim (no Zod parse, no defaults).
+ * Pair with `readRawConfig` to do "merge, preserve everything else" writes —
+ * critical for the setup wizard, which only owns `model` and the first agent
+ * but should not clobber `behavior`, `web`, `skills`, or extra agents.
+ */
+export function writeRawConfig(
+  dataDir: string,
+  raw: Record<string, unknown>
+): void {
+  const configPath = path.join(resolveDataDir(dataDir), "config.yaml");
+  // Strip dataDir if present — it's runtime-resolved, not persisted.
+  const { dataDir: _omit, ...rest } = raw;
+  fs.writeFileSync(configPath, stringifyYaml(rest), "utf-8");
+}
+
+/**
  * Get the resolved path for a config-relative path.
  * E.g., "state.db" → "/Users/x/.openacme/state.db"
  */

@@ -1,13 +1,16 @@
 import { Agent, type AgentConfig, type StreamChunk } from "@openacme/agent-core";
-import type { AgentDefinition, Config } from "@openacme/config";
+import {
+  createAgentStore,
+  type AgentDefinition,
+  type AgentStore,
+  type Config,
+} from "@openacme/config";
 import {
   createDatabase,
   createSessionStore,
   createMessageStore,
-  createAgentStore,
   type SessionStore,
   type MessageStore,
-  type AgentStore,
 } from "@openacme/db";
 import { registry as toolRegistry, bindSessionSearch } from "@openacme/tools";
 import { MCPClient } from "@openacme/mcp-client";
@@ -33,7 +36,12 @@ export class AgentManager {
     this.db = createDatabase(config);
     this.sessionStore = createSessionStore(this.db);
     this.messageStore = createMessageStore(this.db);
-    this.agentStore = createAgentStore(this.db);
+
+    // Agents live as folders at <dataDir>/agents/<id>/AGENT.md — the
+    // directory is the only source of truth, no DB mirror, no shadow
+    // state in config.yaml.
+    const agentsDir = path.join(config.dataDir, "agents");
+    this.agentStore = createAgentStore(agentsDir);
 
     // Wire the FTS5-backed cross-session search into the `session_search`
     // tool. Done here so @openacme/tools doesn't need a runtime dep on
@@ -49,9 +57,6 @@ export class AgentManager {
     if (this.skillRegistry.size > 0) {
       console.log(`  📚 Loaded ${this.skillRegistry.size} skills`);
     }
-
-    // Sync agent definitions from config to DB
-    this.agentStore.syncFromConfig(config.agents);
   }
 
   /**
@@ -59,7 +64,7 @@ export class AgentManager {
    * Called after construction (async init).
    */
   async initMCP(): Promise<void> {
-    for (const agentDef of this.config.agents) {
+    for (const agentDef of this.agentStore.list()) {
       const servers = agentDef.mcpServers;
       if (!servers || Object.keys(servers).length === 0) continue;
 

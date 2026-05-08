@@ -106,8 +106,12 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
   });
 
   // ── Sessions ──
+  // listActive (not list) hides sessions that have been compressed away —
+  // parents that have a child session pointing at them. Otherwise the sidebar
+  // shows the same conversation twice (parent + child) after a compression
+  // fork.
   app.get("/api/agents/:id/sessions", (c) => {
-    const sessions = manager.sessionStore.list(c.req.param("id"));
+    const sessions = manager.sessionStore.listActive(c.req.param("id"));
     return c.json(sessions);
   });
 

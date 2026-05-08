@@ -1,16 +1,10 @@
 import type Database from "better-sqlite3";
+import { drizzle } from "drizzle-orm/better-sqlite3";
+import { asc, eq, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
+import { messages, type Message, type NewMessage } from "../schema.js";
 
-export interface Message {
-  id: string;
-  sessionId: string;
-  role: "system" | "user" | "assistant" | "tool";
-  content: string | null;
-  toolCalls: string | null;
-  toolCallId: string | null;
-  toolName: string | null;
-  createdAt: number;
-}
+export type { Message, NewMessage };
 
 export interface SearchResult {
   content: string;
@@ -20,44 +14,89 @@ export interface SearchResult {
 }
 
 /**
- * Message store — append messages, retrieve history, and FTS5 search.
+ * Message store — drizzle ORM operations on `messages`, plus a raw FTS5
+ * search statement (drizzle can't model virtual tables).
  */
 export function createMessageStore(db: Database.Database) {
-  const stmts = {
-    insert: db.prepare(
-      `INSERT INTO messages (id, session_id, role, content, tool_calls, tool_call_id, tool_name, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, unixepoch())`
-    ),
-    getHistory: db.prepare(
-      `SELECT id, session_id as sessionId, role, content, tool_calls as toolCalls,
-              tool_call_id as toolCallId, tool_name as toolName, created_at as createdAt
-       FROM messages WHERE session_id = ? ORDER BY created_at ASC`
-    ),
-    search: db.prepare(
-      `SELECT content, session_id as sessionId, role, rank
-       FROM fts_messages WHERE fts_messages MATCH ?
-       ORDER BY rank LIMIT ?`
-    ),
-    delete: db.prepare(`DELETE FROM messages WHERE session_id = ?`),
-  };
+  const orm = drizzle(db);
 
-  return {
-    append(sessionId: string, message: Omit<Message, "id" | "createdAt">): Message {
-      const id = randomUUID();
-      stmts.insert.run(
+  // FTS5 virtual tables aren't representable in drizzle's schema. The
+  // search hot path stays on a cached better-sqlite3 prepared statement.
+  const ftsSearchStmt = db.prepare(
+    `SELECT content, session_id as sessionId, role, rank
+     FROM fts_messages WHERE fts_messages MATCH ?
+     ORDER BY rank LIMIT ?`
+  );
+
+  type Insertable = Omit<NewMessage, "id" | "createdAt">;
+
+  function appendOne(sessionId: string, message: Insertable): Message {
+    const id = randomUUID();
+    return orm
+      .insert(messages)
+      .values({
         id,
         sessionId,
-        message.role,
-        message.content ?? null,
-        message.toolCalls ?? null,
-        message.toolCallId ?? null,
-        message.toolName ?? null
-      );
-      return { id, createdAt: Math.floor(Date.now() / 1000), ...message, sessionId };
+        role: message.role,
+        content: message.content ?? null,
+        toolCalls: message.toolCalls ?? null,
+        toolCallId: message.toolCallId ?? null,
+        toolName: message.toolName ?? null,
+      })
+      .returning()
+      .get();
+  }
+
+  return {
+    append(sessionId: string, message: Insertable): Message {
+      return appendOne(sessionId, message);
     },
 
+    /**
+     * Bulk insert in a single transaction. Used by the compression fork
+     * to copy the verbatim tail of an old session into the new child.
+     * Drizzle's `transaction` wraps better-sqlite3's; a throw mid-batch
+     * rolls back every row.
+     */
+    appendMany(sessionId: string, msgs: Insertable[]): Message[] {
+      return orm.transaction((tx) => {
+        const out: Message[] = [];
+        for (const m of msgs) {
+          const id = randomUUID();
+          const row = tx
+            .insert(messages)
+            .values({
+              id,
+              sessionId,
+              role: m.role,
+              content: m.content ?? null,
+              toolCalls: m.toolCalls ?? null,
+              toolCallId: m.toolCallId ?? null,
+              toolName: m.toolName ?? null,
+            })
+            .returning()
+            .get();
+          out.push(row);
+        }
+        return out;
+      });
+    },
+
+    /**
+     * Tie-break on rowid: created_at is unixepoch (second resolution), so
+     * a tight bulk insert (e.g. compression fork copying tail messages)
+     * can land rows with the same timestamp. Without an explicit rowid
+     * tie-break, SQLite's row order for equal keys is undefined — and the
+     * agent's history loader does an i+1 lookahead for tool-call /
+     * tool-result pairing that breaks badly under reorder.
+     */
     getHistory(sessionId: string): Message[] {
-      return stmts.getHistory.all(sessionId) as Message[];
+      return orm
+        .select()
+        .from(messages)
+        .where(eq(messages.sessionId, sessionId))
+        .orderBy(asc(messages.createdAt), asc(sql`rowid`))
+        .all();
     },
 
     /**
@@ -65,15 +104,15 @@ export function createMessageStore(db: Database.Database) {
      */
     search(query: string, limit = 20): SearchResult[] {
       try {
-        return stmts.search.all(query, limit) as SearchResult[];
+        return ftsSearchStmt.all(query, limit) as SearchResult[];
       } catch {
-        // FTS5 query syntax errors — return empty results
+        // FTS5 query syntax errors — return empty results.
         return [];
       }
     },
 
     deleteBySession(sessionId: string): void {
-      stmts.delete.run(sessionId);
+      orm.delete(messages).where(eq(messages.sessionId, sessionId)).run();
     },
   };
 }
