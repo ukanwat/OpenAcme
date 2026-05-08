@@ -9,7 +9,7 @@ import {
   type MessageStore,
   type AgentStore,
 } from "@openacme/db";
-import { registry as toolRegistry } from "@openacme/tools";
+import { registry as toolRegistry, bindSessionSearch } from "@openacme/tools";
 import { MCPClient } from "@openacme/mcp-client";
 import { SkillRegistry, type SkillIndexEntry } from "@openacme/skills";
 import * as path from "node:path";
@@ -34,6 +34,11 @@ export class AgentManager {
     this.sessionStore = createSessionStore(this.db);
     this.messageStore = createMessageStore(this.db);
     this.agentStore = createAgentStore(this.db);
+
+    // Wire the FTS5-backed cross-session search into the `session_search`
+    // tool. Done here so @openacme/tools doesn't need a runtime dep on
+    // @openacme/db.
+    bindSessionSearch((query, limit) => this.messageStore.search(query, limit));
 
     // Load skills
     this.skillRegistry = new SkillRegistry();

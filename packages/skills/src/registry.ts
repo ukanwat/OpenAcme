@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import matter from "gray-matter";
 import { parseSkillFile } from "./parser.js";
 import type { Skill, SkillIndexEntry } from "./types.js";
 
@@ -176,18 +177,14 @@ export class SkillRegistry {
       fs.mkdirSync(skillDir, { recursive: true });
     }
 
-    // Build SKILL.md content with YAML frontmatter
-    const frontmatter = [
-      "---",
-      `name: "${name}"`,
-      `description: "${description}"`,
-      "metadata:",
-      "  hermes:",
-      `    tags: [${tags.map(t => `"${t}"`).join(", ")}]`,
-      "---",
-    ].join("\n");
-
-    const content = `${frontmatter}\n\n${body}`;
+    // Build SKILL.md content. Use gray-matter to serialize frontmatter so
+    // quotes / backslashes / newlines in user-supplied fields round-trip
+    // safely — string concatenation here used to produce invalid YAML.
+    const content = matter.stringify(body, {
+      name,
+      description,
+      metadata: { hermes: { tags } },
+    });
     fs.writeFileSync(filePath, content, "utf-8");
 
     // Parse and add to registry

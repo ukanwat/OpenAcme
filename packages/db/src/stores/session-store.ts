@@ -42,9 +42,12 @@ export function createSessionStore(db: Database.Database) {
   };
 
   return {
-    create(agentId: string, title?: string): Session {
-      const id = randomUUID();
-      stmts.insert.run(id, agentId, title ?? null, null);
+    create(
+      agentId: string,
+      opts: { id?: string; title?: string } = {}
+    ): Session {
+      const id = opts.id ?? randomUUID();
+      stmts.insert.run(id, agentId, opts.title ?? null, null);
       return stmts.get.get(id) as Session;
     },
 

@@ -44,6 +44,7 @@ export function createDatabase(config: Config): Database.Database {
       content TEXT,
       tool_calls TEXT,
       tool_call_id TEXT,
+      tool_name TEXT,
       created_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
 
@@ -55,6 +56,14 @@ export function createDatabase(config: Config): Database.Database {
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
   `);
+
+  // Idempotent column add for DBs created before tool_name was tracked.
+  // better-sqlite3 throws "duplicate column name" on re-run; swallow it.
+  try {
+    db.exec(`ALTER TABLE messages ADD COLUMN tool_name TEXT`);
+  } catch (e) {
+    if (!/duplicate column name/i.test((e as Error).message)) throw e;
+  }
 
   // Create FTS5 virtual table for cross-session search
   // Using content-less FTS5 (external content) for space efficiency

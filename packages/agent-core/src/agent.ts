@@ -46,41 +46,98 @@ export class Agent {
     sessionId: string,
     userMessage: string
   ): AsyncIterable<StreamChunk> {
-    // Ensure session exists
+    // Ensure session exists. Honor the caller-supplied id so the SSE
+    // `session` event the server already emitted (app.ts:145) actually
+    // matches the row we persist against — without this, the client
+    // pins one id while the DB row uses another, and follow-up turns
+    // never load history.
     let session = this.sessionStore.get(sessionId);
     if (!session) {
-      session = this.sessionStore.create(this.config.id);
-      sessionId = session.id;
+      session = this.sessionStore.create(this.config.id, { id: sessionId });
     }
 
-    // Load conversation history
+    // Load conversation history. Reconstruct Vercel AI SDK CoreMessage v3
+    // shape: assistant messages with tool calls become content-parts arrays;
+    // tool messages become role:"tool" with a tool-result part. Old rows
+    // written before tool persistence existed used a different field shape
+    // (`{id, name, args}`); we normalize them on read. Assistant rows whose
+    // tool calls have no matching tool result in the next message are dropped
+    // (the call would otherwise be unresolved and reject on most providers).
     const dbMessages = this.messageStore.getHistory(sessionId);
-    const messages: CoreMessage[] = dbMessages.map((m) => {
-      if (m.role === "tool" && m.toolCallId) {
-        return {
-          role: "tool" as const,
-          content: m.content ?? "",
-          toolCallId: m.toolCallId,
-        } as unknown as CoreMessage;
+    const messages: CoreMessage[] = [];
+    for (let i = 0; i < dbMessages.length; i++) {
+      const m = dbMessages[i]!;
+
+      if (m.role === "tool" && m.toolCallId && m.toolName) {
+        messages.push({
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: m.toolCallId,
+              toolName: m.toolName,
+              result: m.content ?? "",
+            },
+          ],
+        } as unknown as CoreMessage);
+        continue;
       }
+
       if (m.role === "assistant" && m.toolCalls) {
-        let parsedToolCalls: unknown[] = [];
+        let parsed: Array<{
+          id?: string;
+          name?: string;
+          toolCallId?: string;
+          toolName?: string;
+          args: unknown;
+        }> = [];
         try {
-          parsedToolCalls = JSON.parse(m.toolCalls);
+          parsed = JSON.parse(m.toolCalls);
         } catch (e) {
-          console.warn(`Failed to parse toolCalls for message: ${e instanceof Error ? e.message : String(e)}`);
+          console.warn(
+            `Failed to parse toolCalls for message: ${e instanceof Error ? e.message : String(e)}`
+          );
         }
-        return {
-          role: "assistant" as const,
-          content: m.content ?? "",
-          toolCalls: parsedToolCalls,
-        } as unknown as CoreMessage;
+        // Normalize legacy `{id, name, args}` → `{toolCallId, toolName, args}`.
+        const normalized = parsed
+          .map((tc) => ({
+            toolCallId: tc.toolCallId ?? tc.id ?? "",
+            toolName: tc.toolName ?? tc.name ?? "",
+            args: tc.args,
+          }))
+          .filter((tc) => tc.toolCallId && tc.toolName);
+
+        // Drop tool calls whose result row never followed (legacy DBs).
+        const next = dbMessages[i + 1];
+        const hasFollowingToolMessage =
+          next?.role === "tool" && next.toolCallId !== null;
+        const callsToInclude = hasFollowingToolMessage ? normalized : [];
+
+        const parts: unknown[] = [];
+        if (m.content) parts.push({ type: "text", text: m.content });
+        for (const tc of callsToInclude) {
+          parts.push({
+            type: "tool-call",
+            toolCallId: tc.toolCallId,
+            toolName: tc.toolName,
+            args: tc.args,
+          });
+        }
+
+        if (parts.length > 0) {
+          messages.push({
+            role: "assistant",
+            content: parts,
+          } as unknown as CoreMessage);
+        }
+        continue;
       }
-      return {
+
+      messages.push({
         role: m.role as "user" | "assistant" | "system",
         content: m.content ?? "",
-      };
-    });
+      });
+    }
 
     // Add user message
     messages.push({ role: "user", content: userMessage });
@@ -91,6 +148,7 @@ export class Agent {
         content: userMessage,
         toolCalls: null,
         toolCallId: null,
+        toolName: null,
       });
     } catch (e) {
       console.error(`Failed to save user message: ${e instanceof Error ? e.message : String(e)}`);
@@ -151,13 +209,31 @@ export class Agent {
       });
 
       let fullContent = "";
-      const toolCallsForDb: Array<{
-        id: string;
-        name: string;
-        args: unknown;
-      }> = [];
 
       for await (const part of result.fullStream) {
+        // Hoisted out of the typed switch: `tool-result` IS in the SDK's
+        // TextStreamPart union (ai 4.3 dist/index.d.ts:2848), but the
+        // ToolResultUnion<TOOLS> half collapses to `never` because our
+        // tools type is widened by the streamText call. Match by string
+        // and re-narrow.
+        if ((part as { type: string }).type === "tool-result") {
+          const tr = part as unknown as {
+            toolCallId: string;
+            toolName: string;
+            result: unknown;
+          };
+          yield {
+            type: "tool-result",
+            toolName: tr.toolName,
+            toolCallId: tr.toolCallId,
+            result:
+              typeof tr.result === "string"
+                ? tr.result
+                : JSON.stringify(tr.result),
+          };
+          continue;
+        }
+
         switch (part.type) {
           case "text-delta":
             fullContent += part.textDelta;
@@ -166,11 +242,6 @@ export class Agent {
 
           case "tool-call": {
             const toolCallId = part.toolCallId ?? randomUUID();
-            toolCallsForDb.push({
-              id: toolCallId,
-              name: part.toolName,
-              args: part.args,
-            });
             yield {
               type: "tool-call",
               toolName: part.toolName,
@@ -180,38 +251,72 @@ export class Agent {
             break;
           }
 
-          case "step-finish": {
-            // Step finish may contain tool results from the previous step
-            // The Vercel AI SDK handles tool execution and feeds results
-            // back to the model automatically via maxSteps.
-            break;
-          }
-
           case "error":
             yield { type: "error", error: String(part.error) };
             break;
 
           default:
-            // Other events: reasoning, source, finish, etc. — skip
+            // text-delta, tool-call, and the hoisted tool-result branch
+            // drive the live UI. step-finish, reasoning, source, finish
+            // are captured via result.steps below for persistence.
             break;
         }
       }
 
-      // Save assistant message
+      // Persist the full turn from the SDK's per-step view. Each step yields
+      // an assistant row (text + tool calls) followed by one tool row per
+      // tool result, so follow-up turns reload a valid call→result sequence.
       const usage = await result.usage;
       try {
-        this.messageStore.append(sessionId, {
-          sessionId,
-          role: "assistant",
-          content: fullContent || null,
-          toolCalls:
-            toolCallsForDb.length > 0
-              ? JSON.stringify(toolCallsForDb)
-              : null,
-          toolCallId: null,
-        });
+        const steps = await result.steps;
+        for (const step of steps) {
+          const stepCalls = (step.toolCalls ?? []).map((tc) => ({
+            toolCallId: tc.toolCallId,
+            toolName: tc.toolName,
+            args: tc.args,
+          }));
+          const stepText = step.text ?? "";
+          const hasContent = stepText.length > 0 || stepCalls.length > 0;
+          if (hasContent) {
+            this.messageStore.append(sessionId, {
+              sessionId,
+              role: "assistant",
+              content: stepText || null,
+              toolCalls:
+                stepCalls.length > 0 ? JSON.stringify(stepCalls) : null,
+              toolCallId: null,
+              toolName: null,
+            });
+          }
+          // The SDK types step.toolResults against the concrete tools
+          // generic; with our widened tools (Vercel AI SDK Parameters cast)
+          // the element type collapses to `never`. Re-narrow at the use
+          // site — the runtime shape is well-defined (toolCallId, toolName,
+          // result) regardless of what the type system can see.
+          const toolResults = (step.toolResults ?? []) as Array<{
+            toolCallId: string;
+            toolName: string;
+            result: unknown;
+          }>;
+          for (const tr of toolResults) {
+            const resultText =
+              typeof tr.result === "string"
+                ? tr.result
+                : JSON.stringify(tr.result);
+            this.messageStore.append(sessionId, {
+              sessionId,
+              role: "tool",
+              content: resultText,
+              toolCalls: null,
+              toolCallId: tr.toolCallId,
+              toolName: tr.toolName,
+            });
+          }
+        }
       } catch (e) {
-        console.error(`Failed to save assistant message: ${e instanceof Error ? e.message : String(e)}`);
+        console.error(
+          `Failed to persist assistant turn: ${e instanceof Error ? e.message : String(e)}`
+        );
       }
 
       // Update session title from first message

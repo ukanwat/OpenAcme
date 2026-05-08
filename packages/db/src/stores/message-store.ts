@@ -8,6 +8,7 @@ export interface Message {
   content: string | null;
   toolCalls: string | null;
   toolCallId: string | null;
+  toolName: string | null;
   createdAt: number;
 }
 
@@ -24,12 +25,12 @@ export interface SearchResult {
 export function createMessageStore(db: Database.Database) {
   const stmts = {
     insert: db.prepare(
-      `INSERT INTO messages (id, session_id, role, content, tool_calls, tool_call_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, unixepoch())`
+      `INSERT INTO messages (id, session_id, role, content, tool_calls, tool_call_id, tool_name, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, unixepoch())`
     ),
     getHistory: db.prepare(
       `SELECT id, session_id as sessionId, role, content, tool_calls as toolCalls,
-              tool_call_id as toolCallId, created_at as createdAt
+              tool_call_id as toolCallId, tool_name as toolName, created_at as createdAt
        FROM messages WHERE session_id = ? ORDER BY created_at ASC`
     ),
     search: db.prepare(
@@ -49,7 +50,8 @@ export function createMessageStore(db: Database.Database) {
         message.role,
         message.content ?? null,
         message.toolCalls ?? null,
-        message.toolCallId ?? null
+        message.toolCallId ?? null,
+        message.toolName ?? null
       );
       return { id, createdAt: Math.floor(Date.now() / 1000), ...message, sessionId };
     },
