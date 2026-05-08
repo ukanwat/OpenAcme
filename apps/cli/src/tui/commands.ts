@@ -44,16 +44,22 @@ export const COMMANDS: CommandDef[] = [
     handler: (c) => c.exit(),
   },
   {
-    name: "model",
+    name: "models",
     description: "Switch the agent's model",
     category: "agent",
     handler: (c) => c.dispatch({ type: "open-model-picker" }),
   },
   {
-    name: "agent",
+    name: "agents",
     description: "Switch the active agent",
     category: "agent",
     handler: (c) => c.dispatch({ type: "open-agent-picker" }),
+  },
+  {
+    name: "sessions",
+    description: "Resume an existing session",
+    category: "session",
+    handler: (c) => c.dispatch({ type: "open-session-picker" }),
   },
 ];
 

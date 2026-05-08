@@ -10,6 +10,8 @@ import { MultilineInput } from "./components/MultilineInput.js";
 import { CommandPalette } from "./components/CommandPalette.js";
 import { ModelPicker } from "./components/ModelPicker.js";
 import { AgentPicker } from "./components/AgentPicker.js";
+import { SessionPicker, type SessionRow } from "./components/SessionPicker.js";
+import { dbMessagesToTuiMessages } from "./restore.js";
 
 interface Props {
   manager: AgentManager;
@@ -92,11 +94,35 @@ export function App({ manager, agent }: Props) {
     [ctx]
   );
 
+  // ── Palette state ──────────────────────────────────────────────────────
+  const paletteOpen =
+    input.startsWith("/") &&
+    !state.modelPickerOpen &&
+    !state.agentPickerOpen &&
+    !state.sessionPickerOpen;
+  const matches = paletteOpen ? filterCommands(input) : [];
+
   // ── Submit ─────────────────────────────────────────────────────────────
   const handleSubmit = useCallback(
     (raw: string) => {
       const text = raw.trim();
       if (!text) return;
+
+      // Palette pick: when the palette is showing matches for a partial
+      // slash input (e.g. "/age"), Enter selects the highlighted entry
+      // rather than submitting the literal partial that findCommand can't
+      // resolve. Falls through to literal submission only when there are
+      // no matches.
+      if (paletteOpen && matches.length > 0) {
+        const chosen = matches[Math.min(paletteIndex, matches.length - 1)];
+        if (chosen) {
+          setInput("");
+          setPaletteIndex(0);
+          void runSlashCommand(`/${chosen.name}`);
+          return;
+        }
+      }
+
       setInput("");
       setPaletteIndex(0);
 
@@ -106,12 +132,8 @@ export function App({ manager, agent }: Props) {
       }
       void sendTurn(text);
     },
-    [runSlashCommand, sendTurn]
+    [paletteOpen, matches, paletteIndex, runSlashCommand, sendTurn]
   );
-
-  // ── Palette interception ───────────────────────────────────────────────
-  const paletteOpen = input.startsWith("/") && !state.modelPickerOpen && !state.agentPickerOpen;
-  const matches = paletteOpen ? filterCommands(input) : [];
 
   const handleSpecialKey = useCallback(
     (key: { name: string; shift: boolean; ctrl: boolean; meta: boolean }) => {
@@ -149,7 +171,10 @@ export function App({ manager, agent }: Props) {
 
   // Picker overlays disable the input.
   const inputDisabled =
-    state.modelPickerOpen || state.agentPickerOpen || state.status === "streaming";
+    state.modelPickerOpen ||
+    state.agentPickerOpen ||
+    state.sessionPickerOpen ||
+    state.status === "streaming";
 
   return (
     <Box flexDirection="column">
@@ -202,6 +227,48 @@ export function App({ manager, agent }: Props) {
           onCancel={() => dispatch({ type: "close-overlays" })}
         />
       )}
+
+      {state.sessionPickerOpen && (() => {
+        const agents = manager.listAgents();
+        const agentsById = new Map(agents.map((a) => [a.id, a]));
+        // Hide sessions whose agent has been deleted — the next chat turn
+        // would resolve to a missing AgentDefinition. listAllActive already
+        // hides compression-parents.
+        const rows: SessionRow[] = manager.sessionStore
+          .listAllActive()
+          .filter((s) => agentsById.has(s.agentId))
+          .map((s) => ({
+            id: s.id,
+            title: s.title,
+            agentId: s.agentId,
+            updatedAt: s.updatedAt,
+          }));
+        return (
+          <SessionPicker
+            sessions={rows}
+            agentsById={agentsById}
+            currentSessionId={state.sessionId}
+            onSelect={(picked) => {
+              const owner = agentsById.get(picked.agentId);
+              if (!owner) {
+                dispatch({ type: "close-overlays" });
+                return;
+              }
+              const dbHistory = manager.messageStore.getHistory(picked.id);
+              const committed = dbMessagesToTuiMessages(dbHistory);
+              dispatch({
+                type: "set-session",
+                sessionId: picked.id,
+                agentId: owner.id,
+                agentName: owner.name,
+                modelLabel: `${owner.model.provider}/${owner.model.model}`,
+                committed,
+              });
+            }}
+            onCancel={() => dispatch({ type: "close-overlays" })}
+          />
+        );
+      })()}
 
       {paletteOpen && (
         <CommandPalette query={input} selectedIndex={paletteIndex} />

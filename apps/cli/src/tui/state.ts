@@ -35,6 +35,7 @@ export interface AppState {
   paletteOpen: boolean;
   modelPickerOpen: boolean;
   agentPickerOpen: boolean;
+  sessionPickerOpen: boolean;
 }
 
 export type Action =
@@ -47,8 +48,17 @@ export type Action =
   | { type: "close-overlays" }
   | { type: "open-model-picker" }
   | { type: "open-agent-picker" }
+  | { type: "open-session-picker" }
   | { type: "open-palette" }
   | { type: "set-agent"; agentId: string; agentName: string; modelLabel: string }
+  | {
+      type: "set-session";
+      sessionId: string;
+      agentId: string;
+      agentName: string;
+      modelLabel: string;
+      committed: Message[];
+    }
   | { type: "set-model-label"; modelLabel: string };
 
 export function makeMessage(role: Role): Message {
@@ -165,11 +175,14 @@ export function reducer(state: AppState, action: Action): AppState {
         paletteOpen: false,
         modelPickerOpen: false,
         agentPickerOpen: false,
+        sessionPickerOpen: false,
       };
     case "open-model-picker":
       return { ...state, modelPickerOpen: true, paletteOpen: false };
     case "open-agent-picker":
       return { ...state, agentPickerOpen: true, paletteOpen: false };
+    case "open-session-picker":
+      return { ...state, sessionPickerOpen: true, paletteOpen: false };
     case "open-palette":
       return { ...state, paletteOpen: true };
     case "set-agent":
@@ -183,6 +196,19 @@ export function reducer(state: AppState, action: Action): AppState {
         sessionId: cryptoId(),
         totalTokens: 0,
         agentPickerOpen: false,
+      };
+    case "set-session":
+      return {
+        ...state,
+        agentId: action.agentId,
+        agentName: action.agentName,
+        modelLabel: action.modelLabel,
+        sessionId: action.sessionId,
+        committed: action.committed,
+        inflight: null,
+        status: "idle",
+        totalTokens: 0,
+        sessionPickerOpen: false,
       };
     case "set-model-label":
       return {
@@ -214,6 +240,7 @@ export function initState(opts: {
     paletteOpen: false,
     modelPickerOpen: false,
     agentPickerOpen: false,
+    sessionPickerOpen: false,
   };
 }
 

@@ -98,6 +98,23 @@ export function createSessionStore(db: Database.Database) {
         .all();
     },
 
+    /**
+     * Cross-agent variant of `listActive` — every leaf session in the
+     * compression chain across all agents, newest first. Powers the CLI's
+     * `/sessions` picker, which lets the user resume any past conversation
+     * regardless of which agent owns it.
+     */
+    listAllActive(): Session[] {
+      return orm
+        .select()
+        .from(sessions)
+        .where(
+          sql`NOT EXISTS (SELECT 1 FROM ${sessions} c WHERE c.parent_session_id = ${sessions.id})`
+        )
+        .orderBy(desc(sessions.updatedAt))
+        .all();
+    },
+
     findChildOf(parentSessionId: string): Session | null {
       return (
         orm

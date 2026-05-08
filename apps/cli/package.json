@@ -36,6 +36,7 @@
     "@openacme/agent-core": "workspace:^",
     "@openacme/auth": "workspace:*",
     "@openacme/config": "workspace:*",
+    "@openacme/db": "workspace:*",
     "@openacme/llm-provider": "workspace:*",
     "@openacme/server": "workspace:*",
     "chalk": "^5.4.1",
