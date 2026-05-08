@@ -236,14 +236,18 @@ export function lookupModelMetadata(model: ModelConfig): ModelMetadata {
 export const AgentBehaviorSchema = z.object({
   maxSteps: z.number().default(10),
   maxIterations: z.number().default(90),
-  // Trigger
+  // Trigger. Default `compressionThresholdPercent: 0.5` enables proactive
+  // compression at half the model's context window for any model present
+  // in the bundled registry. Models without a registry entry fall through
+  // silently — set `compressionThresholdTokens` to opt those in absolutely.
   compressionThresholdTokens: z.number().nullable().default(null),
-  compressionThresholdPercent: z.number().nullable().default(null),
+  compressionThresholdPercent: z.number().nullable().default(0.5),
   // Boundary
   compressionProtectFirstN: z.number().default(3),
   compressionTailTokenBudget: z.number().default(20000),
-  // Summarizer
-  compressionSummaryTargetRatio: z.number().default(0.2),
+  // Summarizer. The 0.10–0.80 clamp guards against accidentally requesting
+  // a 5%-ratio summary (loses everything) or 95% (defeats compression).
+  compressionSummaryTargetRatio: z.number().min(0.1).max(0.8).default(0.2),
   compressionSummarizerInputCharBudget: z.number().default(80000),
   compressionSummarizerModel: ModelConfigSchema.optional(),
 });

@@ -242,7 +242,7 @@ Per-package: `pnpm --filter @openacme/<pkg> <script>`.
 
 ## Releasing
 
-Manual via Changesets — see `CONTRIBUTING.md`. Workflow `.github/workflows/release.yml` is `gh workflow run`-only, never automatic. Internal `workspace:*` deps auto-patch-bump per `.changeset/config.json` (`updateInternalDependencies: "patch"`). Provenance is **off** (private repo). Direct push to `main` is blocked at the harness; release flow goes through PR or one-shot local version + push.
+Manual via Changesets — see `CONTRIBUTING.md`. Workflow `.github/workflows/release.yml` is `gh workflow run`-only, never automatic. Internal `workspace:*` deps auto-patch-bump per `.changeset/config.json` (`updateInternalDependencies: "patch"`). Provenance is **off** (private repo).
 
 ---
 

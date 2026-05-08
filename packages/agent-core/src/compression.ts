@@ -135,8 +135,10 @@ export const SUMMARY_TOKENS_CEILING = 12_000;
 const MESSAGE_OVERHEAD_TOKENS = 10;
 const MESSAGE_OVERHEAD_CHARS = MESSAGE_OVERHEAD_TOKENS * CHARS_PER_TOKEN;
 
-/** A misbehaving summarizer gets put in 60s timeout. */
-export const SUMMARY_FAILURE_COOLDOWN_MS = 60_000;
+/** A misbehaving summarizer gets put in 10-min timeout — long enough that
+ *  a flaky aux model doesn't burn budget on every turn, short enough that
+ *  config fixes (rotated key, switched model) are picked up the same session. */
+export const SUMMARY_FAILURE_COOLDOWN_MS = 600_000;
 
 /** Substantial-enough threshold for a tool result to be worth pruning/dedup. */
 const SIGNIFICANT_TOOL_RESULT_CHARS = 200;
