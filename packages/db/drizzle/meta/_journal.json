@@ -15,6 +15,13 @@
       "when": 1778245940657,
       "tag": "0001_fts5_messages",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1778250871009,
+      "tag": "0002_clammy_goblin_queen",
+      "breakpoints": true
     }
   ]
 }

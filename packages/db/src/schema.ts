@@ -24,11 +24,6 @@ export const sessions = sqliteTable(
     title: text("title"),
     systemPrompt: text("system_prompt"),
     parentSessionId: text("parent_session_id"),
-    // Stored / returned as integer 0|1. We considered mode: "boolean" to
-    // skip the hand-rolled hydrate, but drizzle-kit treats the changed
-    // default literal (`0` → `false`) as a schema diff and emits a full
-    // table-rebuild migration. Not worth it for one boolean cast.
-    compressionPending: integer("compression_pending").notNull().default(0),
     createdAt: integer("created_at")
       .notNull()
       .default(sql`(unixepoch())`),

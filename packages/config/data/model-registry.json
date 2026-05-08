@@ -1,0 +1,5958 @@
+{
+  "anthropic/claude-3-5-haiku-20241022": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 8192,
+    "inputCostPerMTok": 0.8,
+    "outputCostPerMTok": 4,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "claude-haiku",
+    "knowledgeCutoff": "2024-07-31",
+    "openWeights": false
+  },
+  "anthropic/claude-3-5-haiku-latest": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 8192,
+    "inputCostPerMTok": 0.8,
+    "outputCostPerMTok": 4,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "claude-haiku",
+    "knowledgeCutoff": "2024-07-31",
+    "openWeights": false
+  },
+  "anthropic/claude-3-5-sonnet-20240620": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 8192,
+    "inputCostPerMTok": 3,
+    "outputCostPerMTok": 15,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "claude-sonnet",
+    "knowledgeCutoff": "2024-04-30",
+    "openWeights": false
+  },
+  "anthropic/claude-3-5-sonnet-20241022": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 8192,
+    "inputCostPerMTok": 3,
+    "outputCostPerMTok": 15,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "claude-sonnet",
+    "knowledgeCutoff": "2024-04-30",
+    "openWeights": false
+  },
+  "anthropic/claude-3-7-sonnet-20250219": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 64000,
+    "inputCostPerMTok": 3,
+    "outputCostPerMTok": 15,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "claude-sonnet",
+    "knowledgeCutoff": "2024-10-31",
+    "openWeights": false
+  },
+  "anthropic/claude-3-haiku-20240307": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 4096,
+    "inputCostPerMTok": 0.25,
+    "outputCostPerMTok": 1.25,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "claude-haiku",
+    "knowledgeCutoff": "2023-08-31",
+    "openWeights": false
+  },
+  "anthropic/claude-3-opus-20240229": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 4096,
+    "inputCostPerMTok": 15,
+    "outputCostPerMTok": 75,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "claude-opus",
+    "knowledgeCutoff": "2023-08-31",
+    "openWeights": false
+  },
+  "anthropic/claude-3-sonnet-20240229": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 4096,
+    "inputCostPerMTok": 3,
+    "outputCostPerMTok": 15,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "claude-sonnet",
+    "knowledgeCutoff": "2023-08-31",
+    "openWeights": false
+  },
+  "anthropic/claude-haiku-4-5": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 64000,
+    "inputCostPerMTok": 1,
+    "outputCostPerMTok": 5,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "claude-haiku",
+    "knowledgeCutoff": "2025-02-28",
+    "openWeights": false
+  },
+  "anthropic/claude-haiku-4-5-20251001": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 64000,
+    "inputCostPerMTok": 1,
+    "outputCostPerMTok": 5,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "claude-haiku",
+    "knowledgeCutoff": "2025-02-28",
+    "openWeights": false
+  },
+  "anthropic/claude-opus-4-0": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 32000,
+    "inputCostPerMTok": 15,
+    "outputCostPerMTok": 75,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "claude-opus",
+    "knowledgeCutoff": "2025-03-31",
+    "openWeights": false
+  },
+  "anthropic/claude-opus-4-1": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 32000,
+    "inputCostPerMTok": 15,
+    "outputCostPerMTok": 75,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "claude-opus",
+    "knowledgeCutoff": "2025-03-31",
+    "openWeights": false
+  },
+  "anthropic/claude-opus-4-1-20250805": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 32000,
+    "inputCostPerMTok": 15,
+    "outputCostPerMTok": 75,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "claude-opus",
+    "knowledgeCutoff": "2025-03-31",
+    "openWeights": false
+  },
+  "anthropic/claude-opus-4-20250514": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 32000,
+    "inputCostPerMTok": 15,
+    "outputCostPerMTok": 75,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "claude-opus",
+    "knowledgeCutoff": "2025-03-31",
+    "openWeights": false
+  },
+  "anthropic/claude-opus-4-5": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 64000,
+    "inputCostPerMTok": 5,
+    "outputCostPerMTok": 25,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "claude-opus",
+    "knowledgeCutoff": "2025-03-31",
+    "openWeights": false
+  },
+  "anthropic/claude-opus-4-5-20251101": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 64000,
+    "inputCostPerMTok": 5,
+    "outputCostPerMTok": 25,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "claude-opus",
+    "knowledgeCutoff": "2025-03-31",
+    "openWeights": false
+  },
+  "anthropic/claude-opus-4-6": {
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "inputCostPerMTok": 5,
+    "outputCostPerMTok": 25,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "claude-opus",
+    "knowledgeCutoff": "2025-05-31",
+    "openWeights": false
+  },
+  "anthropic/claude-opus-4-7": {
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "inputCostPerMTok": 5,
+    "outputCostPerMTok": 25,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": false,
+    "family": "claude-opus",
+    "knowledgeCutoff": "2026-01-31",
+    "openWeights": false
+  },
+  "anthropic/claude-sonnet-4-0": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 64000,
+    "inputCostPerMTok": 3,
+    "outputCostPerMTok": 15,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "claude-sonnet",
+    "knowledgeCutoff": "2025-03-31",
+    "openWeights": false
+  },
+  "anthropic/claude-sonnet-4-20250514": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 64000,
+    "inputCostPerMTok": 3,
+    "outputCostPerMTok": 15,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "claude-sonnet",
+    "knowledgeCutoff": "2025-03-31",
+    "openWeights": false
+  },
+  "anthropic/claude-sonnet-4-5": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 64000,
+    "inputCostPerMTok": 3,
+    "outputCostPerMTok": 15,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "claude-sonnet",
+    "knowledgeCutoff": "2025-07-31",
+    "openWeights": false
+  },
+  "anthropic/claude-sonnet-4-5-20250929": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 64000,
+    "inputCostPerMTok": 3,
+    "outputCostPerMTok": 15,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "claude-sonnet",
+    "knowledgeCutoff": "2025-07-31",
+    "openWeights": false
+  },
+  "anthropic/claude-sonnet-4-6": {
+    "contextWindow": 1000000,
+    "maxOutputTokens": 64000,
+    "inputCostPerMTok": 3,
+    "outputCostPerMTok": 15,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "claude-sonnet",
+    "knowledgeCutoff": "2025-08-31",
+    "openWeights": false
+  },
+  "google/gemini-1.5-flash": {
+    "contextWindow": 1000000,
+    "maxOutputTokens": 8192,
+    "inputCostPerMTok": 0.075,
+    "outputCostPerMTok": 0.3,
+    "inputModalities": [
+      "text",
+      "image",
+      "audio",
+      "video"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gemini-flash",
+    "knowledgeCutoff": "2024-04",
+    "openWeights": false
+  },
+  "google/gemini-1.5-flash-8b": {
+    "contextWindow": 1000000,
+    "maxOutputTokens": 8192,
+    "inputCostPerMTok": 0.0375,
+    "outputCostPerMTok": 0.15,
+    "inputModalities": [
+      "text",
+      "image",
+      "audio",
+      "video"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gemini-flash",
+    "knowledgeCutoff": "2024-04",
+    "openWeights": false
+  },
+  "google/gemini-1.5-pro": {
+    "contextWindow": 1000000,
+    "maxOutputTokens": 8192,
+    "inputCostPerMTok": 1.25,
+    "outputCostPerMTok": 5,
+    "inputModalities": [
+      "text",
+      "image",
+      "audio",
+      "video"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gemini-pro",
+    "knowledgeCutoff": "2024-04",
+    "openWeights": false
+  },
+  "google/gemini-2.0-flash": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 8192,
+    "inputCostPerMTok": 0.1,
+    "outputCostPerMTok": 0.4,
+    "inputModalities": [
+      "text",
+      "image",
+      "audio",
+      "video",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gemini-flash",
+    "knowledgeCutoff": "2024-06",
+    "openWeights": false
+  },
+  "google/gemini-2.0-flash-lite": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 8192,
+    "inputCostPerMTok": 0.075,
+    "outputCostPerMTok": 0.3,
+    "inputModalities": [
+      "text",
+      "image",
+      "audio",
+      "video",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gemini-flash-lite",
+    "knowledgeCutoff": "2024-06",
+    "openWeights": false
+  },
+  "google/gemini-2.5-flash": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 65536,
+    "inputCostPerMTok": 0.3,
+    "outputCostPerMTok": 2.5,
+    "inputModalities": [
+      "text",
+      "image",
+      "audio",
+      "video",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gemini-flash",
+    "knowledgeCutoff": "2025-01",
+    "openWeights": false
+  },
+  "google/gemini-2.5-flash-image": {
+    "contextWindow": 32768,
+    "maxOutputTokens": 32768,
+    "inputCostPerMTok": 0.3,
+    "outputCostPerMTok": 30,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text",
+      "image"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": false,
+    "supportsTemperature": true,
+    "family": "gemini-flash",
+    "knowledgeCutoff": "2025-06",
+    "openWeights": false
+  },
+  "google/gemini-2.5-flash-image-preview": {
+    "contextWindow": 32768,
+    "maxOutputTokens": 32768,
+    "inputCostPerMTok": 0.3,
+    "outputCostPerMTok": 30,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text",
+      "image"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": false,
+    "supportsTemperature": true,
+    "family": "gemini-flash",
+    "knowledgeCutoff": "2025-06",
+    "openWeights": false
+  },
+  "google/gemini-2.5-flash-lite": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 65536,
+    "inputCostPerMTok": 0.1,
+    "outputCostPerMTok": 0.4,
+    "inputModalities": [
+      "text",
+      "image",
+      "audio",
+      "video",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gemini-flash-lite",
+    "knowledgeCutoff": "2025-01",
+    "openWeights": false
+  },
+  "google/gemini-2.5-flash-lite-preview-06-17": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 65536,
+    "inputCostPerMTok": 0.1,
+    "outputCostPerMTok": 0.4,
+    "inputModalities": [
+      "text",
+      "image",
+      "audio",
+      "video",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gemini-flash-lite",
+    "knowledgeCutoff": "2025-01",
+    "openWeights": false
+  },
+  "google/gemini-2.5-flash-lite-preview-09-2025": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 65536,
+    "inputCostPerMTok": 0.1,
+    "outputCostPerMTok": 0.4,
+    "inputModalities": [
+      "text",
+      "image",
+      "audio",
+      "video",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gemini-flash-lite",
+    "knowledgeCutoff": "2025-01",
+    "openWeights": false
+  },
+  "google/gemini-2.5-flash-preview-04-17": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 65536,
+    "inputCostPerMTok": 0.15,
+    "outputCostPerMTok": 0.6,
+    "inputModalities": [
+      "text",
+      "image",
+      "audio",
+      "video",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gemini-flash",
+    "knowledgeCutoff": "2025-01",
+    "openWeights": false
+  },
+  "google/gemini-2.5-flash-preview-05-20": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 65536,
+    "inputCostPerMTok": 0.15,
+    "outputCostPerMTok": 0.6,
+    "inputModalities": [
+      "text",
+      "image",
+      "audio",
+      "video",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gemini-flash",
+    "knowledgeCutoff": "2025-01",
+    "openWeights": false
+  },
+  "google/gemini-2.5-flash-preview-09-2025": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 65536,
+    "inputCostPerMTok": 0.3,
+    "outputCostPerMTok": 2.5,
+    "inputModalities": [
+      "text",
+      "image",
+      "audio",
+      "video",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gemini-flash",
+    "knowledgeCutoff": "2025-01",
+    "openWeights": false
+  },
+  "google/gemini-2.5-flash-preview-tts": {
+    "contextWindow": 8000,
+    "maxOutputTokens": 16000,
+    "inputCostPerMTok": 0.5,
+    "outputCostPerMTok": 10,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "audio"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": false,
+    "supportsToolCall": false,
+    "supportsTemperature": false,
+    "family": "gemini-flash",
+    "knowledgeCutoff": "2025-01",
+    "openWeights": false
+  },
+  "google/gemini-2.5-pro": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 65536,
+    "inputCostPerMTok": 1.25,
+    "outputCostPerMTok": 10,
+    "inputModalities": [
+      "text",
+      "image",
+      "audio",
+      "video",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gemini-pro",
+    "knowledgeCutoff": "2025-01",
+    "openWeights": false
+  },
+  "google/gemini-2.5-pro-preview-05-06": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 65536,
+    "inputCostPerMTok": 1.25,
+    "outputCostPerMTok": 10,
+    "inputModalities": [
+      "text",
+      "image",
+      "audio",
+      "video",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gemini-pro",
+    "knowledgeCutoff": "2025-01",
+    "openWeights": false
+  },
+  "google/gemini-2.5-pro-preview-06-05": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 65536,
+    "inputCostPerMTok": 1.25,
+    "outputCostPerMTok": 10,
+    "inputModalities": [
+      "text",
+      "image",
+      "audio",
+      "video",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gemini-pro",
+    "knowledgeCutoff": "2025-01",
+    "openWeights": false
+  },
+  "google/gemini-2.5-pro-preview-tts": {
+    "contextWindow": 8000,
+    "maxOutputTokens": 16000,
+    "inputCostPerMTok": 1,
+    "outputCostPerMTok": 20,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "audio"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": false,
+    "supportsToolCall": false,
+    "supportsTemperature": false,
+    "family": "gemini-flash",
+    "knowledgeCutoff": "2025-01",
+    "openWeights": false
+  },
+  "google/gemini-3-flash-preview": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 65536,
+    "inputCostPerMTok": 0.5,
+    "outputCostPerMTok": 3,
+    "inputModalities": [
+      "text",
+      "image",
+      "video",
+      "audio",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gemini-flash",
+    "knowledgeCutoff": "2025-01",
+    "openWeights": false
+  },
+  "google/gemini-3-pro-preview": {
+    "contextWindow": 1000000,
+    "maxOutputTokens": 64000,
+    "inputCostPerMTok": 2,
+    "outputCostPerMTok": 12,
+    "inputModalities": [
+      "text",
+      "image",
+      "video",
+      "audio",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gemini-pro",
+    "knowledgeCutoff": "2025-01",
+    "openWeights": false
+  },
+  "google/gemini-3.1-flash-image-preview": {
+    "contextWindow": 131072,
+    "maxOutputTokens": 32768,
+    "inputCostPerMTok": 0.25,
+    "outputCostPerMTok": 60,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text",
+      "image"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": false,
+    "supportsTemperature": true,
+    "family": "gemini-flash",
+    "knowledgeCutoff": "2025-01",
+    "openWeights": false
+  },
+  "google/gemini-3.1-flash-lite": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 65536,
+    "inputCostPerMTok": 0.25,
+    "outputCostPerMTok": 1.5,
+    "inputModalities": [
+      "text",
+      "image",
+      "video",
+      "audio",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gemini-flash-lite",
+    "knowledgeCutoff": "2025-01",
+    "openWeights": false
+  },
+  "google/gemini-3.1-flash-lite-preview": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 65536,
+    "inputCostPerMTok": 0.25,
+    "outputCostPerMTok": 1.5,
+    "inputModalities": [
+      "text",
+      "image",
+      "video",
+      "audio",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gemini-flash-lite",
+    "knowledgeCutoff": "2025-01",
+    "openWeights": false
+  },
+  "google/gemini-3.1-pro-preview": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 65536,
+    "inputCostPerMTok": 2,
+    "outputCostPerMTok": 12,
+    "inputModalities": [
+      "text",
+      "image",
+      "video",
+      "audio",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gemini-pro",
+    "knowledgeCutoff": "2025-01",
+    "openWeights": false
+  },
+  "google/gemini-3.1-pro-preview-customtools": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 65536,
+    "inputCostPerMTok": 2,
+    "outputCostPerMTok": 12,
+    "inputModalities": [
+      "text",
+      "image",
+      "video",
+      "audio",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gemini-pro",
+    "knowledgeCutoff": "2025-01",
+    "openWeights": false
+  },
+  "google/gemini-embedding-001": {
+    "contextWindow": 2048,
+    "maxOutputTokens": 3072,
+    "inputCostPerMTok": 0.15,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": false,
+    "supportsToolCall": false,
+    "supportsTemperature": false,
+    "family": "gemini",
+    "knowledgeCutoff": "2025-05",
+    "openWeights": false
+  },
+  "google/gemini-flash-latest": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 65536,
+    "inputCostPerMTok": 0.3,
+    "outputCostPerMTok": 2.5,
+    "inputModalities": [
+      "text",
+      "image",
+      "audio",
+      "video",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gemini-flash",
+    "knowledgeCutoff": "2025-01",
+    "openWeights": false
+  },
+  "google/gemini-flash-lite-latest": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 65536,
+    "inputCostPerMTok": 0.1,
+    "outputCostPerMTok": 0.4,
+    "inputModalities": [
+      "text",
+      "image",
+      "audio",
+      "video",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gemini-flash-lite",
+    "knowledgeCutoff": "2025-01",
+    "openWeights": false
+  },
+  "google/gemini-live-2.5-flash": {
+    "contextWindow": 128000,
+    "maxOutputTokens": 8000,
+    "inputCostPerMTok": 0.5,
+    "outputCostPerMTok": 2,
+    "inputModalities": [
+      "text",
+      "image",
+      "audio",
+      "video"
+    ],
+    "outputModalities": [
+      "text",
+      "audio"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gemini-flash",
+    "knowledgeCutoff": "2025-01",
+    "openWeights": false
+  },
+  "google/gemini-live-2.5-flash-preview-native-audio": {
+    "contextWindow": 131072,
+    "maxOutputTokens": 65536,
+    "inputCostPerMTok": 0.5,
+    "outputCostPerMTok": 2,
+    "inputModalities": [
+      "text",
+      "audio",
+      "video"
+    ],
+    "outputModalities": [
+      "text",
+      "audio"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": false,
+    "family": "gemini-flash",
+    "knowledgeCutoff": "2025-01",
+    "openWeights": false
+  },
+  "google/gemma-3-12b-it": {
+    "contextWindow": 32768,
+    "maxOutputTokens": 8192,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": false,
+    "supportsTemperature": true,
+    "family": "gemma",
+    "knowledgeCutoff": "2024-10",
+    "openWeights": true
+  },
+  "google/gemma-3-27b-it": {
+    "contextWindow": 131072,
+    "maxOutputTokens": 8192,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gemma",
+    "knowledgeCutoff": "2024-10",
+    "openWeights": true
+  },
+  "google/gemma-3-4b-it": {
+    "contextWindow": 32768,
+    "maxOutputTokens": 8192,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": false,
+    "supportsTemperature": true,
+    "family": "gemma",
+    "knowledgeCutoff": "2024-10",
+    "openWeights": true
+  },
+  "google/gemma-3n-e2b-it": {
+    "contextWindow": 8192,
+    "maxOutputTokens": 2000,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": false,
+    "supportsTemperature": true,
+    "family": "gemma",
+    "knowledgeCutoff": "2024-10",
+    "openWeights": true
+  },
+  "google/gemma-3n-e4b-it": {
+    "contextWindow": 8192,
+    "maxOutputTokens": 2000,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": false,
+    "supportsTemperature": true,
+    "family": "gemma",
+    "knowledgeCutoff": "2024-10",
+    "openWeights": true
+  },
+  "google/gemma-4-26b-a4b-it": {
+    "contextWindow": 256000,
+    "maxOutputTokens": 8192,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gemma",
+    "openWeights": true
+  },
+  "google/gemma-4-31b-it": {
+    "contextWindow": 256000,
+    "maxOutputTokens": 8192,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gemma",
+    "openWeights": true
+  },
+  "openai/chatgpt-image-latest": {
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text",
+      "image"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": false,
+    "supportsTemperature": false,
+    "family": "gpt-image",
+    "openWeights": false
+  },
+  "openai/gpt-3.5-turbo": {
+    "contextWindow": 16385,
+    "maxOutputTokens": 4096,
+    "inputCostPerMTok": 0.5,
+    "outputCostPerMTok": 1.5,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": false,
+    "supportsToolCall": false,
+    "supportsTemperature": true,
+    "family": "gpt",
+    "knowledgeCutoff": "2021-09-01",
+    "openWeights": false
+  },
+  "openai/gpt-4": {
+    "contextWindow": 8192,
+    "maxOutputTokens": 8192,
+    "inputCostPerMTok": 30,
+    "outputCostPerMTok": 60,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gpt",
+    "knowledgeCutoff": "2023-11",
+    "openWeights": false
+  },
+  "openai/gpt-4-turbo": {
+    "contextWindow": 128000,
+    "maxOutputTokens": 4096,
+    "inputCostPerMTok": 10,
+    "outputCostPerMTok": 30,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gpt",
+    "knowledgeCutoff": "2023-12",
+    "openWeights": false
+  },
+  "openai/gpt-4.1": {
+    "contextWindow": 1047576,
+    "maxOutputTokens": 32768,
+    "inputCostPerMTok": 2,
+    "outputCostPerMTok": 8,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gpt",
+    "knowledgeCutoff": "2024-04",
+    "openWeights": false
+  },
+  "openai/gpt-4.1-mini": {
+    "contextWindow": 1047576,
+    "maxOutputTokens": 32768,
+    "inputCostPerMTok": 0.4,
+    "outputCostPerMTok": 1.6,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gpt-mini",
+    "knowledgeCutoff": "2024-04",
+    "openWeights": false
+  },
+  "openai/gpt-4.1-nano": {
+    "contextWindow": 1047576,
+    "maxOutputTokens": 32768,
+    "inputCostPerMTok": 0.1,
+    "outputCostPerMTok": 0.4,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gpt-nano",
+    "knowledgeCutoff": "2024-04",
+    "openWeights": false
+  },
+  "openai/gpt-4o": {
+    "contextWindow": 128000,
+    "maxOutputTokens": 16384,
+    "inputCostPerMTok": 2.5,
+    "outputCostPerMTok": 10,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gpt",
+    "knowledgeCutoff": "2023-09",
+    "openWeights": false
+  },
+  "openai/gpt-4o-2024-05-13": {
+    "contextWindow": 128000,
+    "maxOutputTokens": 4096,
+    "inputCostPerMTok": 5,
+    "outputCostPerMTok": 15,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gpt",
+    "knowledgeCutoff": "2023-09",
+    "openWeights": false
+  },
+  "openai/gpt-4o-2024-08-06": {
+    "contextWindow": 128000,
+    "maxOutputTokens": 16384,
+    "inputCostPerMTok": 2.5,
+    "outputCostPerMTok": 10,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gpt",
+    "knowledgeCutoff": "2023-09",
+    "openWeights": false
+  },
+  "openai/gpt-4o-2024-11-20": {
+    "contextWindow": 128000,
+    "maxOutputTokens": 16384,
+    "inputCostPerMTok": 2.5,
+    "outputCostPerMTok": 10,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gpt",
+    "knowledgeCutoff": "2023-09",
+    "openWeights": false
+  },
+  "openai/gpt-4o-mini": {
+    "contextWindow": 128000,
+    "maxOutputTokens": 16384,
+    "inputCostPerMTok": 0.15,
+    "outputCostPerMTok": 0.6,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gpt-mini",
+    "knowledgeCutoff": "2023-09",
+    "openWeights": false
+  },
+  "openai/gpt-5": {
+    "contextWindow": 400000,
+    "maxOutputTokens": 128000,
+    "inputCostPerMTok": 1.25,
+    "outputCostPerMTok": 10,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": false,
+    "family": "gpt",
+    "knowledgeCutoff": "2024-09-30",
+    "openWeights": false
+  },
+  "openai/gpt-5-chat-latest": {
+    "contextWindow": 400000,
+    "maxOutputTokens": 128000,
+    "inputCostPerMTok": 1.25,
+    "outputCostPerMTok": 10,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": false,
+    "supportsTemperature": true,
+    "family": "gpt-codex",
+    "knowledgeCutoff": "2024-09-30",
+    "openWeights": false
+  },
+  "openai/gpt-5-codex": {
+    "contextWindow": 400000,
+    "maxOutputTokens": 128000,
+    "inputCostPerMTok": 1.25,
+    "outputCostPerMTok": 10,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": false,
+    "family": "gpt-codex",
+    "knowledgeCutoff": "2024-09-30",
+    "openWeights": false
+  },
+  "openai/gpt-5-mini": {
+    "contextWindow": 400000,
+    "maxOutputTokens": 128000,
+    "inputCostPerMTok": 0.25,
+    "outputCostPerMTok": 2,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": false,
+    "family": "gpt-mini",
+    "knowledgeCutoff": "2024-05-30",
+    "openWeights": false
+  },
+  "openai/gpt-5-nano": {
+    "contextWindow": 400000,
+    "maxOutputTokens": 128000,
+    "inputCostPerMTok": 0.05,
+    "outputCostPerMTok": 0.4,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": false,
+    "family": "gpt-nano",
+    "knowledgeCutoff": "2024-05-30",
+    "openWeights": false
+  },
+  "openai/gpt-5-pro": {
+    "contextWindow": 400000,
+    "maxOutputTokens": 272000,
+    "inputCostPerMTok": 15,
+    "outputCostPerMTok": 120,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": false,
+    "family": "gpt-pro",
+    "knowledgeCutoff": "2024-09-30",
+    "openWeights": false
+  },
+  "openai/gpt-5.1": {
+    "contextWindow": 400000,
+    "maxOutputTokens": 128000,
+    "inputCostPerMTok": 1.25,
+    "outputCostPerMTok": 10,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": false,
+    "family": "gpt",
+    "knowledgeCutoff": "2024-09-30",
+    "openWeights": false
+  },
+  "openai/gpt-5.1-chat-latest": {
+    "contextWindow": 128000,
+    "maxOutputTokens": 16384,
+    "inputCostPerMTok": 1.25,
+    "outputCostPerMTok": 10,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": false,
+    "family": "gpt-codex",
+    "knowledgeCutoff": "2024-09-30",
+    "openWeights": false
+  },
+  "openai/gpt-5.1-codex": {
+    "contextWindow": 400000,
+    "maxOutputTokens": 128000,
+    "inputCostPerMTok": 1.25,
+    "outputCostPerMTok": 10,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": false,
+    "family": "gpt-codex",
+    "knowledgeCutoff": "2024-09-30",
+    "openWeights": false
+  },
+  "openai/gpt-5.1-codex-max": {
+    "contextWindow": 400000,
+    "maxOutputTokens": 128000,
+    "inputCostPerMTok": 1.25,
+    "outputCostPerMTok": 10,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": false,
+    "family": "gpt-codex",
+    "knowledgeCutoff": "2024-09-30",
+    "openWeights": false
+  },
+  "openai/gpt-5.1-codex-mini": {
+    "contextWindow": 400000,
+    "maxOutputTokens": 128000,
+    "inputCostPerMTok": 0.25,
+    "outputCostPerMTok": 2,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": false,
+    "family": "gpt-codex",
+    "knowledgeCutoff": "2024-09-30",
+    "openWeights": false
+  },
+  "openai/gpt-5.2": {
+    "contextWindow": 400000,
+    "maxOutputTokens": 128000,
+    "inputCostPerMTok": 1.75,
+    "outputCostPerMTok": 14,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": false,
+    "family": "gpt",
+    "knowledgeCutoff": "2025-08-31",
+    "openWeights": false
+  },
+  "openai/gpt-5.2-chat-latest": {
+    "contextWindow": 128000,
+    "maxOutputTokens": 16384,
+    "inputCostPerMTok": 1.75,
+    "outputCostPerMTok": 14,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": false,
+    "family": "gpt-codex",
+    "knowledgeCutoff": "2025-08-31",
+    "openWeights": false
+  },
+  "openai/gpt-5.2-codex": {
+    "contextWindow": 400000,
+    "maxOutputTokens": 128000,
+    "inputCostPerMTok": 1.75,
+    "outputCostPerMTok": 14,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": false,
+    "family": "gpt-codex",
+    "knowledgeCutoff": "2025-08-31",
+    "openWeights": false
+  },
+  "openai/gpt-5.2-pro": {
+    "contextWindow": 400000,
+    "maxOutputTokens": 128000,
+    "inputCostPerMTok": 21,
+    "outputCostPerMTok": 168,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": false,
+    "family": "gpt-pro",
+    "knowledgeCutoff": "2025-08-31",
+    "openWeights": false
+  },
+  "openai/gpt-5.3-chat-latest": {
+    "contextWindow": 128000,
+    "maxOutputTokens": 16384,
+    "inputCostPerMTok": 1.75,
+    "outputCostPerMTok": 14,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gpt",
+    "knowledgeCutoff": "2025-08-31",
+    "openWeights": false
+  },
+  "openai/gpt-5.3-codex": {
+    "contextWindow": 400000,
+    "maxOutputTokens": 128000,
+    "inputCostPerMTok": 1.75,
+    "outputCostPerMTok": 14,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": false,
+    "family": "gpt-codex",
+    "knowledgeCutoff": "2025-08-31",
+    "openWeights": false
+  },
+  "openai/gpt-5.3-codex-spark": {
+    "contextWindow": 128000,
+    "maxOutputTokens": 32000,
+    "inputCostPerMTok": 1.75,
+    "outputCostPerMTok": 14,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": false,
+    "family": "gpt-codex-spark",
+    "knowledgeCutoff": "2025-08-31",
+    "openWeights": false
+  },
+  "openai/gpt-5.4": {
+    "contextWindow": 1050000,
+    "maxOutputTokens": 128000,
+    "inputCostPerMTok": 2.5,
+    "outputCostPerMTok": 15,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": false,
+    "family": "gpt",
+    "knowledgeCutoff": "2025-08-31",
+    "openWeights": false
+  },
+  "openai/gpt-5.4-mini": {
+    "contextWindow": 400000,
+    "maxOutputTokens": 128000,
+    "inputCostPerMTok": 0.75,
+    "outputCostPerMTok": 4.5,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": false,
+    "family": "gpt-mini",
+    "knowledgeCutoff": "2025-08-31",
+    "openWeights": false
+  },
+  "openai/gpt-5.4-nano": {
+    "contextWindow": 400000,
+    "maxOutputTokens": 128000,
+    "inputCostPerMTok": 0.2,
+    "outputCostPerMTok": 1.25,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": false,
+    "family": "gpt-nano",
+    "knowledgeCutoff": "2025-08-31",
+    "openWeights": false
+  },
+  "openai/gpt-5.4-pro": {
+    "contextWindow": 1050000,
+    "maxOutputTokens": 128000,
+    "inputCostPerMTok": 30,
+    "outputCostPerMTok": 180,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": false,
+    "family": "gpt-pro",
+    "knowledgeCutoff": "2025-08-31",
+    "openWeights": false
+  },
+  "openai/gpt-5.5": {
+    "contextWindow": 1050000,
+    "maxOutputTokens": 128000,
+    "inputCostPerMTok": 5,
+    "outputCostPerMTok": 30,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": false,
+    "family": "gpt",
+    "knowledgeCutoff": "2025-12-01",
+    "openWeights": false
+  },
+  "openai/gpt-5.5-pro": {
+    "contextWindow": 1050000,
+    "maxOutputTokens": 128000,
+    "inputCostPerMTok": 30,
+    "outputCostPerMTok": 180,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": false,
+    "family": "gpt-pro",
+    "knowledgeCutoff": "2025-12-01",
+    "openWeights": false
+  },
+  "openai/gpt-image-1": {
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "image"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": false,
+    "supportsTemperature": false,
+    "family": "gpt-image",
+    "openWeights": false
+  },
+  "openai/gpt-image-1-mini": {
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text",
+      "image"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": false,
+    "supportsTemperature": false,
+    "family": "gpt-image",
+    "openWeights": false
+  },
+  "openai/gpt-image-1.5": {
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text",
+      "image"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": false,
+    "supportsTemperature": false,
+    "family": "gpt-image",
+    "openWeights": false
+  },
+  "openai/o1": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 100000,
+    "inputCostPerMTok": 15,
+    "outputCostPerMTok": 60,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": false,
+    "family": "o",
+    "knowledgeCutoff": "2023-09",
+    "openWeights": false
+  },
+  "openai/o1-mini": {
+    "contextWindow": 128000,
+    "maxOutputTokens": 65536,
+    "inputCostPerMTok": 1.1,
+    "outputCostPerMTok": 4.4,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": false,
+    "supportsTemperature": false,
+    "family": "o-mini",
+    "knowledgeCutoff": "2023-09",
+    "openWeights": false
+  },
+  "openai/o1-preview": {
+    "contextWindow": 128000,
+    "maxOutputTokens": 32768,
+    "inputCostPerMTok": 15,
+    "outputCostPerMTok": 60,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": false,
+    "supportsTemperature": true,
+    "family": "o",
+    "knowledgeCutoff": "2023-09",
+    "openWeights": false
+  },
+  "openai/o1-pro": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 100000,
+    "inputCostPerMTok": 150,
+    "outputCostPerMTok": 600,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": false,
+    "family": "o-pro",
+    "knowledgeCutoff": "2023-09",
+    "openWeights": false
+  },
+  "openai/o3": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 100000,
+    "inputCostPerMTok": 2,
+    "outputCostPerMTok": 8,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": false,
+    "family": "o",
+    "knowledgeCutoff": "2024-05",
+    "openWeights": false
+  },
+  "openai/o3-deep-research": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 100000,
+    "inputCostPerMTok": 10,
+    "outputCostPerMTok": 40,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": false,
+    "family": "o",
+    "knowledgeCutoff": "2024-05",
+    "openWeights": false
+  },
+  "openai/o3-mini": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 100000,
+    "inputCostPerMTok": 1.1,
+    "outputCostPerMTok": 4.4,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": false,
+    "family": "o-mini",
+    "knowledgeCutoff": "2024-05",
+    "openWeights": false
+  },
+  "openai/o3-pro": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 100000,
+    "inputCostPerMTok": 20,
+    "outputCostPerMTok": 80,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": false,
+    "family": "o-pro",
+    "knowledgeCutoff": "2024-05",
+    "openWeights": false
+  },
+  "openai/o4-mini": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 100000,
+    "inputCostPerMTok": 1.1,
+    "outputCostPerMTok": 4.4,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": false,
+    "family": "o-mini",
+    "knowledgeCutoff": "2024-05",
+    "openWeights": false
+  },
+  "openai/o4-mini-deep-research": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 100000,
+    "inputCostPerMTok": 2,
+    "outputCostPerMTok": 8,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": false,
+    "family": "o-mini",
+    "knowledgeCutoff": "2024-05",
+    "openWeights": false
+  },
+  "openai/text-embedding-3-large": {
+    "contextWindow": 8191,
+    "maxOutputTokens": 3072,
+    "inputCostPerMTok": 0.13,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": false,
+    "supportsToolCall": false,
+    "supportsTemperature": false,
+    "family": "text-embedding",
+    "knowledgeCutoff": "2024-01",
+    "openWeights": false
+  },
+  "openai/text-embedding-3-small": {
+    "contextWindow": 8191,
+    "maxOutputTokens": 1536,
+    "inputCostPerMTok": 0.02,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": false,
+    "supportsToolCall": false,
+    "supportsTemperature": false,
+    "family": "text-embedding",
+    "knowledgeCutoff": "2024-01",
+    "openWeights": false
+  },
+  "openai/text-embedding-ada-002": {
+    "contextWindow": 8192,
+    "maxOutputTokens": 1536,
+    "inputCostPerMTok": 0.1,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": false,
+    "supportsToolCall": false,
+    "supportsTemperature": false,
+    "family": "text-embedding",
+    "knowledgeCutoff": "2022-12",
+    "openWeights": false
+  },
+  "openrouter/anthropic/claude-3.5-haiku": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 8192,
+    "inputCostPerMTok": 0.8,
+    "outputCostPerMTok": 4,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "claude-haiku",
+    "knowledgeCutoff": "2024-07-31",
+    "openWeights": false
+  },
+  "openrouter/anthropic/claude-3.7-sonnet": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 128000,
+    "inputCostPerMTok": 15,
+    "outputCostPerMTok": 75,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "claude-sonnet",
+    "knowledgeCutoff": "2024-01",
+    "openWeights": false
+  },
+  "openrouter/anthropic/claude-haiku-4.5": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 64000,
+    "inputCostPerMTok": 1,
+    "outputCostPerMTok": 5,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "claude-haiku",
+    "knowledgeCutoff": "2025-02-28",
+    "openWeights": false
+  },
+  "openrouter/anthropic/claude-opus-4": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 32000,
+    "inputCostPerMTok": 15,
+    "outputCostPerMTok": 75,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "claude-opus",
+    "knowledgeCutoff": "2025-03-31",
+    "openWeights": false
+  },
+  "openrouter/anthropic/claude-opus-4.1": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 32000,
+    "inputCostPerMTok": 15,
+    "outputCostPerMTok": 75,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "claude-opus",
+    "knowledgeCutoff": "2025-03-31",
+    "openWeights": false
+  },
+  "openrouter/anthropic/claude-opus-4.5": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 32000,
+    "inputCostPerMTok": 5,
+    "outputCostPerMTok": 25,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "claude-opus",
+    "knowledgeCutoff": "2025-05-30",
+    "openWeights": false
+  },
+  "openrouter/anthropic/claude-opus-4.6": {
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "inputCostPerMTok": 5,
+    "outputCostPerMTok": 25,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "claude-opus",
+    "knowledgeCutoff": "2025-05-31",
+    "openWeights": false
+  },
+  "openrouter/anthropic/claude-opus-4.7": {
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "inputCostPerMTok": 5,
+    "outputCostPerMTok": 25,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": false,
+    "family": "claude-opus",
+    "knowledgeCutoff": "2026-01-31",
+    "openWeights": false
+  },
+  "openrouter/anthropic/claude-sonnet-4": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 64000,
+    "inputCostPerMTok": 3,
+    "outputCostPerMTok": 15,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "claude-sonnet",
+    "knowledgeCutoff": "2025-03-31",
+    "openWeights": false
+  },
+  "openrouter/anthropic/claude-sonnet-4.5": {
+    "contextWindow": 1000000,
+    "maxOutputTokens": 64000,
+    "inputCostPerMTok": 3,
+    "outputCostPerMTok": 15,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "claude-sonnet",
+    "knowledgeCutoff": "2025-07-31",
+    "openWeights": false
+  },
+  "openrouter/anthropic/claude-sonnet-4.6": {
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "inputCostPerMTok": 3,
+    "outputCostPerMTok": 15,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "claude-sonnet",
+    "knowledgeCutoff": "2025-08-31",
+    "openWeights": false
+  },
+  "openrouter/arcee-ai/trinity-large-preview:free": {
+    "contextWindow": 131072,
+    "maxOutputTokens": 131072,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "trinity",
+    "knowledgeCutoff": "2025-06",
+    "openWeights": true
+  },
+  "openrouter/arcee-ai/trinity-large-thinking": {
+    "contextWindow": 262144,
+    "maxOutputTokens": 80000,
+    "inputCostPerMTok": 0.22,
+    "outputCostPerMTok": 0.85,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "trinity",
+    "openWeights": true
+  },
+  "openrouter/black-forest-labs/flux.2-flex": {
+    "contextWindow": 67344,
+    "maxOutputTokens": 67344,
+    "inputModalities": [
+      "image",
+      "text"
+    ],
+    "outputModalities": [
+      "image"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": false,
+    "supportsToolCall": false,
+    "supportsTemperature": true,
+    "family": "flux",
+    "knowledgeCutoff": "2025-06",
+    "openWeights": false
+  },
+  "openrouter/black-forest-labs/flux.2-klein-4b": {
+    "contextWindow": 40960,
+    "maxOutputTokens": 40960,
+    "inputModalities": [
+      "image",
+      "text"
+    ],
+    "outputModalities": [
+      "image"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": false,
+    "supportsToolCall": false,
+    "supportsTemperature": true,
+    "family": "flux",
+    "knowledgeCutoff": "2025-06",
+    "openWeights": true
+  },
+  "openrouter/black-forest-labs/flux.2-max": {
+    "contextWindow": 46864,
+    "maxOutputTokens": 46864,
+    "inputModalities": [
+      "image",
+      "text"
+    ],
+    "outputModalities": [
+      "image"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": false,
+    "supportsToolCall": false,
+    "supportsTemperature": true,
+    "family": "flux",
+    "knowledgeCutoff": "2025-06",
+    "openWeights": false
+  },
+  "openrouter/black-forest-labs/flux.2-pro": {
+    "contextWindow": 46864,
+    "maxOutputTokens": 46864,
+    "inputModalities": [
+      "image",
+      "text"
+    ],
+    "outputModalities": [
+      "image"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": false,
+    "supportsToolCall": false,
+    "supportsTemperature": true,
+    "family": "flux",
+    "knowledgeCutoff": "2025-06",
+    "openWeights": false
+  },
+  "openrouter/bytedance-seed/seedream-4.5": {
+    "contextWindow": 4096,
+    "maxOutputTokens": 4096,
+    "inputModalities": [
+      "image",
+      "text"
+    ],
+    "outputModalities": [
+      "image"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": false,
+    "supportsToolCall": false,
+    "supportsTemperature": true,
+    "family": "seed",
+    "knowledgeCutoff": "2025-06",
+    "openWeights": true
+  },
+  "openrouter/cognitivecomputations/dolphin-mistral-24b-venice-edition:free": {
+    "contextWindow": 32768,
+    "maxOutputTokens": 32768,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": false,
+    "supportsToolCall": false,
+    "supportsTemperature": true,
+    "family": "mistral",
+    "knowledgeCutoff": "2025-06",
+    "openWeights": true
+  },
+  "openrouter/deepseek/deepseek-chat-v3-0324": {
+    "contextWindow": 16384,
+    "maxOutputTokens": 8192,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": false,
+    "supportsToolCall": false,
+    "supportsTemperature": true,
+    "family": "deepseek",
+    "knowledgeCutoff": "2024-10",
+    "openWeights": true
+  },
+  "openrouter/deepseek/deepseek-chat-v3.1": {
+    "contextWindow": 163840,
+    "maxOutputTokens": 163840,
+    "inputCostPerMTok": 0.2,
+    "outputCostPerMTok": 0.8,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "deepseek",
+    "knowledgeCutoff": "2025-07",
+    "openWeights": true
+  },
+  "openrouter/deepseek/deepseek-r1": {
+    "contextWindow": 64000,
+    "maxOutputTokens": 16000,
+    "inputCostPerMTok": 0.7,
+    "outputCostPerMTok": 2.5,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "deepseek-thinking",
+    "knowledgeCutoff": "2024-07",
+    "openWeights": true
+  },
+  "openrouter/deepseek/deepseek-r1-distill-llama-70b": {
+    "contextWindow": 8192,
+    "maxOutputTokens": 8192,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": false,
+    "supportsTemperature": true,
+    "family": "deepseek-thinking",
+    "knowledgeCutoff": "2024-10",
+    "openWeights": true
+  },
+  "openrouter/deepseek/deepseek-v3.1-terminus": {
+    "contextWindow": 131072,
+    "maxOutputTokens": 65536,
+    "inputCostPerMTok": 0.27,
+    "outputCostPerMTok": 1,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "deepseek",
+    "knowledgeCutoff": "2025-07",
+    "openWeights": true
+  },
+  "openrouter/deepseek/deepseek-v3.1-terminus:exacto": {
+    "contextWindow": 131072,
+    "maxOutputTokens": 65536,
+    "inputCostPerMTok": 0.27,
+    "outputCostPerMTok": 1,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "deepseek",
+    "knowledgeCutoff": "2025-07",
+    "openWeights": true
+  },
+  "openrouter/deepseek/deepseek-v3.2": {
+    "contextWindow": 163840,
+    "maxOutputTokens": 65536,
+    "inputCostPerMTok": 0.28,
+    "outputCostPerMTok": 0.4,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "deepseek",
+    "knowledgeCutoff": "2024-07",
+    "openWeights": true
+  },
+  "openrouter/deepseek/deepseek-v3.2-speciale": {
+    "contextWindow": 163840,
+    "maxOutputTokens": 65536,
+    "inputCostPerMTok": 0.27,
+    "outputCostPerMTok": 0.41,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "deepseek",
+    "knowledgeCutoff": "2024-07",
+    "openWeights": true
+  },
+  "openrouter/deepseek/deepseek-v4-flash": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 393216,
+    "inputCostPerMTok": 0.14,
+    "outputCostPerMTok": 0.28,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "deepseek-flash",
+    "knowledgeCutoff": "2025-05",
+    "openWeights": true
+  },
+  "openrouter/deepseek/deepseek-v4-pro": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 393216,
+    "inputCostPerMTok": 1.74,
+    "outputCostPerMTok": 3.48,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "deepseek-thinking",
+    "knowledgeCutoff": "2025-05",
+    "openWeights": true
+  },
+  "openrouter/google/gemini-2.0-flash-001": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 8192,
+    "inputCostPerMTok": 0.1,
+    "outputCostPerMTok": 0.4,
+    "inputModalities": [
+      "text",
+      "image",
+      "audio",
+      "video",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gemini-flash",
+    "knowledgeCutoff": "2024-06",
+    "openWeights": false
+  },
+  "openrouter/google/gemini-2.5-flash": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 65536,
+    "inputCostPerMTok": 0.3,
+    "outputCostPerMTok": 2.5,
+    "inputModalities": [
+      "text",
+      "image",
+      "audio",
+      "video",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gemini-flash",
+    "knowledgeCutoff": "2025-01",
+    "openWeights": false
+  },
+  "openrouter/google/gemini-2.5-flash-lite": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 65536,
+    "inputCostPerMTok": 0.1,
+    "outputCostPerMTok": 0.4,
+    "inputModalities": [
+      "text",
+      "image",
+      "audio",
+      "video",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gemini-flash-lite",
+    "knowledgeCutoff": "2025-01",
+    "openWeights": false
+  },
+  "openrouter/google/gemini-2.5-flash-lite-preview-09-2025": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 65536,
+    "inputCostPerMTok": 0.1,
+    "outputCostPerMTok": 0.4,
+    "inputModalities": [
+      "text",
+      "image",
+      "audio",
+      "video",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gemini-flash-lite",
+    "knowledgeCutoff": "2025-01",
+    "openWeights": false
+  },
+  "openrouter/google/gemini-2.5-flash-preview-09-2025": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 65536,
+    "inputCostPerMTok": 0.3,
+    "outputCostPerMTok": 2.5,
+    "inputModalities": [
+      "text",
+      "image",
+      "audio",
+      "video",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gemini-flash",
+    "knowledgeCutoff": "2025-01",
+    "openWeights": false
+  },
+  "openrouter/google/gemini-2.5-pro": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 65536,
+    "inputCostPerMTok": 1.25,
+    "outputCostPerMTok": 10,
+    "inputModalities": [
+      "text",
+      "image",
+      "audio",
+      "video",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gemini-pro",
+    "knowledgeCutoff": "2025-01",
+    "openWeights": false
+  },
+  "openrouter/google/gemini-2.5-pro-preview-05-06": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 65536,
+    "inputCostPerMTok": 1.25,
+    "outputCostPerMTok": 10,
+    "inputModalities": [
+      "text",
+      "image",
+      "audio",
+      "video",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gemini-pro",
+    "knowledgeCutoff": "2025-01",
+    "openWeights": false
+  },
+  "openrouter/google/gemini-2.5-pro-preview-06-05": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 65536,
+    "inputCostPerMTok": 1.25,
+    "outputCostPerMTok": 10,
+    "inputModalities": [
+      "text",
+      "image",
+      "audio",
+      "video",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gemini-pro",
+    "knowledgeCutoff": "2025-01",
+    "openWeights": false
+  },
+  "openrouter/google/gemini-3-flash-preview": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 65536,
+    "inputCostPerMTok": 0.5,
+    "outputCostPerMTok": 3,
+    "inputModalities": [
+      "text",
+      "image",
+      "audio",
+      "video",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gemini-flash",
+    "knowledgeCutoff": "2025-01",
+    "openWeights": false
+  },
+  "openrouter/google/gemini-3-pro-preview": {
+    "contextWindow": 1050000,
+    "maxOutputTokens": 66000,
+    "inputCostPerMTok": 2,
+    "outputCostPerMTok": 12,
+    "inputModalities": [
+      "text",
+      "image",
+      "audio",
+      "video",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gemini-pro",
+    "knowledgeCutoff": "2025-01",
+    "openWeights": false
+  },
+  "openrouter/google/gemini-3.1-flash-image-preview": {
+    "contextWindow": 65536,
+    "maxOutputTokens": 65536,
+    "inputCostPerMTok": 0.5,
+    "outputCostPerMTok": 3,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text",
+      "image"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": false,
+    "supportsTemperature": true,
+    "family": "gemini-flash",
+    "knowledgeCutoff": "2025-01",
+    "openWeights": false
+  },
+  "openrouter/google/gemini-3.1-flash-lite-preview": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 65536,
+    "inputCostPerMTok": 0.25,
+    "outputCostPerMTok": 1.5,
+    "inputModalities": [
+      "text",
+      "image",
+      "video",
+      "pdf",
+      "audio"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gemini-flash-lite",
+    "openWeights": false
+  },
+  "openrouter/google/gemini-3.1-pro-preview": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 65536,
+    "inputCostPerMTok": 2,
+    "outputCostPerMTok": 12,
+    "inputModalities": [
+      "text",
+      "image",
+      "audio",
+      "video",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gemini-pro",
+    "knowledgeCutoff": "2025-01",
+    "openWeights": false
+  },
+  "openrouter/google/gemini-3.1-pro-preview-customtools": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 65536,
+    "inputCostPerMTok": 2,
+    "outputCostPerMTok": 12,
+    "inputModalities": [
+      "text",
+      "image",
+      "audio",
+      "video",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gemini-pro",
+    "knowledgeCutoff": "2025-01",
+    "openWeights": false
+  },
+  "openrouter/google/gemma-2-9b-it": {
+    "contextWindow": 8192,
+    "maxOutputTokens": 8192,
+    "inputCostPerMTok": 0.03,
+    "outputCostPerMTok": 0.09,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": false,
+    "supportsToolCall": false,
+    "supportsTemperature": true,
+    "family": "gemma",
+    "knowledgeCutoff": "2024-06",
+    "openWeights": true
+  },
+  "openrouter/google/gemma-3-12b-it": {
+    "contextWindow": 131072,
+    "maxOutputTokens": 131072,
+    "inputCostPerMTok": 0.03,
+    "outputCostPerMTok": 0.1,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": false,
+    "supportsTemperature": true,
+    "family": "gemma",
+    "knowledgeCutoff": "2024-10",
+    "openWeights": true
+  },
+  "openrouter/google/gemma-3-12b-it:free": {
+    "contextWindow": 32768,
+    "maxOutputTokens": 8192,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": false,
+    "supportsTemperature": true,
+    "family": "gemma",
+    "knowledgeCutoff": "2024-10",
+    "openWeights": true
+  },
+  "openrouter/google/gemma-3-27b-it": {
+    "contextWindow": 96000,
+    "maxOutputTokens": 96000,
+    "inputCostPerMTok": 0.04,
+    "outputCostPerMTok": 0.15,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gemma",
+    "knowledgeCutoff": "2024-10",
+    "openWeights": true
+  },
+  "openrouter/google/gemma-3-27b-it:free": {
+    "contextWindow": 131072,
+    "maxOutputTokens": 8192,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gemma",
+    "knowledgeCutoff": "2024-10",
+    "openWeights": true
+  },
+  "openrouter/google/gemma-3-4b-it": {
+    "contextWindow": 96000,
+    "maxOutputTokens": 96000,
+    "inputCostPerMTok": 0.01703,
+    "outputCostPerMTok": 0.06815,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": false,
+    "supportsTemperature": true,
+    "family": "gemma",
+    "knowledgeCutoff": "2024-10",
+    "openWeights": true
+  },
+  "openrouter/google/gemma-3-4b-it:free": {
+    "contextWindow": 32768,
+    "maxOutputTokens": 8192,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": false,
+    "supportsTemperature": true,
+    "family": "gemma",
+    "knowledgeCutoff": "2024-10",
+    "openWeights": true
+  },
+  "openrouter/google/gemma-3n-e2b-it:free": {
+    "contextWindow": 8192,
+    "maxOutputTokens": 2000,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": false,
+    "supportsTemperature": true,
+    "family": "gemma",
+    "knowledgeCutoff": "2024-06",
+    "openWeights": true
+  },
+  "openrouter/google/gemma-3n-e4b-it": {
+    "contextWindow": 32768,
+    "maxOutputTokens": 32768,
+    "inputCostPerMTok": 0.02,
+    "outputCostPerMTok": 0.04,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": false,
+    "supportsTemperature": true,
+    "family": "gemma",
+    "knowledgeCutoff": "2024-06",
+    "openWeights": true
+  },
+  "openrouter/google/gemma-3n-e4b-it:free": {
+    "contextWindow": 8192,
+    "maxOutputTokens": 2000,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": false,
+    "supportsTemperature": true,
+    "family": "gemma",
+    "knowledgeCutoff": "2024-06",
+    "openWeights": true
+  },
+  "openrouter/google/gemma-4-26b-a4b-it": {
+    "contextWindow": 262144,
+    "maxOutputTokens": 262144,
+    "inputCostPerMTok": 0.13,
+    "outputCostPerMTok": 0.4,
+    "inputModalities": [
+      "text",
+      "image",
+      "video"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gemma",
+    "knowledgeCutoff": "2025-01",
+    "openWeights": true
+  },
+  "openrouter/google/gemma-4-26b-a4b-it:free": {
+    "contextWindow": 262144,
+    "maxOutputTokens": 32768,
+    "inputModalities": [
+      "text",
+      "image",
+      "video"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gemma",
+    "knowledgeCutoff": "2025-01",
+    "openWeights": true
+  },
+  "openrouter/google/gemma-4-31b-it": {
+    "contextWindow": 262144,
+    "maxOutputTokens": 262144,
+    "inputCostPerMTok": 0.14,
+    "outputCostPerMTok": 0.4,
+    "inputModalities": [
+      "text",
+      "image",
+      "video"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gemma",
+    "knowledgeCutoff": "2025-01",
+    "openWeights": true
+  },
+  "openrouter/google/gemma-4-31b-it:free": {
+    "contextWindow": 262144,
+    "maxOutputTokens": 32768,
+    "inputModalities": [
+      "text",
+      "image",
+      "video"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gemma",
+    "knowledgeCutoff": "2025-01",
+    "openWeights": true
+  },
+  "openrouter/inception/mercury-2": {
+    "contextWindow": 128000,
+    "maxOutputTokens": 50000,
+    "inputCostPerMTok": 0.25,
+    "outputCostPerMTok": 0.75,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "mercury",
+    "openWeights": false
+  },
+  "openrouter/inception/mercury-edit-2": {
+    "contextWindow": 128000,
+    "maxOutputTokens": 8192,
+    "inputCostPerMTok": 0.25,
+    "outputCostPerMTok": 0.75,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": false,
+    "supportsTemperature": true,
+    "openWeights": false
+  },
+  "openrouter/liquid/lfm-2.5-1.2b-instruct:free": {
+    "contextWindow": 131072,
+    "maxOutputTokens": 32768,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": false,
+    "supportsToolCall": false,
+    "supportsTemperature": true,
+    "family": "liquid",
+    "knowledgeCutoff": "2025-06",
+    "openWeights": true
+  },
+  "openrouter/liquid/lfm-2.5-1.2b-thinking:free": {
+    "contextWindow": 131072,
+    "maxOutputTokens": 32768,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": false,
+    "supportsTemperature": true,
+    "family": "liquid",
+    "knowledgeCutoff": "2025-06",
+    "openWeights": true
+  },
+  "openrouter/meta-llama/llama-3.2-11b-vision-instruct": {
+    "contextWindow": 131072,
+    "maxOutputTokens": 8192,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": false,
+    "supportsTemperature": true,
+    "family": "llama",
+    "knowledgeCutoff": "2023-12",
+    "openWeights": true
+  },
+  "openrouter/meta-llama/llama-3.2-3b-instruct:free": {
+    "contextWindow": 131072,
+    "maxOutputTokens": 131072,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": false,
+    "supportsTemperature": true,
+    "family": "llama",
+    "knowledgeCutoff": "2023-12",
+    "openWeights": true
+  },
+  "openrouter/meta-llama/llama-3.3-70b-instruct:free": {
+    "contextWindow": 131072,
+    "maxOutputTokens": 131072,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "llama",
+    "knowledgeCutoff": "2024-12",
+    "openWeights": true
+  },
+  "openrouter/minimax/minimax-01": {
+    "contextWindow": 1000000,
+    "maxOutputTokens": 1000000,
+    "inputCostPerMTok": 0.2,
+    "outputCostPerMTok": 1.1,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "minimax",
+    "openWeights": true
+  },
+  "openrouter/minimax/minimax-m1": {
+    "contextWindow": 1000000,
+    "maxOutputTokens": 40000,
+    "inputCostPerMTok": 0.4,
+    "outputCostPerMTok": 2.2,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "minimax",
+    "openWeights": true
+  },
+  "openrouter/minimax/minimax-m2": {
+    "contextWindow": 196600,
+    "maxOutputTokens": 118000,
+    "inputCostPerMTok": 0.28,
+    "outputCostPerMTok": 1.15,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "minimax",
+    "openWeights": true
+  },
+  "openrouter/minimax/minimax-m2.1": {
+    "contextWindow": 204800,
+    "maxOutputTokens": 131072,
+    "inputCostPerMTok": 0.3,
+    "outputCostPerMTok": 1.2,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "minimax",
+    "openWeights": true
+  },
+  "openrouter/minimax/minimax-m2.5": {
+    "contextWindow": 204800,
+    "maxOutputTokens": 131072,
+    "inputCostPerMTok": 0.3,
+    "outputCostPerMTok": 1.2,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "minimax",
+    "openWeights": true
+  },
+  "openrouter/minimax/minimax-m2.5:free": {
+    "contextWindow": 204800,
+    "maxOutputTokens": 131072,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "minimax",
+    "openWeights": true
+  },
+  "openrouter/minimax/minimax-m2.7": {
+    "contextWindow": 204800,
+    "maxOutputTokens": 131072,
+    "inputCostPerMTok": 0.3,
+    "outputCostPerMTok": 1.2,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "minimax",
+    "openWeights": true
+  },
+  "openrouter/mistralai/codestral-2508": {
+    "contextWindow": 256000,
+    "maxOutputTokens": 256000,
+    "inputCostPerMTok": 0.3,
+    "outputCostPerMTok": 0.9,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "codestral",
+    "knowledgeCutoff": "2025-05",
+    "openWeights": true
+  },
+  "openrouter/mistralai/devstral-2512": {
+    "contextWindow": 262144,
+    "maxOutputTokens": 262144,
+    "inputCostPerMTok": 0.15,
+    "outputCostPerMTok": 0.6,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "devstral",
+    "knowledgeCutoff": "2025-12",
+    "openWeights": true
+  },
+  "openrouter/mistralai/devstral-medium-2507": {
+    "contextWindow": 131072,
+    "maxOutputTokens": 131072,
+    "inputCostPerMTok": 0.4,
+    "outputCostPerMTok": 2,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "devstral",
+    "knowledgeCutoff": "2025-05",
+    "openWeights": true
+  },
+  "openrouter/mistralai/devstral-small-2505": {
+    "contextWindow": 128000,
+    "maxOutputTokens": 128000,
+    "inputCostPerMTok": 0.06,
+    "outputCostPerMTok": 0.12,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "devstral",
+    "knowledgeCutoff": "2025-05",
+    "openWeights": true
+  },
+  "openrouter/mistralai/devstral-small-2507": {
+    "contextWindow": 131072,
+    "maxOutputTokens": 131072,
+    "inputCostPerMTok": 0.1,
+    "outputCostPerMTok": 0.3,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "devstral",
+    "knowledgeCutoff": "2025-05",
+    "openWeights": true
+  },
+  "openrouter/mistralai/mistral-medium-3": {
+    "contextWindow": 131072,
+    "maxOutputTokens": 131072,
+    "inputCostPerMTok": 0.4,
+    "outputCostPerMTok": 2,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "mistral-medium",
+    "knowledgeCutoff": "2025-05",
+    "openWeights": false
+  },
+  "openrouter/mistralai/mistral-medium-3.1": {
+    "contextWindow": 262144,
+    "maxOutputTokens": 262144,
+    "inputCostPerMTok": 0.4,
+    "outputCostPerMTok": 2,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "mistral-medium",
+    "knowledgeCutoff": "2025-05",
+    "openWeights": false
+  },
+  "openrouter/mistralai/mistral-small-2603": {
+    "contextWindow": 262144,
+    "maxOutputTokens": 262144,
+    "inputCostPerMTok": 0.15,
+    "outputCostPerMTok": 0.6,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "mistral-small",
+    "knowledgeCutoff": "2025-06",
+    "openWeights": true
+  },
+  "openrouter/mistralai/mistral-small-3.1-24b-instruct": {
+    "contextWindow": 128000,
+    "maxOutputTokens": 8192,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "mistral-small",
+    "knowledgeCutoff": "2024-10",
+    "openWeights": true
+  },
+  "openrouter/mistralai/mistral-small-3.2-24b-instruct": {
+    "contextWindow": 96000,
+    "maxOutputTokens": 8192,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "mistral-small",
+    "knowledgeCutoff": "2024-10",
+    "openWeights": true
+  },
+  "openrouter/moonshotai/kimi-k2": {
+    "contextWindow": 131072,
+    "maxOutputTokens": 32768,
+    "inputCostPerMTok": 0.55,
+    "outputCostPerMTok": 2.2,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "kimi",
+    "knowledgeCutoff": "2024-10",
+    "openWeights": true
+  },
+  "openrouter/moonshotai/kimi-k2-0905": {
+    "contextWindow": 262144,
+    "maxOutputTokens": 16384,
+    "inputCostPerMTok": 0.6,
+    "outputCostPerMTok": 2.5,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "kimi",
+    "knowledgeCutoff": "2024-10",
+    "openWeights": true
+  },
+  "openrouter/moonshotai/kimi-k2-0905:exacto": {
+    "contextWindow": 262144,
+    "maxOutputTokens": 16384,
+    "inputCostPerMTok": 0.6,
+    "outputCostPerMTok": 2.5,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "kimi",
+    "knowledgeCutoff": "2024-10",
+    "openWeights": true
+  },
+  "openrouter/moonshotai/kimi-k2-thinking": {
+    "contextWindow": 262144,
+    "maxOutputTokens": 262144,
+    "inputCostPerMTok": 0.6,
+    "outputCostPerMTok": 2.5,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "kimi-thinking",
+    "knowledgeCutoff": "2024-08",
+    "openWeights": true
+  },
+  "openrouter/moonshotai/kimi-k2.5": {
+    "contextWindow": 262144,
+    "maxOutputTokens": 262144,
+    "inputCostPerMTok": 0.6,
+    "outputCostPerMTok": 3,
+    "inputModalities": [
+      "text",
+      "image",
+      "video"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "kimi",
+    "knowledgeCutoff": "2025-01",
+    "openWeights": true
+  },
+  "openrouter/moonshotai/kimi-k2.6": {
+    "contextWindow": 262144,
+    "maxOutputTokens": 262144,
+    "inputCostPerMTok": 0.95,
+    "outputCostPerMTok": 4,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "kimi",
+    "openWeights": true
+  },
+  "openrouter/nousresearch/hermes-3-llama-3.1-405b:free": {
+    "contextWindow": 131072,
+    "maxOutputTokens": 131072,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": false,
+    "supportsTemperature": true,
+    "family": "hermes",
+    "knowledgeCutoff": "2023-12",
+    "openWeights": true
+  },
+  "openrouter/nousresearch/hermes-4-405b": {
+    "contextWindow": 131072,
+    "maxOutputTokens": 131072,
+    "inputCostPerMTok": 1,
+    "outputCostPerMTok": 3,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "hermes",
+    "knowledgeCutoff": "2023-12",
+    "openWeights": true
+  },
+  "openrouter/nousresearch/hermes-4-70b": {
+    "contextWindow": 131072,
+    "maxOutputTokens": 131072,
+    "inputCostPerMTok": 0.13,
+    "outputCostPerMTok": 0.4,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "hermes",
+    "knowledgeCutoff": "2023-12",
+    "openWeights": true
+  },
+  "openrouter/nvidia/nemotron-3-nano-30b-a3b:free": {
+    "contextWindow": 256000,
+    "maxOutputTokens": 256000,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "nemotron",
+    "knowledgeCutoff": "2025-11",
+    "openWeights": true
+  },
+  "openrouter/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free": {
+    "contextWindow": 256000,
+    "maxOutputTokens": 65536,
+    "inputModalities": [
+      "text",
+      "image",
+      "video",
+      "audio"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "nemotron",
+    "openWeights": true
+  },
+  "openrouter/nvidia/nemotron-3-super-120b-a12b": {
+    "contextWindow": 262144,
+    "maxOutputTokens": 262144,
+    "inputCostPerMTok": 0.1,
+    "outputCostPerMTok": 0.5,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "nemotron",
+    "knowledgeCutoff": "2024-04",
+    "openWeights": true
+  },
+  "openrouter/nvidia/nemotron-3-super-120b-a12b:free": {
+    "contextWindow": 262144,
+    "maxOutputTokens": 262144,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "nemotron",
+    "knowledgeCutoff": "2024-04",
+    "openWeights": true
+  },
+  "openrouter/nvidia/nemotron-nano-12b-v2-vl:free": {
+    "contextWindow": 128000,
+    "maxOutputTokens": 128000,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "nemotron",
+    "knowledgeCutoff": "2025-11",
+    "openWeights": true
+  },
+  "openrouter/nvidia/nemotron-nano-9b-v2": {
+    "contextWindow": 131072,
+    "maxOutputTokens": 131072,
+    "inputCostPerMTok": 0.04,
+    "outputCostPerMTok": 0.16,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "nemotron",
+    "knowledgeCutoff": "2024-09",
+    "openWeights": true
+  },
+  "openrouter/nvidia/nemotron-nano-9b-v2:free": {
+    "contextWindow": 128000,
+    "maxOutputTokens": 128000,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "nemotron",
+    "knowledgeCutoff": "2024-09",
+    "openWeights": true
+  },
+  "openrouter/openai/gpt-4.1": {
+    "contextWindow": 1047576,
+    "maxOutputTokens": 32768,
+    "inputCostPerMTok": 2,
+    "outputCostPerMTok": 8,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gpt",
+    "knowledgeCutoff": "2024-04",
+    "openWeights": false
+  },
+  "openrouter/openai/gpt-4.1-mini": {
+    "contextWindow": 1047576,
+    "maxOutputTokens": 32768,
+    "inputCostPerMTok": 0.4,
+    "outputCostPerMTok": 1.6,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gpt-mini",
+    "knowledgeCutoff": "2024-04",
+    "openWeights": false
+  },
+  "openrouter/openai/gpt-4o-mini": {
+    "contextWindow": 128000,
+    "maxOutputTokens": 16384,
+    "inputCostPerMTok": 0.15,
+    "outputCostPerMTok": 0.6,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gpt-mini",
+    "knowledgeCutoff": "2024-10",
+    "openWeights": false
+  },
+  "openrouter/openai/gpt-5": {
+    "contextWindow": 400000,
+    "maxOutputTokens": 128000,
+    "inputCostPerMTok": 1.25,
+    "outputCostPerMTok": 10,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gpt",
+    "knowledgeCutoff": "2024-10-01",
+    "openWeights": false
+  },
+  "openrouter/openai/gpt-5-chat": {
+    "contextWindow": 400000,
+    "maxOutputTokens": 128000,
+    "inputCostPerMTok": 1.25,
+    "outputCostPerMTok": 10,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": false,
+    "supportsTemperature": true,
+    "family": "gpt-codex",
+    "knowledgeCutoff": "2024-09-30",
+    "openWeights": false
+  },
+  "openrouter/openai/gpt-5-codex": {
+    "contextWindow": 400000,
+    "maxOutputTokens": 128000,
+    "inputCostPerMTok": 1.25,
+    "outputCostPerMTok": 10,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gpt-codex",
+    "knowledgeCutoff": "2024-10-01",
+    "openWeights": false
+  },
+  "openrouter/openai/gpt-5-image": {
+    "contextWindow": 400000,
+    "maxOutputTokens": 128000,
+    "inputCostPerMTok": 5,
+    "outputCostPerMTok": 10,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text",
+      "image"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gpt",
+    "knowledgeCutoff": "2024-10-01",
+    "openWeights": false
+  },
+  "openrouter/openai/gpt-5-mini": {
+    "contextWindow": 400000,
+    "maxOutputTokens": 128000,
+    "inputCostPerMTok": 0.25,
+    "outputCostPerMTok": 2,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gpt-mini",
+    "knowledgeCutoff": "2024-10-01",
+    "openWeights": false
+  },
+  "openrouter/openai/gpt-5-nano": {
+    "contextWindow": 400000,
+    "maxOutputTokens": 128000,
+    "inputCostPerMTok": 0.05,
+    "outputCostPerMTok": 0.4,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gpt-nano",
+    "knowledgeCutoff": "2024-10-01",
+    "openWeights": false
+  },
+  "openrouter/openai/gpt-5-pro": {
+    "contextWindow": 400000,
+    "maxOutputTokens": 272000,
+    "inputCostPerMTok": 15,
+    "outputCostPerMTok": 120,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": false,
+    "family": "gpt-pro",
+    "knowledgeCutoff": "2024-09-30",
+    "openWeights": false
+  },
+  "openrouter/openai/gpt-5.1": {
+    "contextWindow": 400000,
+    "maxOutputTokens": 128000,
+    "inputCostPerMTok": 1.25,
+    "outputCostPerMTok": 10,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gpt",
+    "knowledgeCutoff": "2024-09-30",
+    "openWeights": false
+  },
+  "openrouter/openai/gpt-5.1-chat": {
+    "contextWindow": 128000,
+    "maxOutputTokens": 16384,
+    "inputCostPerMTok": 1.25,
+    "outputCostPerMTok": 10,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gpt-codex",
+    "knowledgeCutoff": "2024-09-30",
+    "openWeights": false
+  },
+  "openrouter/openai/gpt-5.1-codex": {
+    "contextWindow": 400000,
+    "maxOutputTokens": 128000,
+    "inputCostPerMTok": 1.25,
+    "outputCostPerMTok": 10,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gpt-codex",
+    "knowledgeCutoff": "2024-09-30",
+    "openWeights": false
+  },
+  "openrouter/openai/gpt-5.1-codex-max": {
+    "contextWindow": 400000,
+    "maxOutputTokens": 128000,
+    "inputCostPerMTok": 1.1,
+    "outputCostPerMTok": 9,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gpt-codex",
+    "knowledgeCutoff": "2024-09-30",
+    "openWeights": false
+  },
+  "openrouter/openai/gpt-5.1-codex-mini": {
+    "contextWindow": 400000,
+    "maxOutputTokens": 100000,
+    "inputCostPerMTok": 0.25,
+    "outputCostPerMTok": 2,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gpt-codex",
+    "knowledgeCutoff": "2024-09-30",
+    "openWeights": false
+  },
+  "openrouter/openai/gpt-5.2": {
+    "contextWindow": 400000,
+    "maxOutputTokens": 128000,
+    "inputCostPerMTok": 1.75,
+    "outputCostPerMTok": 14,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": false,
+    "family": "gpt",
+    "knowledgeCutoff": "2025-08-31",
+    "openWeights": false
+  },
+  "openrouter/openai/gpt-5.2-chat": {
+    "contextWindow": 128000,
+    "maxOutputTokens": 16384,
+    "inputCostPerMTok": 1.75,
+    "outputCostPerMTok": 14,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": false,
+    "family": "gpt-codex",
+    "knowledgeCutoff": "2025-08-31",
+    "openWeights": false
+  },
+  "openrouter/openai/gpt-5.2-codex": {
+    "contextWindow": 400000,
+    "maxOutputTokens": 128000,
+    "inputCostPerMTok": 1.75,
+    "outputCostPerMTok": 14,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gpt-codex",
+    "knowledgeCutoff": "2025-08-31",
+    "openWeights": false
+  },
+  "openrouter/openai/gpt-5.2-pro": {
+    "contextWindow": 400000,
+    "maxOutputTokens": 128000,
+    "inputCostPerMTok": 21,
+    "outputCostPerMTok": 168,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": false,
+    "family": "gpt-pro",
+    "knowledgeCutoff": "2025-08-31",
+    "openWeights": false
+  },
+  "openrouter/openai/gpt-5.3-codex": {
+    "contextWindow": 400000,
+    "maxOutputTokens": 128000,
+    "inputCostPerMTok": 1.75,
+    "outputCostPerMTok": 14,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": false,
+    "family": "gpt-codex",
+    "knowledgeCutoff": "2025-08-31",
+    "openWeights": false
+  },
+  "openrouter/openai/gpt-5.4": {
+    "contextWindow": 1050000,
+    "maxOutputTokens": 128000,
+    "inputCostPerMTok": 2.5,
+    "outputCostPerMTok": 15,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": false,
+    "family": "gpt",
+    "knowledgeCutoff": "2025-08-31",
+    "openWeights": false
+  },
+  "openrouter/openai/gpt-5.4-mini": {
+    "contextWindow": 400000,
+    "maxOutputTokens": 128000,
+    "inputCostPerMTok": 0.75,
+    "outputCostPerMTok": 4.5,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gpt-mini",
+    "knowledgeCutoff": "2025-08-31",
+    "openWeights": false
+  },
+  "openrouter/openai/gpt-5.4-nano": {
+    "contextWindow": 400000,
+    "maxOutputTokens": 128000,
+    "inputCostPerMTok": 0.2,
+    "outputCostPerMTok": 1.25,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gpt-nano",
+    "knowledgeCutoff": "2025-08-31",
+    "openWeights": false
+  },
+  "openrouter/openai/gpt-5.4-pro": {
+    "contextWindow": 1050000,
+    "maxOutputTokens": 128000,
+    "inputCostPerMTok": 30,
+    "outputCostPerMTok": 180,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": false,
+    "family": "gpt-pro",
+    "knowledgeCutoff": "2025-08-31",
+    "openWeights": false
+  },
+  "openrouter/openai/gpt-5.5": {
+    "contextWindow": 1050000,
+    "maxOutputTokens": 128000,
+    "inputCostPerMTok": 5,
+    "outputCostPerMTok": 30,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": false,
+    "family": "gpt",
+    "knowledgeCutoff": "2025-12-01",
+    "openWeights": false
+  },
+  "openrouter/openai/gpt-5.5-pro": {
+    "contextWindow": 1050000,
+    "maxOutputTokens": 128000,
+    "inputCostPerMTok": 30,
+    "outputCostPerMTok": 180,
+    "inputModalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": false,
+    "family": "gpt-pro",
+    "knowledgeCutoff": "2025-12-01",
+    "openWeights": false
+  },
+  "openrouter/openai/gpt-oss-120b": {
+    "contextWindow": 131072,
+    "maxOutputTokens": 32768,
+    "inputCostPerMTok": 0.072,
+    "outputCostPerMTok": 0.28,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gpt-oss",
+    "openWeights": true
+  },
+  "openrouter/openai/gpt-oss-120b:exacto": {
+    "contextWindow": 131072,
+    "maxOutputTokens": 32768,
+    "inputCostPerMTok": 0.05,
+    "outputCostPerMTok": 0.24,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gpt-oss",
+    "openWeights": true
+  },
+  "openrouter/openai/gpt-oss-120b:free": {
+    "contextWindow": 131072,
+    "maxOutputTokens": 32768,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gpt-oss",
+    "openWeights": true
+  },
+  "openrouter/openai/gpt-oss-20b": {
+    "contextWindow": 131072,
+    "maxOutputTokens": 32768,
+    "inputCostPerMTok": 0.05,
+    "outputCostPerMTok": 0.2,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gpt-oss",
+    "openWeights": true
+  },
+  "openrouter/openai/gpt-oss-20b:free": {
+    "contextWindow": 131072,
+    "maxOutputTokens": 32768,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gpt-oss",
+    "openWeights": true
+  },
+  "openrouter/openai/gpt-oss-safeguard-20b": {
+    "contextWindow": 131072,
+    "maxOutputTokens": 65536,
+    "inputCostPerMTok": 0.075,
+    "outputCostPerMTok": 0.3,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "gpt-oss",
+    "openWeights": false
+  },
+  "openrouter/openai/o4-mini": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 100000,
+    "inputCostPerMTok": 1.1,
+    "outputCostPerMTok": 4.4,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "o-mini",
+    "knowledgeCutoff": "2024-06",
+    "openWeights": false
+  },
+  "openrouter/openrouter/elephant-alpha": {
+    "contextWindow": 262144,
+    "maxOutputTokens": 32768,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "elephant",
+    "openWeights": false
+  },
+  "openrouter/openrouter/free": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 8000,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "openWeights": false
+  },
+  "openrouter/openrouter/owl-alpha": {
+    "contextWindow": 1048756,
+    "maxOutputTokens": 262144,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "openWeights": false
+  },
+  "openrouter/openrouter/pareto-code": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 200000,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "openWeights": false
+  },
+  "openrouter/poolside/laguna-m.1:free": {
+    "contextWindow": 131072,
+    "maxOutputTokens": 8192,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "openWeights": false
+  },
+  "openrouter/poolside/laguna-xs.2:free": {
+    "contextWindow": 131072,
+    "maxOutputTokens": 8192,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "openWeights": true
+  },
+  "openrouter/prime-intellect/intellect-3": {
+    "contextWindow": 131072,
+    "maxOutputTokens": 8192,
+    "inputCostPerMTok": 0.2,
+    "outputCostPerMTok": 1.1,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "glm",
+    "knowledgeCutoff": "2024-10",
+    "openWeights": true
+  },
+  "openrouter/qwen/qwen-2.5-coder-32b-instruct": {
+    "contextWindow": 32768,
+    "maxOutputTokens": 8192,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": false,
+    "supportsToolCall": false,
+    "supportsTemperature": true,
+    "family": "qwen",
+    "knowledgeCutoff": "2024-10",
+    "openWeights": true
+  },
+  "openrouter/qwen/qwen-3.6-27b": {
+    "contextWindow": 262144,
+    "maxOutputTokens": 81920,
+    "inputCostPerMTok": 0.195,
+    "outputCostPerMTok": 1.56,
+    "inputModalities": [
+      "text",
+      "image",
+      "video"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "qwen",
+    "knowledgeCutoff": "2025-04",
+    "openWeights": true
+  },
+  "openrouter/qwen/qwen-plus": {
+    "contextWindow": 1000000,
+    "maxOutputTokens": 32768,
+    "inputCostPerMTok": 0.26,
+    "outputCostPerMTok": 0.78,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "qwen",
+    "knowledgeCutoff": "2024-04",
+    "openWeights": false
+  },
+  "openrouter/qwen/qwen2.5-vl-72b-instruct": {
+    "contextWindow": 32768,
+    "maxOutputTokens": 8192,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": false,
+    "supportsToolCall": false,
+    "supportsTemperature": true,
+    "family": "qwen",
+    "knowledgeCutoff": "2024-10",
+    "openWeights": true
+  },
+  "openrouter/qwen/qwen3-235b-a22b-07-25": {
+    "contextWindow": 262144,
+    "maxOutputTokens": 131072,
+    "inputCostPerMTok": 0.15,
+    "outputCostPerMTok": 0.85,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "qwen",
+    "knowledgeCutoff": "2025-04",
+    "openWeights": true
+  },
+  "openrouter/qwen/qwen3-235b-a22b-thinking-2507": {
+    "contextWindow": 262144,
+    "maxOutputTokens": 81920,
+    "inputCostPerMTok": 0.078,
+    "outputCostPerMTok": 0.312,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "qwen",
+    "knowledgeCutoff": "2025-04",
+    "openWeights": true
+  },
+  "openrouter/qwen/qwen3-30b-a3b-instruct-2507": {
+    "contextWindow": 262000,
+    "maxOutputTokens": 262000,
+    "inputCostPerMTok": 0.2,
+    "outputCostPerMTok": 0.8,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "qwen",
+    "knowledgeCutoff": "2025-04",
+    "openWeights": true
+  },
+  "openrouter/qwen/qwen3-30b-a3b-thinking-2507": {
+    "contextWindow": 262000,
+    "maxOutputTokens": 262000,
+    "inputCostPerMTok": 0.2,
+    "outputCostPerMTok": 0.8,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "qwen",
+    "knowledgeCutoff": "2025-04",
+    "openWeights": true
+  },
+  "openrouter/qwen/qwen3-coder": {
+    "contextWindow": 262144,
+    "maxOutputTokens": 66536,
+    "inputCostPerMTok": 0.3,
+    "outputCostPerMTok": 1.2,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "qwen",
+    "knowledgeCutoff": "2025-04",
+    "openWeights": true
+  },
+  "openrouter/qwen/qwen3-coder-30b-a3b-instruct": {
+    "contextWindow": 160000,
+    "maxOutputTokens": 65536,
+    "inputCostPerMTok": 0.07,
+    "outputCostPerMTok": 0.27,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "qwen",
+    "knowledgeCutoff": "2025-04",
+    "openWeights": true
+  },
+  "openrouter/qwen/qwen3-coder-flash": {
+    "contextWindow": 128000,
+    "maxOutputTokens": 66536,
+    "inputCostPerMTok": 0.3,
+    "outputCostPerMTok": 1.5,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "qwen",
+    "knowledgeCutoff": "2025-04",
+    "openWeights": false
+  },
+  "openrouter/qwen/qwen3-coder-plus": {
+    "contextWindow": 1000000,
+    "maxOutputTokens": 65536,
+    "inputCostPerMTok": 0.65,
+    "outputCostPerMTok": 3.25,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "qwen",
+    "knowledgeCutoff": "2025-04",
+    "openWeights": true
+  },
+  "openrouter/qwen/qwen3-coder:exacto": {
+    "contextWindow": 131072,
+    "maxOutputTokens": 32768,
+    "inputCostPerMTok": 0.38,
+    "outputCostPerMTok": 1.53,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "qwen",
+    "knowledgeCutoff": "2025-04",
+    "openWeights": true
+  },
+  "openrouter/qwen/qwen3-max": {
+    "contextWindow": 262144,
+    "maxOutputTokens": 32768,
+    "inputCostPerMTok": 1.2,
+    "outputCostPerMTok": 6,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "qwen",
+    "openWeights": false
+  },
+  "openrouter/qwen/qwen3-next-80b-a3b-instruct": {
+    "contextWindow": 262144,
+    "maxOutputTokens": 262144,
+    "inputCostPerMTok": 0.14,
+    "outputCostPerMTok": 1.4,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "qwen",
+    "knowledgeCutoff": "2025-04",
+    "openWeights": true
+  },
+  "openrouter/qwen/qwen3-next-80b-a3b-thinking": {
+    "contextWindow": 262144,
+    "maxOutputTokens": 262144,
+    "inputCostPerMTok": 0.14,
+    "outputCostPerMTok": 1.4,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "qwen",
+    "knowledgeCutoff": "2025-04",
+    "openWeights": true
+  },
+  "openrouter/qwen/qwen3.5-397b-a17b": {
+    "contextWindow": 262144,
+    "maxOutputTokens": 65536,
+    "inputCostPerMTok": 0.6,
+    "outputCostPerMTok": 3.6,
+    "inputModalities": [
+      "text",
+      "image",
+      "video"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "qwen",
+    "knowledgeCutoff": "2025-04",
+    "openWeights": true
+  },
+  "openrouter/qwen/qwen3.5-flash-02-23": {
+    "contextWindow": 1000000,
+    "maxOutputTokens": 65536,
+    "inputCostPerMTok": 0.065,
+    "outputCostPerMTok": 0.26,
+    "inputModalities": [
+      "text",
+      "image",
+      "video"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "qwen",
+    "openWeights": false
+  },
+  "openrouter/qwen/qwen3.5-plus-02-15": {
+    "contextWindow": 1000000,
+    "maxOutputTokens": 65536,
+    "inputCostPerMTok": 0.4,
+    "outputCostPerMTok": 2.4,
+    "inputModalities": [
+      "text",
+      "image",
+      "video"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "qwen",
+    "knowledgeCutoff": "2025-04",
+    "openWeights": false
+  },
+  "openrouter/qwen/qwen3.6-plus": {
+    "contextWindow": 1000000,
+    "maxOutputTokens": 65536,
+    "inputCostPerMTok": 0.325,
+    "outputCostPerMTok": 1.95,
+    "inputModalities": [
+      "text",
+      "image",
+      "video"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "qwen",
+    "knowledgeCutoff": "2025-04",
+    "openWeights": false
+  },
+  "openrouter/sourceful/riverflow-v2-fast-preview": {
+    "contextWindow": 8192,
+    "maxOutputTokens": 8192,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "image"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": false,
+    "supportsToolCall": false,
+    "supportsTemperature": true,
+    "family": "sourceful",
+    "knowledgeCutoff": "2025-06",
+    "openWeights": true
+  },
+  "openrouter/sourceful/riverflow-v2-max-preview": {
+    "contextWindow": 8192,
+    "maxOutputTokens": 8192,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "image"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": false,
+    "supportsToolCall": false,
+    "supportsTemperature": true,
+    "family": "sourceful",
+    "knowledgeCutoff": "2025-06",
+    "openWeights": true
+  },
+  "openrouter/sourceful/riverflow-v2-standard-preview": {
+    "contextWindow": 8192,
+    "maxOutputTokens": 8192,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "image"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": false,
+    "supportsToolCall": false,
+    "supportsTemperature": true,
+    "family": "sourceful",
+    "knowledgeCutoff": "2025-06",
+    "openWeights": true
+  },
+  "openrouter/stepfun/step-3.5-flash": {
+    "contextWindow": 256000,
+    "maxOutputTokens": 256000,
+    "inputCostPerMTok": 0.1,
+    "outputCostPerMTok": 0.3,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "step",
+    "knowledgeCutoff": "2025-01",
+    "openWeights": true
+  },
+  "openrouter/tencent/hy3-preview": {
+    "contextWindow": 256000,
+    "maxOutputTokens": 64000,
+    "inputCostPerMTok": 0.066,
+    "outputCostPerMTok": 0.26,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "Hy",
+    "openWeights": true
+  },
+  "openrouter/x-ai/grok-3": {
+    "contextWindow": 131072,
+    "maxOutputTokens": 8192,
+    "inputCostPerMTok": 3,
+    "outputCostPerMTok": 15,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "grok",
+    "knowledgeCutoff": "2024-11",
+    "openWeights": false
+  },
+  "openrouter/x-ai/grok-3-beta": {
+    "contextWindow": 131072,
+    "maxOutputTokens": 8192,
+    "inputCostPerMTok": 3,
+    "outputCostPerMTok": 15,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": false,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "grok",
+    "knowledgeCutoff": "2024-11",
+    "openWeights": false
+  },
+  "openrouter/x-ai/grok-3-mini": {
+    "contextWindow": 131072,
+    "maxOutputTokens": 8192,
+    "inputCostPerMTok": 0.3,
+    "outputCostPerMTok": 0.5,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "grok",
+    "knowledgeCutoff": "2024-11",
+    "openWeights": false
+  },
+  "openrouter/x-ai/grok-3-mini-beta": {
+    "contextWindow": 131072,
+    "maxOutputTokens": 8192,
+    "inputCostPerMTok": 0.3,
+    "outputCostPerMTok": 0.5,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "grok",
+    "knowledgeCutoff": "2024-11",
+    "openWeights": false
+  },
+  "openrouter/x-ai/grok-4": {
+    "contextWindow": 256000,
+    "maxOutputTokens": 64000,
+    "inputCostPerMTok": 3,
+    "outputCostPerMTok": 15,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "grok",
+    "knowledgeCutoff": "2025-07",
+    "openWeights": false
+  },
+  "openrouter/x-ai/grok-4-fast": {
+    "contextWindow": 2000000,
+    "maxOutputTokens": 30000,
+    "inputCostPerMTok": 0.2,
+    "outputCostPerMTok": 0.5,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "grok",
+    "knowledgeCutoff": "2024-11",
+    "openWeights": false
+  },
+  "openrouter/x-ai/grok-4.1-fast": {
+    "contextWindow": 2000000,
+    "maxOutputTokens": 30000,
+    "inputCostPerMTok": 0.2,
+    "outputCostPerMTok": 0.5,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "grok",
+    "knowledgeCutoff": "2024-11",
+    "openWeights": false
+  },
+  "openrouter/x-ai/grok-4.20-beta": {
+    "contextWindow": 2000000,
+    "maxOutputTokens": 30000,
+    "inputCostPerMTok": 2,
+    "outputCostPerMTok": 6,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "grok",
+    "openWeights": false
+  },
+  "openrouter/x-ai/grok-4.20-multi-agent-beta": {
+    "contextWindow": 2000000,
+    "maxOutputTokens": 30000,
+    "inputCostPerMTok": 2,
+    "outputCostPerMTok": 6,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": false,
+    "supportsTemperature": true,
+    "family": "grok",
+    "openWeights": false
+  },
+  "openrouter/x-ai/grok-4.3": {
+    "contextWindow": 1000000,
+    "maxOutputTokens": 1000000,
+    "inputCostPerMTok": 1.25,
+    "outputCostPerMTok": 2.5,
+    "inputModalities": [
+      "text",
+      "image"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "grok",
+    "openWeights": false
+  },
+  "openrouter/x-ai/grok-code-fast-1": {
+    "contextWindow": 256000,
+    "maxOutputTokens": 10000,
+    "inputCostPerMTok": 0.2,
+    "outputCostPerMTok": 1.5,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "grok",
+    "knowledgeCutoff": "2025-08",
+    "openWeights": false
+  },
+  "openrouter/xiaomi/mimo-v2-flash": {
+    "contextWindow": 262144,
+    "maxOutputTokens": 65536,
+    "inputCostPerMTok": 0.1,
+    "outputCostPerMTok": 0.3,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "mimo",
+    "knowledgeCutoff": "2024-12-01",
+    "openWeights": true
+  },
+  "openrouter/xiaomi/mimo-v2-omni": {
+    "contextWindow": 262144,
+    "maxOutputTokens": 131072,
+    "inputCostPerMTok": 0.4,
+    "outputCostPerMTok": 2,
+    "inputModalities": [
+      "text",
+      "image",
+      "audio",
+      "video",
+      "pdf"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "mimo",
+    "knowledgeCutoff": "2024-12",
+    "openWeights": false
+  },
+  "openrouter/xiaomi/mimo-v2-pro": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 131072,
+    "inputCostPerMTok": 1,
+    "outputCostPerMTok": 3,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "mimo",
+    "knowledgeCutoff": "2024-12",
+    "openWeights": false
+  },
+  "openrouter/xiaomi/mimo-v2.5": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 131072,
+    "inputCostPerMTok": 0.4,
+    "outputCostPerMTok": 2,
+    "inputModalities": [
+      "text",
+      "image",
+      "audio",
+      "video"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "mimo",
+    "knowledgeCutoff": "2024-12",
+    "openWeights": true
+  },
+  "openrouter/xiaomi/mimo-v2.5-pro": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 131072,
+    "inputCostPerMTok": 1,
+    "outputCostPerMTok": 3,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "mimo",
+    "knowledgeCutoff": "2024-12",
+    "openWeights": true
+  },
+  "openrouter/z-ai/glm-4.5": {
+    "contextWindow": 128000,
+    "maxOutputTokens": 96000,
+    "inputCostPerMTok": 0.6,
+    "outputCostPerMTok": 2.2,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "glm",
+    "knowledgeCutoff": "2025-04",
+    "openWeights": true
+  },
+  "openrouter/z-ai/glm-4.5-air": {
+    "contextWindow": 128000,
+    "maxOutputTokens": 96000,
+    "inputCostPerMTok": 0.2,
+    "outputCostPerMTok": 1.1,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "glm-air",
+    "knowledgeCutoff": "2025-04",
+    "openWeights": true
+  },
+  "openrouter/z-ai/glm-4.5-air:free": {
+    "contextWindow": 128000,
+    "maxOutputTokens": 96000,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": false,
+    "supportsTemperature": true,
+    "family": "glm-air",
+    "knowledgeCutoff": "2025-04",
+    "openWeights": true
+  },
+  "openrouter/z-ai/glm-4.5v": {
+    "contextWindow": 64000,
+    "maxOutputTokens": 16384,
+    "inputCostPerMTok": 0.6,
+    "outputCostPerMTok": 1.8,
+    "inputModalities": [
+      "text",
+      "image",
+      "video"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": true,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "glm",
+    "knowledgeCutoff": "2025-04",
+    "openWeights": true
+  },
+  "openrouter/z-ai/glm-4.6": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 128000,
+    "inputCostPerMTok": 0.6,
+    "outputCostPerMTok": 2.2,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "glm",
+    "knowledgeCutoff": "2025-09",
+    "openWeights": true
+  },
+  "openrouter/z-ai/glm-4.6:exacto": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 128000,
+    "inputCostPerMTok": 0.6,
+    "outputCostPerMTok": 1.9,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "glm",
+    "knowledgeCutoff": "2025-09",
+    "openWeights": true
+  },
+  "openrouter/z-ai/glm-4.7": {
+    "contextWindow": 204800,
+    "maxOutputTokens": 131072,
+    "inputCostPerMTok": 0.6,
+    "outputCostPerMTok": 2.2,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "glm",
+    "knowledgeCutoff": "2025-04",
+    "openWeights": true
+  },
+  "openrouter/z-ai/glm-4.7-flash": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 65535,
+    "inputCostPerMTok": 0.07,
+    "outputCostPerMTok": 0.4,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "glm",
+    "openWeights": true
+  },
+  "openrouter/z-ai/glm-5": {
+    "contextWindow": 202752,
+    "maxOutputTokens": 131000,
+    "inputCostPerMTok": 1,
+    "outputCostPerMTok": 3.2,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "glm",
+    "openWeights": true
+  },
+  "openrouter/z-ai/glm-5-turbo": {
+    "contextWindow": 202752,
+    "maxOutputTokens": 131072,
+    "inputCostPerMTok": 0.96,
+    "outputCostPerMTok": 3.2,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "glm",
+    "openWeights": false
+  },
+  "openrouter/z-ai/glm-5.1": {
+    "contextWindow": 202752,
+    "maxOutputTokens": 131072,
+    "inputCostPerMTok": 1.4,
+    "outputCostPerMTok": 4.4,
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ],
+    "supportsAttachment": false,
+    "supportsReasoning": true,
+    "supportsToolCall": true,
+    "supportsTemperature": true,
+    "family": "glm",
+    "openWeights": true
+  }
+}

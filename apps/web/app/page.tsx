@@ -365,17 +365,31 @@ export default function ChatPage() {
               (m.toolCalls && m.toolCalls.length > 0)
           )
         );
-      } else if (newSessionId && !activeSessionId) {
-        // We just streamed into a brand-new session; the in-memory messages
-        // are authoritative for this render. Tell the history effect to
-        // skip its refetch so it doesn't overwrite our state.
+      } else if (newSessionId && newSessionId !== activeSessionId) {
+        // Two cases land here:
+        //  - brand-new session (activeSessionId was empty before this turn);
+        //  - mid-stream compression swap (server emitted `session` with the
+        //    new child id; the parent is now hidden by listActive).
+        // In both cases the in-memory messages are authoritative for this
+        // render — tell the history effect to skip its refetch.
         skipNextHistoryLoadRef.current = true;
+        const previousId = activeSessionId;
         setActiveSessionId(newSessionId);
-        setSessions((prev) =>
-          prev.some((s) => s.id === newSessionId)
-            ? prev
-            : [{ id: newSessionId, title: null, agentId: activeAgentId }, ...prev]
-        );
+        setSessions((prev) => {
+          // Drop the parent (now hidden by listActive) and ensure the child
+          // is at the top with the parent's title preserved if available.
+          const parent = previousId
+            ? prev.find((s) => s.id === previousId)
+            : undefined;
+          const withoutParent = previousId
+            ? prev.filter((s) => s.id !== previousId)
+            : prev;
+          if (withoutParent.some((s) => s.id === newSessionId)) return withoutParent;
+          return [
+            { id: newSessionId, title: parent?.title ?? null, agentId: activeAgentId },
+            ...withoutParent,
+          ];
+        });
       }
     }
   }, [input, isStreaming, activeAgentId, activeSessionId]);

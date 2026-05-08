@@ -1,19 +1,21 @@
 import { streamText, type CoreMessage } from "ai";
 import { getModel } from "@openacme/llm-provider";
 import type { ToolRegistry } from "@openacme/tools";
-import type {
-  SessionStore,
-  MessageStore,
-} from "@openacme/db";
+import type { SessionStore, MessageStore, Message } from "@openacme/db";
 import { buildSystemPrompt } from "./prompt.js";
+import { Compressor, resolveThreshold } from "./compression.js";
+import { classifyError } from "./error-classifier.js";
 import type { AgentConfig, StreamChunk } from "./types.js";
 import { randomUUID } from "node:crypto";
 
 /**
  * Agent — the core conversational AI engine.
  *
- * Mirrors Hermes run_agent.py AIAgent class but uses Vercel AI SDK
- * for LLM calls and tool dispatch.
+ * Uses Vercel AI SDK for LLM calls + tool dispatch. Compression follows
+ * Hermes's runtime ContextCompressor: synchronous-at-end-of-turn for
+ * proactive triggers, plus a reactive retry loop in `chat()` that catches
+ * provider 413 / context_overflow errors, runs compression, and retries
+ * the same turn against the new (compressed) child session.
  *
  * State machine: Idle → PromptAssembly → LLMCall → ToolExecution ↔ LLMCall → Response → Idle
  */
@@ -22,6 +24,7 @@ export class Agent {
   private readonly sessionStore: SessionStore;
   private readonly messageStore: MessageStore;
   private readonly toolRegistry: ToolRegistry;
+  private readonly compressor = new Compressor();
   private cachedSystemPrompts = new Map<string, string>();
 
   constructor(
@@ -41,35 +44,286 @@ export class Agent {
   /**
    * Main conversation method — sends a message and returns an async iterable
    * of StreamChunks for real-time streaming.
+   *
+   * Two-attempt loop. Attempt 1: append user message, stream, persist.
+   * If a stream-stopping error matches the classifier (413 / context_overflow),
+   * run reactive compression, swap to the child session, retry once. On
+   * success, run proactive compression check before yielding `done`.
    */
   async *chat(
     sessionId: string,
     userMessage: string
   ): AsyncIterable<StreamChunk> {
-    // Ensure session exists. Honor the caller-supplied id so the SSE
-    // `session` event the server already emitted (app.ts:145) actually
-    // matches the row we persist against — without this, the client
-    // pins one id while the DB row uses another, and follow-up turns
-    // never load history.
+    // Ensure session exists. Honor caller-supplied id so the SSE `session`
+    // event the server pre-emitted matches the row we persist against.
     let session = this.sessionStore.get(sessionId);
     if (!session) {
       session = this.sessionStore.create(this.config.id, { id: sessionId });
     }
 
-    // Load conversation history. Reconstruct Vercel AI SDK CoreMessage v3
-    // shape: assistant messages with tool calls become content-parts arrays;
-    // tool messages become role:"tool" with a tool-result part. Old rows
-    // written before tool persistence existed used a different field shape
-    // (`{id, name, args}`); we normalize them on read. Assistant rows whose
-    // tool calls have no matching tool result in the next message are dropped
-    // (the call would otherwise be unresolved and reject on most providers).
-    const dbMessages = this.messageStore.getHistory(sessionId);
-    const messages: CoreMessage[] = [];
+    // Persist user message ONCE — reactive retry doesn't re-append because
+    // a fork copies the latest user message into the child's tail.
+    try {
+      this.messageStore.append(sessionId, {
+        sessionId,
+        role: "user",
+        content: userMessage,
+        toolCalls: null,
+        toolCallId: null,
+        toolName: null,
+      });
+    } catch (e) {
+      console.error(
+        `Failed to save user message: ${e instanceof Error ? e.message : String(e)}`
+      );
+      yield { type: "error", error: "Failed to save message to database" };
+      return;
+    }
+
+    const systemPrompt = this.getSystemPrompt(sessionId);
+    const tools = this.toolRegistry.getVercelTools(new Set(this.config.tools));
+
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const dbMessages = this.messageStore.getHistory(sessionId);
+      const messages = this.buildCoreMessages(dbMessages);
+
+      let fullContent = "";
+      let recoverableError: unknown = null;
+
+      try {
+        const result = streamText({
+          model: getModel(this.config.model),
+          system: systemPrompt,
+          messages,
+          tools: tools as Parameters<typeof streamText>[0]["tools"],
+          maxSteps: this.config.maxSteps,
+        });
+
+        for await (const part of result.fullStream) {
+          // `tool-result` IS in TextStreamPart's union but the typed branch
+          // collapses to `never` because we widen tools. Match by string.
+          if ((part as { type: string }).type === "tool-result") {
+            const tr = part as unknown as {
+              toolCallId: string;
+              toolName: string;
+              result: unknown;
+            };
+            yield {
+              type: "tool-result",
+              toolName: tr.toolName,
+              toolCallId: tr.toolCallId,
+              result:
+                typeof tr.result === "string"
+                  ? tr.result
+                  : JSON.stringify(tr.result),
+            };
+            continue;
+          }
+
+          switch (part.type) {
+            case "text-delta":
+              fullContent += part.textDelta;
+              yield { type: "text-delta", text: part.textDelta };
+              break;
+            case "tool-call": {
+              const toolCallId = part.toolCallId ?? randomUUID();
+              yield {
+                type: "tool-call",
+                toolName: part.toolName,
+                args: part.args as Record<string, unknown>,
+                toolCallId,
+              };
+              break;
+            }
+            case "error":
+              // Stream-emitted error part. Re-throw so the same classifier
+              // path handles both this and stream-stopping errors uniformly.
+              throw part.error;
+            default:
+              // step-finish, reasoning, source, finish — captured below.
+              break;
+          }
+        }
+
+        // Awaiting these AFTER a clean fullStream loop is safe; if the
+        // stream errored, we never reach here.
+        const usage = await result.usage;
+        const steps = await result.steps;
+
+        this.persistAssistantTurn(sessionId, steps);
+
+        // Title from first response.
+        try {
+          if (!session.title && fullContent) {
+            const title = fullContent.slice(0, 80).replace(/\n/g, " ");
+            this.sessionStore.updateTitle(sessionId, title);
+          }
+          this.sessionStore.touch(sessionId);
+        } catch (e) {
+          console.error(
+            `Failed to update session: ${e instanceof Error ? e.message : String(e)}`
+          );
+        }
+
+        // Proactive compression: synchronous, end-of-turn.
+        const threshold = this.config.compression
+          ? resolveThreshold(this.config.compression)
+          : null;
+        if (
+          threshold !== null &&
+          usage &&
+          typeof usage.promptTokens === "number" &&
+          this.compressor.shouldCompress(sessionId, usage.promptTokens, threshold)
+        ) {
+          const childId = await this.compress(sessionId, "proactive");
+          if (childId !== sessionId) {
+            yield { type: "session", sessionId: childId };
+            sessionId = childId;
+          }
+        }
+
+        yield {
+          type: "done",
+          usage: usage
+            ? {
+                promptTokens: usage.promptTokens,
+                completionTokens: usage.completionTokens,
+                totalTokens: usage.totalTokens,
+              }
+            : undefined,
+        };
+        return;
+      } catch (err) {
+        recoverableError = err;
+      }
+
+      // Reactive recovery path — only attempts 1 may compress + retry.
+      if (attempt === 1) {
+        const classified = classifyError(recoverableError);
+        if (classified.shouldCompress && classified.reason) {
+          try {
+            const childId = await this.compress(sessionId, classified.reason);
+            if (childId !== sessionId) {
+              yield { type: "session", sessionId: childId };
+              sessionId = childId;
+              const refreshed = this.sessionStore.get(childId);
+              if (refreshed) session = refreshed;
+              continue; // retry attempt 2 against child history
+            }
+          } catch (compressErr) {
+            console.error(
+              `Reactive compression failed for ${sessionId}: ${compressErr instanceof Error ? compressErr.message : String(compressErr)}`
+            );
+          }
+        }
+      }
+
+      // Fall through: surface the error and stop.
+      yield {
+        type: "error",
+        error:
+          recoverableError instanceof Error
+            ? recoverableError.message
+            : String(recoverableError),
+      };
+      return;
+    }
+  }
+
+  /**
+   * Compress a session synchronously. Loads parent history, runs the
+   * Compressor pipeline (pre-prune → boundary → summarize → sanitize),
+   * creates a child session, and persists the new message list. Returns
+   * the new child id, or the parent id if compression was a no-op.
+   */
+  async compress(
+    parentSessionId: string,
+    reason: "proactive" | "payload_too_large" | "context_overflow"
+  ): Promise<string> {
+    const parent = this.sessionStore.get(parentSessionId);
+    if (!parent) return parentSessionId;
+
+    // Cross-process race: another writer may have forked this parent
+    // already (separate AgentManager on the same db).
+    const existingChild = this.sessionStore.findChildOf(parentSessionId);
+    if (existingChild) {
+      this.compressor.inheritState(parentSessionId, existingChild.id);
+      return existingChild.id;
+    }
+
+    if (!this.config.compression) return parentSessionId;
+
+    const parentMessages = this.messageStore.getHistory(parentSessionId);
+    const result = await this.compressor.compress({
+      parentSessionId,
+      parentMessages,
+      config: this.config.compression,
+      mainModel: this.config.model,
+      reason,
+    });
+
+    if (result.noOp || result.childMessages.length === 0) {
+      return parentSessionId;
+    }
+
+    const child = this.sessionStore.createChildIfNoSibling(
+      this.config.id,
+      parentSessionId,
+      { title: parent.title ?? undefined }
+    );
+    if (!child) {
+      // Race-loser: another writer beat us. Use the winning child.
+      const won = this.sessionStore.findChildOf(parentSessionId);
+      if (won) {
+        this.compressor.inheritState(parentSessionId, won.id);
+        return won.id;
+      }
+      return parentSessionId;
+    }
+
+    try {
+      const rows: Array<Omit<Message, "id" | "createdAt">> =
+        result.childMessages.map((m) => ({
+          sessionId: child.id,
+          role: m.role,
+          content: m.content,
+          toolCalls: m.toolCalls,
+          toolCallId: m.toolCallId,
+          toolName: m.toolName,
+        }));
+      this.messageStore.appendMany(child.id, rows);
+    } catch (e) {
+      console.error(
+        `Failed to persist compressed messages for ${child.id}: ${e instanceof Error ? e.message : String(e)}`
+      );
+      // Child row exists but its messages failed to persist. Caller will
+      // see an empty child and likely fail subsequent turns; surface the
+      // problem rather than silently swap.
+      throw e;
+    }
+
+    this.compressor.inheritState(parentSessionId, child.id);
+    this.compressor.recordResult(child.id, result.savingsRatio, result.summary);
+    // The parent's system-prompt cache entry is dead now (parent is hidden
+    // by `listActive`). Drop it so the Map doesn't accumulate one entry
+    // per compression on long-lived agents.
+    this.cachedSystemPrompts.delete(parentSessionId);
+    return child.id;
+  }
+
+  /**
+   * Build CoreMessages from DB rows. Reconstructs Vercel AI SDK shape:
+   * assistant messages with tool calls become content-parts arrays;
+   * tool messages become role:"tool" with a tool-result part. Drops
+   * orphan tool calls (legacy DBs) by checking the next row.
+   */
+  private buildCoreMessages(dbMessages: Message[]): CoreMessage[] {
+    const out: CoreMessage[] = [];
     for (let i = 0; i < dbMessages.length; i++) {
       const m = dbMessages[i]!;
 
       if (m.role === "tool" && m.toolCallId && m.toolName) {
-        messages.push({
+        out.push({
           role: "tool",
           content: [
             {
@@ -95,10 +349,9 @@ export class Agent {
           parsed = JSON.parse(m.toolCalls);
         } catch (e) {
           console.warn(
-            `Failed to parse toolCalls for message: ${e instanceof Error ? e.message : String(e)}`
+            `Failed to parse toolCalls: ${e instanceof Error ? e.message : String(e)}`
           );
         }
-        // Normalize legacy `{id, name, args}` → `{toolCallId, toolName, args}`.
         const normalized = parsed
           .map((tc) => ({
             toolCallId: tc.toolCallId ?? tc.id ?? "",
@@ -107,7 +360,6 @@ export class Agent {
           }))
           .filter((tc) => tc.toolCallId && tc.toolName);
 
-        // Drop tool calls whose result row never followed (legacy DBs).
         const next = dbMessages[i + 1];
         const hasFollowingToolMessage =
           next?.role === "tool" && next.toolCallId !== null;
@@ -125,7 +377,7 @@ export class Agent {
         }
 
         if (parts.length > 0) {
-          messages.push({
+          out.push({
             role: "assistant",
             content: parts,
           } as unknown as CoreMessage);
@@ -133,234 +385,112 @@ export class Agent {
         continue;
       }
 
-      messages.push({
+      out.push({
         role: m.role as "user" | "assistant" | "system",
         content: m.content ?? "",
       });
     }
+    return out;
+  }
 
-    // Add user message
-    messages.push({ role: "user", content: userMessage });
+  private persistAssistantTurn(
+    sessionId: string,
+    steps: Array<{
+      text?: string;
+      toolCalls?: Array<{ toolCallId: string; toolName: string; args: unknown }>;
+      toolResults?: unknown;
+    }>
+  ): void {
     try {
-      this.messageStore.append(sessionId, {
-        sessionId,
-        role: "user",
-        content: userMessage,
-        toolCalls: null,
-        toolCallId: null,
-        toolName: null,
-      });
-    } catch (e) {
-      console.error(`Failed to save user message: ${e instanceof Error ? e.message : String(e)}`);
-      yield { type: "error", error: "Failed to save message to database" };
-      return;
-    }
-
-    // Build system prompt (cache per session — Hermes pattern)
-    let systemPrompt = this.cachedSystemPrompts.get(sessionId);
-    if (!systemPrompt) {
-      const configuredTools = this.config.tools;
-      const resolvedTools: string[] = [];
-      const missingTools: string[] = [];
-
-      for (const name of configuredTools) {
-        if (this.toolRegistry.get(name) !== undefined) {
-          resolvedTools.push(name);
-        } else {
-          missingTools.push(name);
+      for (const step of steps) {
+        const stepCalls = (step.toolCalls ?? []).map((tc) => ({
+          toolCallId: tc.toolCallId,
+          toolName: tc.toolName,
+          args: tc.args,
+        }));
+        const stepText = step.text ?? "";
+        const hasContent = stepText.length > 0 || stepCalls.length > 0;
+        if (hasContent) {
+          this.messageStore.append(sessionId, {
+            sessionId,
+            role: "assistant",
+            content: stepText || null,
+            toolCalls:
+              stepCalls.length > 0 ? JSON.stringify(stepCalls) : null,
+            toolCallId: null,
+            toolName: null,
+          });
         }
-      }
-
-      // Warn about missing tools
-      if (missingTools.length > 0) {
-        console.warn(`Agent '${this.config.id}': Missing tools: ${missingTools.join(", ")}`);
-      }
-
-      systemPrompt = buildSystemPrompt({
-        persona: this.config.persona,
-        toolNames: resolvedTools,
-        skillsIndex: this.config.skillsIndex,
-      });
-      this.cachedSystemPrompts.set(sessionId, systemPrompt);
-
-      // Store in session for prefix caching
-      try {
-        this.sessionStore.updateSystemPrompt(sessionId, systemPrompt);
-      } catch (e) {
-        console.error(`Failed to update system prompt: ${e instanceof Error ? e.message : String(e)}`);
-      }
-    }
-
-    // Get LLM model
-    const model = getModel(this.config.model);
-
-    // Get tools for Vercel AI SDK
-    const toolNames = new Set(this.config.tools);
-    const tools = this.toolRegistry.getVercelTools(toolNames);
-
-    // Stream the conversation
-    try {
-      const result = streamText({
-        model,
-        system: systemPrompt,
-        messages,
-        tools: tools as Parameters<typeof streamText>[0]["tools"],
-        maxSteps: this.config.maxSteps,
-      });
-
-      let fullContent = "";
-
-      for await (const part of result.fullStream) {
-        // Hoisted out of the typed switch: `tool-result` IS in the SDK's
-        // TextStreamPart union (ai 4.3 dist/index.d.ts:2848), but the
-        // ToolResultUnion<TOOLS> half collapses to `never` because our
-        // tools type is widened by the streamText call. Match by string
-        // and re-narrow.
-        if ((part as { type: string }).type === "tool-result") {
-          const tr = part as unknown as {
-            toolCallId: string;
-            toolName: string;
-            result: unknown;
-          };
-          yield {
-            type: "tool-result",
-            toolName: tr.toolName,
+        const toolResults = (step.toolResults ?? []) as Array<{
+          toolCallId: string;
+          toolName: string;
+          result: unknown;
+        }>;
+        for (const tr of toolResults) {
+          const resultText =
+            typeof tr.result === "string"
+              ? tr.result
+              : JSON.stringify(tr.result);
+          this.messageStore.append(sessionId, {
+            sessionId,
+            role: "tool",
+            content: resultText,
+            toolCalls: null,
             toolCallId: tr.toolCallId,
-            result:
-              typeof tr.result === "string"
-                ? tr.result
-                : JSON.stringify(tr.result),
-          };
-          continue;
-        }
-
-        switch (part.type) {
-          case "text-delta":
-            fullContent += part.textDelta;
-            yield { type: "text-delta", text: part.textDelta };
-            break;
-
-          case "tool-call": {
-            const toolCallId = part.toolCallId ?? randomUUID();
-            yield {
-              type: "tool-call",
-              toolName: part.toolName,
-              args: part.args as Record<string, unknown>,
-              toolCallId,
-            };
-            break;
-          }
-
-          case "error":
-            yield { type: "error", error: String(part.error) };
-            break;
-
-          default:
-            // text-delta, tool-call, and the hoisted tool-result branch
-            // drive the live UI. step-finish, reasoning, source, finish
-            // are captured via result.steps below for persistence.
-            break;
+            toolName: tr.toolName,
+          });
         }
       }
-
-      // Persist the full turn from the SDK's per-step view. Each step yields
-      // an assistant row (text + tool calls) followed by one tool row per
-      // tool result, so follow-up turns reload a valid call→result sequence.
-      const usage = await result.usage;
-      try {
-        const steps = await result.steps;
-        for (const step of steps) {
-          const stepCalls = (step.toolCalls ?? []).map((tc) => ({
-            toolCallId: tc.toolCallId,
-            toolName: tc.toolName,
-            args: tc.args,
-          }));
-          const stepText = step.text ?? "";
-          const hasContent = stepText.length > 0 || stepCalls.length > 0;
-          if (hasContent) {
-            this.messageStore.append(sessionId, {
-              sessionId,
-              role: "assistant",
-              content: stepText || null,
-              toolCalls:
-                stepCalls.length > 0 ? JSON.stringify(stepCalls) : null,
-              toolCallId: null,
-              toolName: null,
-            });
-          }
-          // The SDK types step.toolResults against the concrete tools
-          // generic; with our widened tools (Vercel AI SDK Parameters cast)
-          // the element type collapses to `never`. Re-narrow at the use
-          // site — the runtime shape is well-defined (toolCallId, toolName,
-          // result) regardless of what the type system can see.
-          const toolResults = (step.toolResults ?? []) as Array<{
-            toolCallId: string;
-            toolName: string;
-            result: unknown;
-          }>;
-          for (const tr of toolResults) {
-            const resultText =
-              typeof tr.result === "string"
-                ? tr.result
-                : JSON.stringify(tr.result);
-            this.messageStore.append(sessionId, {
-              sessionId,
-              role: "tool",
-              content: resultText,
-              toolCalls: null,
-              toolCallId: tr.toolCallId,
-              toolName: tr.toolName,
-            });
-          }
-        }
-      } catch (e) {
-        console.error(
-          `Failed to persist assistant turn: ${e instanceof Error ? e.message : String(e)}`
-        );
-      }
-
-      // Update session title from first message
-      try {
-        if (!session.title && fullContent) {
-          const title = fullContent.slice(0, 80).replace(/\n/g, " ");
-          this.sessionStore.updateTitle(sessionId, title);
-        }
-
-        // Touch session updated_at
-        this.sessionStore.touch(sessionId);
-      } catch (e) {
-        console.error(`Failed to update session: ${e instanceof Error ? e.message : String(e)}`);
-      }
-
-      yield {
-        type: "done",
-        usage: usage
-          ? {
-              promptTokens: usage.promptTokens,
-              completionTokens: usage.completionTokens,
-              totalTokens: usage.totalTokens,
-            }
-          : undefined,
-      };
-    } catch (error) {
-      yield {
-        type: "error",
-        error: error instanceof Error ? error.message : String(error),
-      };
+    } catch (e) {
+      console.error(
+        `Failed to persist assistant turn: ${e instanceof Error ? e.message : String(e)}`
+      );
     }
   }
 
-  /**
-   * Get conversation history for a session.
-   */
+  private getSystemPrompt(sessionId: string): string {
+    const cached = this.cachedSystemPrompts.get(sessionId);
+    if (cached) return cached;
+
+    const configuredTools = this.config.tools;
+    const resolvedTools: string[] = [];
+    const missingTools: string[] = [];
+    for (const name of configuredTools) {
+      if (this.toolRegistry.get(name) !== undefined) {
+        resolvedTools.push(name);
+      } else {
+        missingTools.push(name);
+      }
+    }
+    if (missingTools.length > 0) {
+      console.warn(
+        `Agent '${this.config.id}': Missing tools: ${missingTools.join(", ")}`
+      );
+    }
+
+    const prompt = buildSystemPrompt({
+      persona: this.config.persona,
+      toolNames: resolvedTools,
+      skillsIndex: this.config.skillsIndex,
+    });
+    this.cachedSystemPrompts.set(sessionId, prompt);
+
+    try {
+      this.sessionStore.updateSystemPrompt(sessionId, prompt);
+    } catch (e) {
+      console.error(
+        `Failed to update system prompt: ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+    return prompt;
+  }
+
+  /** Get conversation history for a session. */
   getHistory(sessionId: string) {
     return this.messageStore.getHistory(sessionId);
   }
 
-  /**
-   * Invalidate the cached system prompt for a session.
-   * Call this when agent config (tools, skills) changes.
-   */
+  /** Invalidate the cached system prompt for a session. */
   invalidateSystemPromptCache(sessionId?: string): void {
     if (sessionId) {
       this.cachedSystemPrompts.delete(sessionId);

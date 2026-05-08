@@ -26,6 +26,7 @@
   },
   "files": [
     "dist",
+    "data",
     "README.md",
     "LICENSE"
   ],
@@ -34,7 +35,8 @@
     "check-types": "tsc --noEmit",
     "dev": "tsc --watch",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "refresh-models": "tsc --build && node scripts/refresh-model-registry.mjs"
   },
   "dependencies": {
     "yaml": "^2.7.1",

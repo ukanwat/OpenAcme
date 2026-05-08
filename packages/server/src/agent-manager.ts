@@ -1,6 +1,7 @@
 import { Agent, type AgentConfig, type StreamChunk } from "@openacme/agent-core";
 import {
   createAgentStore,
+  lookupModelMetadata,
   type AgentDefinition,
   type AgentStore,
   type Config,
@@ -178,14 +179,29 @@ export class AgentManager {
       skillsIndex = this.skillRegistry.getIndexAsString();
     }
 
+    const b = this.config.behavior;
+    // Look up the agent's model in the bundled registry once at
+    // AgentConfig build time. The runtime compressor only sees the
+    // resolved contextWindow — it never has to know about the snapshot.
+    const metadata = lookupModelMetadata(def.model);
     const agentConfig: AgentConfig = {
       id: def.id,
       name: def.name,
       model: def.model,
       persona: def.persona,
       tools: [...def.tools, ...mcpToolNames],
-      maxSteps: this.config.behavior.maxSteps,
+      maxSteps: b.maxSteps,
       skillsIndex,
+      compression: {
+        thresholdTokens: b.compressionThresholdTokens,
+        thresholdPercent: b.compressionThresholdPercent,
+        contextWindow: metadata.contextWindow ?? null,
+        protectFirstN: b.compressionProtectFirstN,
+        tailTokenBudget: b.compressionTailTokenBudget,
+        summaryTargetRatio: b.compressionSummaryTargetRatio,
+        summarizerInputCharBudget: b.compressionSummarizerInputCharBudget,
+        summarizerModel: b.compressionSummarizerModel,
+      },
     };
 
     return new Agent(agentConfig, {

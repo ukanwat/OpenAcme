@@ -32,7 +32,9 @@
   "scripts": {
     "build": "tsc --build",
     "check-types": "tsc --noEmit",
-    "dev": "tsc --watch"
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@openacme/config": "workspace:*",
@@ -44,7 +46,10 @@
   },
   "devDependencies": {
     "@repo/typescript-config": "workspace:*",
+    "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.15.3",
-    "typescript": "5.9.2"
+    "better-sqlite3": "^11.7.0",
+    "typescript": "5.9.2",
+    "vitest": "^2.1.9"
   }
 }

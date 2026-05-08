@@ -46,5 +46,6 @@ docs/HERMES_TOOLS_REFERENCE.md
 docs/IMPLEMENTATION_GUIDE.md
 docs/README.md
 
-# Claude Code worktrees
+# Claude Code worktrees + runtime artifacts
 .claude/worktrees/
+.claude/scheduled_tasks.lock

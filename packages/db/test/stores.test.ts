@@ -13,7 +13,7 @@ function freshDb() {
   return db;
 }
 
-describe("SessionStore — compression columns", () => {
+describe("SessionStore — fork chain", () => {
   let db: Database.Database;
   let sessions: ReturnType<typeof createSessionStore>;
 
@@ -22,29 +22,18 @@ describe("SessionStore — compression columns", () => {
     sessions = createSessionStore(db);
   });
 
-  it("create roundtrips parent_session_id and defaults compressionPending=false", () => {
+  it("create roundtrips parent_session_id", () => {
     const parent = sessions.create("a1", { id: "s-parent" });
     expect(parent.parentSessionId).toBeNull();
-    expect(parent.compressionPending).toBe(false);
 
     const child = sessions.create("a1", {
       id: "s-child",
       parentSessionId: parent.id,
     });
     expect(child.parentSessionId).toBe(parent.id);
-    expect(child.compressionPending).toBe(false);
 
     const refetched = sessions.get(child.id);
     expect(refetched?.parentSessionId).toBe(parent.id);
-  });
-
-  it("markCompressionPending and clearCompressionPending toggle the flag", () => {
-    const s = sessions.create("a1", { id: "s1" });
-    expect(s.compressionPending).toBe(false);
-    sessions.markCompressionPending(s.id);
-    expect(sessions.get(s.id)?.compressionPending).toBe(true);
-    sessions.clearCompressionPending(s.id);
-    expect(sessions.get(s.id)?.compressionPending).toBe(false);
   });
 
   it("findChildOf returns null with no child, then the child once created", () => {
