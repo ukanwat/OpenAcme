@@ -1,46 +1,41 @@
 import { randomUUID } from "node:crypto";
 import type { Message as DbMessage } from "@openacme/db";
 import { renderMarkdown } from "./markdown.js";
-import type { Message as TuiMessage, ToolEvent } from "./state.js";
+import type { AssistantPart, Message as TuiMessage } from "./state.js";
 
 /**
  * Convert persisted DB rows into the TUI's message shape used to populate
  * `committed` when the user resumes an existing session via `/sessions`.
  *
- * Group-by-user-boundary: a single user turn produces ONE assistant bubble
- * during live streaming (the reducer in `state.ts` accumulates all
- * text-deltas, tool-calls, and tool-results into one inflight message).
- * Persistence in `agent-core` writes one DB assistant row per step plus
- * one DB tool row per result, so a multi-step turn fans out to many rows.
- * To keep restored history visually identical to the live render we walk
- * rows linearly between user-row boundaries and fold the assistant rows +
- * tool rows back into one TUI assistant message per turn.
+ * Rebuilds an ordered `parts` array per assistant turn so text segments
+ * between tool calls render in the same order they streamed live.
+ * Persistence in `agent-core` writes one DB assistant row per step (with
+ * step-text and toolCalls JSON) followed by one tool row per result, so
+ * walking rows linearly preserves text → tool → text → tool ordering
+ * across multi-step turns.
  *
  * `system` rows are skipped (no TUI representation). Orphan tool rows
- * (no matching call in the current accumulator) are skipped — `agent.ts`
- * `buildCoreMessages` already drops these on the way out, so they're rare.
+ * (no matching call in the current accumulator) are skipped.
  */
 export function dbMessagesToTuiMessages(rows: DbMessage[]): TuiMessage[] {
   const out: TuiMessage[] = [];
-
-  let asstText = "";
-  let asstTools: ToolEvent[] = [];
-  let asstHasContent = false;
+  let asstParts: AssistantPart[] = [];
 
   const flushAssistant = () => {
-    if (!asstHasContent) return;
-    const text = asstText;
+    if (asstParts.length === 0) return;
+    const finalized = asstParts.map<AssistantPart>((p) =>
+      p.kind === "text" && p.rendered === undefined
+        ? { ...p, rendered: p.text ? renderMarkdown(p.text) : "" }
+        : p
+    );
     out.push({
       id: randomUUID(),
       role: "assistant",
-      text,
-      rendered: text ? renderMarkdown(text) : "",
-      tools: asstTools,
+      text: "",
+      parts: finalized,
       finalized: true,
     });
-    asstText = "";
-    asstTools = [];
-    asstHasContent = false;
+    asstParts = [];
   };
 
   for (const row of rows) {
@@ -52,7 +47,7 @@ export function dbMessagesToTuiMessages(rows: DbMessage[]): TuiMessage[] {
         id: row.id || randomUUID(),
         role: "user",
         text: row.content ?? "",
-        tools: [],
+        parts: [],
         finalized: true,
       });
       continue;
@@ -60,10 +55,7 @@ export function dbMessagesToTuiMessages(rows: DbMessage[]): TuiMessage[] {
 
     if (row.role === "assistant") {
       if (row.content) {
-        asstText = asstText
-          ? `${asstText}\n\n${row.content}`
-          : row.content;
-        asstHasContent = true;
+        asstParts.push({ kind: "text", text: row.content });
       }
       if (row.toolCalls) {
         let parsed: unknown;
@@ -85,13 +77,13 @@ export function dbMessagesToTuiMessages(rows: DbMessage[]): TuiMessage[] {
             const toolCallId = e.toolCallId ?? e.id ?? "";
             const name = e.toolName ?? e.name ?? "";
             if (!toolCallId || !name) continue;
-            asstTools.push({
+            asstParts.push({
+              kind: "tool",
               toolCallId,
               name,
               args: e.args,
-              status: "done",
+              status: "pending",
             });
-            asstHasContent = true;
           }
         }
       }
@@ -100,8 +92,11 @@ export function dbMessagesToTuiMessages(rows: DbMessage[]): TuiMessage[] {
 
     if (row.role === "tool") {
       if (!row.toolCallId) continue;
-      const target = asstTools.find((t) => t.toolCallId === row.toolCallId);
-      if (!target) continue; // orphan
+      const target = asstParts.find(
+        (p): p is Extract<AssistantPart, { kind: "tool" }> =>
+          p.kind === "tool" && p.toolCallId === row.toolCallId
+      );
+      if (!target) continue;
       target.result = row.content ?? "";
       target.status = "done";
     }

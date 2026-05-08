@@ -26,7 +26,7 @@ import {
 interface ServerConfig {
   dataDir: string;
   server: { port: number; host: string };
-  behavior: { maxSteps: number; maxIterations: number };
+  behavior: { maxSteps: number };
   skills: { directory: string; autoGenerate: boolean };
 }
 
@@ -254,14 +254,6 @@ export default function SettingsPage() {
                           </dt>
                           <dd className="mt-0.5 font-mono text-foreground">
                             {config.behavior.maxSteps}
-                          </dd>
-                        </div>
-                        <div>
-                          <dt className="text-xs uppercase text-muted-foreground">
-                            Max iterations
-                          </dt>
-                          <dd className="mt-0.5 font-mono text-foreground">
-                            {config.behavior.maxIterations}
                           </dd>
                         </div>
                         <div className="sm:col-span-2">

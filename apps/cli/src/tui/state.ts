@@ -3,6 +3,18 @@ import { renderMarkdown } from "./markdown.js";
 
 export type Role = "user" | "assistant";
 
+export type AssistantPart =
+  | { kind: "text"; text: string; rendered?: string }
+  | {
+      kind: "tool";
+      toolCallId: string;
+      name: string;
+      args: unknown;
+      result?: string;
+      status: "pending" | "done" | "error";
+    };
+
+// Kept for ToolBlock's prop shape; mapped from `tool` parts at render time.
 export interface ToolEvent {
   toolCallId: string;
   name: string;
@@ -15,8 +27,7 @@ export interface Message {
   id: string;
   role: Role;
   text: string;
-  rendered?: string;
-  tools: ToolEvent[];
+  parts: AssistantPart[];
   finalized: boolean;
   usage?: TokenUsage;
   error?: string;
@@ -68,9 +79,42 @@ export function makeMessage(role: Role): Message {
     id: cryptoId(),
     role,
     text: "",
-    tools: [],
+    parts: [],
     finalized: false,
   };
+}
+
+function appendTextDelta(parts: AssistantPart[], delta: string): AssistantPart[] {
+  const last = parts[parts.length - 1];
+  if (last && last.kind === "text") {
+    const merged: AssistantPart = { kind: "text", text: last.text + delta };
+    return [...parts.slice(0, -1), merged];
+  }
+  return [...parts, { kind: "text", text: delta }];
+}
+
+function pushToolCall(
+  parts: AssistantPart[],
+  toolCallId: string,
+  name: string,
+  args: unknown
+): AssistantPart[] {
+  return [
+    ...parts,
+    { kind: "tool", toolCallId, name, args, status: "pending" },
+  ];
+}
+
+function fillToolResult(
+  parts: AssistantPart[],
+  toolCallId: string,
+  result: string
+): AssistantPart[] {
+  return parts.map((p) =>
+    p.kind === "tool" && p.toolCallId === toolCallId
+      ? { ...p, result, status: "done" as const }
+      : p
+  );
 }
 
 export function reducer(state: AppState, action: Action): AppState {
@@ -97,30 +141,29 @@ export function reducer(state: AppState, action: Action): AppState {
       switch (chunk.type) {
         case "session":
           return { ...state, sessionId: chunk.sessionId };
-        case "text-delta":
+        case "text-delta": {
+          const parts = appendTextDelta(inflight.parts, chunk.text);
           return {
             ...state,
-            inflight: { ...inflight, text: inflight.text + chunk.text },
-          };
-        case "tool-call": {
-          const tool: ToolEvent = {
-            toolCallId: chunk.toolCallId,
-            name: chunk.toolName,
-            args: chunk.args,
-            status: "pending",
-          };
-          return {
-            ...state,
-            inflight: { ...inflight, tools: [...inflight.tools, tool] },
+            inflight: { ...inflight, parts, text: inflight.text + chunk.text },
           };
         }
-        case "tool-result": {
-          const tools = inflight.tools.map((t) =>
-            t.toolCallId === chunk.toolCallId
-              ? { ...t, result: chunk.result, status: "done" as const }
-              : t
+        case "tool-call": {
+          const parts = pushToolCall(
+            inflight.parts,
+            chunk.toolCallId,
+            chunk.toolName,
+            chunk.args
           );
-          return { ...state, inflight: { ...inflight, tools } };
+          return { ...state, inflight: { ...inflight, parts } };
+        }
+        case "tool-result": {
+          const parts = fillToolResult(
+            inflight.parts,
+            chunk.toolCallId,
+            chunk.result
+          );
+          return { ...state, inflight: { ...inflight, parts } };
         }
         case "error":
           return {
@@ -129,11 +172,19 @@ export function reducer(state: AppState, action: Action): AppState {
             inflight: { ...inflight, error: chunk.error },
           };
         case "done": {
+          // Pre-render markdown per text-part so the static frame doesn't
+          // re-parse on every paint. (Each text part is a contiguous run of
+          // deltas between tool calls, so it parses cleanly on its own.)
+          const parts = inflight.parts.map<AssistantPart>((p) =>
+            p.kind === "text"
+              ? { ...p, rendered: p.text ? renderMarkdown(p.text) : "" }
+              : p
+          );
           const finalized: Message = {
             ...inflight,
+            parts,
             usage: chunk.usage,
             finalized: true,
-            rendered: inflight.text ? renderMarkdown(inflight.text) : "",
           };
           return {
             ...state,

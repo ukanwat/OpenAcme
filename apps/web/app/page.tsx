@@ -39,18 +39,24 @@ interface ModelOption {
 
 type MessageRole = "user" | "assistant" | "tool" | "system";
 
+type AssistantPart =
+  | { kind: "text"; text: string }
+  | {
+      kind: "tool";
+      toolCallId: string;
+      toolName: string;
+      args: Record<string, unknown>;
+      result?: string;
+      status: "pending" | "done" | "error";
+    };
+
 interface ChatMessage {
   id: string;
   role: MessageRole;
+  // For user messages this is the user input. For assistant messages
+  // ordered streaming/restored content lives in `parts`; `content` is unused.
   content: string;
-  toolCalls?: ToolCall[];
-}
-
-interface ToolCall {
-  toolName: string;
-  args: Record<string, unknown>;
-  result?: string;
-  toolCallId: string;
+  parts?: AssistantPart[];
 }
 
 interface SessionSummary {
@@ -169,16 +175,20 @@ export default function ChatPage() {
     const ctrl = new AbortController();
     fetch(`${API_BASE}/api/sessions/${activeSessionId}/messages`, { signal: ctrl.signal })
       .then((r) => r.json())
-      .then((data: { id: string; role: string; content: string | null }[]) => {
-        const msgs: ChatMessage[] = data
-          .filter((m) => m.role === "user" || m.role === "assistant")
-          .map((m) => ({
-            id: m.id,
-            role: m.role as MessageRole,
-            content: m.content ?? "",
-          }));
-        setMessages(msgs);
-      })
+      .then(
+        (
+          data: {
+            id: string;
+            role: string;
+            content: string | null;
+            toolCalls?: string | null;
+            toolCallId?: string | null;
+            toolName?: string | null;
+          }[]
+        ) => {
+          setMessages(rowsToChatMessages(data));
+        }
+      )
       .catch((e) => {
         if ((e as Error).name === "AbortError") return;
         toast.error("Failed to load messages");
@@ -221,9 +231,19 @@ export default function ChatPage() {
       id: assistantId,
       role: "assistant",
       content: "",
-      toolCalls: [],
+      parts: [],
     };
     setMessages((prev) => [...prev, assistantMessage]);
+
+    const updateAsstParts = (
+      mutate: (parts: AssistantPart[]) => AssistantPart[]
+    ) => {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistantId ? { ...m, parts: mutate(m.parts ?? []) } : m
+        )
+      );
+    };
 
     let newSessionId = "";
     let streamErrored = false;
@@ -247,47 +267,38 @@ export default function ChatPage() {
         case "session":
           newSessionId = (data.sessionId as string) || newSessionId;
           break;
-        case "text-delta":
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === assistantId
-                ? { ...m, content: m.content + (data.text as string) }
-                : m
-            )
-          );
+        case "text-delta": {
+          const delta = data.text as string;
+          updateAsstParts((parts) => {
+            const last = parts[parts.length - 1];
+            if (last && last.kind === "text") {
+              return [
+                ...parts.slice(0, -1),
+                { kind: "text", text: last.text + delta },
+              ];
+            }
+            return [...parts, { kind: "text", text: delta }];
+          });
           break;
+        }
         case "tool-call":
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === assistantId
-                ? {
-                    ...m,
-                    toolCalls: [
-                      ...(m.toolCalls || []),
-                      {
-                        toolName: data.toolName as string,
-                        args: data.args as Record<string, unknown>,
-                        toolCallId: data.toolCallId as string,
-                      },
-                    ],
-                  }
-                : m
-            )
-          );
+          updateAsstParts((parts) => [
+            ...parts,
+            {
+              kind: "tool",
+              toolCallId: data.toolCallId as string,
+              toolName: data.toolName as string,
+              args: data.args as Record<string, unknown>,
+              status: "pending",
+            },
+          ]);
           break;
         case "tool-result":
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === assistantId
-                ? {
-                    ...m,
-                    toolCalls: (m.toolCalls || []).map((tc) =>
-                      tc.toolCallId === data.toolCallId
-                        ? { ...tc, result: data.result as string }
-                        : tc
-                    ),
-                  }
-                : m
+          updateAsstParts((parts) =>
+            parts.map((p) =>
+              p.kind === "tool" && p.toolCallId === data.toolCallId
+                ? { ...p, result: data.result as string, status: "done" }
+                : p
             )
           );
           break;
@@ -359,10 +370,7 @@ export default function ChatPage() {
       if (streamErrored) {
         setMessages((prev) =>
           prev.filter(
-            (m) =>
-              m.id !== assistantId ||
-              m.content.length > 0 ||
-              (m.toolCalls && m.toolCalls.length > 0)
+            (m) => m.id !== assistantId || (m.parts?.length ?? 0) > 0
           )
         );
       } else if (newSessionId && newSessionId !== activeSessionId) {
@@ -579,8 +587,7 @@ export default function ChatPage() {
 
               {isStreaming &&
                 messages[messages.length - 1]?.role === "assistant" &&
-                !messages[messages.length - 1]?.content &&
-                !messages[messages.length - 1]?.toolCalls?.length && (
+                (messages[messages.length - 1]?.parts?.length ?? 0) === 0 && (
                   <div className="flex gap-3">
                     <Avatar role="assistant" />
                     <div className="flex items-center gap-1.5 pt-2 text-muted-foreground">
@@ -642,6 +649,98 @@ export default function ChatPage() {
   );
 }
 
+function rowsToChatMessages(
+  rows: {
+    id: string;
+    role: string;
+    content: string | null;
+    toolCalls?: string | null;
+    toolCallId?: string | null;
+    toolName?: string | null;
+  }[]
+): ChatMessage[] {
+  const out: ChatMessage[] = [];
+  let asstId: string | null = null;
+  let asstParts: AssistantPart[] = [];
+
+  const flushAssistant = () => {
+    if (!asstId || asstParts.length === 0) {
+      asstId = null;
+      asstParts = [];
+      return;
+    }
+    out.push({ id: asstId, role: "assistant", content: "", parts: asstParts });
+    asstId = null;
+    asstParts = [];
+  };
+
+  for (const row of rows) {
+    if (row.role === "system") continue;
+
+    if (row.role === "user") {
+      flushAssistant();
+      out.push({
+        id: row.id,
+        role: "user",
+        content: row.content ?? "",
+      });
+      continue;
+    }
+
+    if (row.role === "assistant") {
+      if (asstId === null) asstId = row.id;
+      if (row.content) {
+        asstParts.push({ kind: "text", text: row.content });
+      }
+      if (row.toolCalls) {
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(row.toolCalls);
+        } catch {
+          parsed = null;
+        }
+        if (Array.isArray(parsed)) {
+          for (const c of parsed) {
+            if (!c || typeof c !== "object") continue;
+            const e = c as {
+              toolCallId?: string;
+              id?: string;
+              toolName?: string;
+              name?: string;
+              args?: unknown;
+            };
+            const toolCallId = e.toolCallId ?? e.id ?? "";
+            const toolName = e.toolName ?? e.name ?? "";
+            if (!toolCallId || !toolName) continue;
+            asstParts.push({
+              kind: "tool",
+              toolCallId,
+              toolName,
+              args: (e.args as Record<string, unknown>) ?? {},
+              status: "pending",
+            });
+          }
+        }
+      }
+      continue;
+    }
+
+    if (row.role === "tool") {
+      if (!row.toolCallId) continue;
+      const target = asstParts.find(
+        (p): p is Extract<AssistantPart, { kind: "tool" }> =>
+          p.kind === "tool" && p.toolCallId === row.toolCallId
+      );
+      if (!target) continue;
+      target.result = row.content ?? "";
+      target.status = "done";
+    }
+  }
+
+  flushAssistant();
+  return out;
+}
+
 function Avatar({ role }: { role: "user" | "assistant" }) {
   return (
     <div
@@ -665,43 +764,68 @@ function MessageBubble({
   isStreaming: boolean;
 }) {
   if (message.role !== "user" && message.role !== "assistant") return null;
+
+  if (message.role === "user") {
+    return (
+      <div className="flex gap-3">
+        <Avatar role="user" />
+        <div className="flex-1 space-y-2 min-w-0">
+          <div className="text-xs font-medium text-muted-foreground capitalize">
+            user
+          </div>
+          <div className="text-sm break-words whitespace-pre-wrap">
+            {message.content}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const parts = message.parts ?? [];
+  const lastTextIdx = (() => {
+    for (let i = parts.length - 1; i >= 0; i--) {
+      if (parts[i]?.kind === "text") return i;
+    }
+    return -1;
+  })();
+
   return (
     <div className="flex gap-3">
-      <Avatar role={message.role} />
+      <Avatar role="assistant" />
       <div className="flex-1 space-y-2 min-w-0">
         <div className="text-xs font-medium text-muted-foreground capitalize">
-          {message.role}
+          assistant
         </div>
 
-        {message.toolCalls?.map((tc, i) => (
-          <div
-            key={i}
-            className="rounded-lg border border-border bg-muted/60 overflow-hidden"
-          >
-            <div className="flex items-center gap-2 border-b border-border/80 bg-muted px-3 py-2 text-xs">
-              <Wrench className="size-3 text-primary" />
-              <span className="font-mono font-medium">{tc.toolName}</span>
-            </div>
-            <pre className="overflow-x-auto px-3 py-2 font-mono text-[11px] text-muted-foreground">
-              {JSON.stringify(tc.args, null, 2)}
-            </pre>
-            {tc.result && (
-              <div className="border-t border-border/80 bg-background/40 px-3 py-2 font-mono text-[11px]">
-                {tc.result.length > 600
-                  ? tc.result.slice(0, 600) + "…"
-                  : tc.result}
+        {parts.map((part, i) =>
+          part.kind === "tool" ? (
+            <div
+              key={i}
+              className="rounded-lg border border-border bg-muted/60 overflow-hidden"
+            >
+              <div className="flex items-center gap-2 border-b border-border/80 bg-muted px-3 py-2 text-xs">
+                <Wrench className="size-3 text-primary" />
+                <span className="font-mono font-medium">{part.toolName}</span>
               </div>
-            )}
-          </div>
-        ))}
-
-        {message.content && (
-          <div className="text-sm break-words">
-            <Markdown>{message.content}</Markdown>
-            {isStreaming && (
-              <span className="ml-0.5 inline-block h-4 w-[2px] translate-y-[3px] bg-primary animate-pulse" />
-            )}
-          </div>
+              <pre className="overflow-x-auto px-3 py-2 font-mono text-[11px] text-muted-foreground">
+                {JSON.stringify(part.args, null, 2)}
+              </pre>
+              {part.result && (
+                <div className="border-t border-border/80 bg-background/40 px-3 py-2 font-mono text-[11px]">
+                  {part.result.length > 600
+                    ? part.result.slice(0, 600) + "…"
+                    : part.result}
+                </div>
+              )}
+            </div>
+          ) : part.text ? (
+            <div key={i} className="text-sm break-words">
+              <Markdown>{part.text}</Markdown>
+              {isStreaming && i === lastTextIdx && (
+                <span className="ml-0.5 inline-block h-4 w-[2px] translate-y-[3px] bg-primary animate-pulse" />
+              )}
+            </div>
+          ) : null
         )}
       </div>
     </div>

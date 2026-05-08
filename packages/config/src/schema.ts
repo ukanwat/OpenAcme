@@ -237,8 +237,10 @@ export function lookupModelMetadata(model: ModelConfig): ModelMetadata {
  * compression on provider 413 / context_overflow errors still fires.
  */
 export const AgentBehaviorSchema = z.object({
-  maxSteps: z.number().default(10),
-  maxIterations: z.number().default(90),
+  // Upper bound on Vercel AI SDK agentic steps per turn. Set high so the
+  // agent stops when IT decides (no more tool calls), not when we cap it.
+  // Still finite as a safety net against pathological tool-call loops.
+  maxSteps: z.number().default(1000),
   // Trigger. Default `compressionThresholdPercent: 0.5` enables proactive
   // compression at half the model's context window for any model present
   // in the bundled registry. Models without a registry entry fall through
