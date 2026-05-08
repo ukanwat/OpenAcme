@@ -4,11 +4,21 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { ArrowUp, Bot, User, Wrench, Sparkles, MessageSquare } from "lucide-react";
 import { toast } from "sonner";
 import { Sidebar } from "./components/Sidebar";
+import { Markdown } from "./components/Markdown";
 import { API_BASE } from "./lib/api";
 import { Button } from "@/app/components/ui/button";
 import { Textarea } from "@/app/components/ui/textarea";
-import { Badge } from "@/app/components/ui/badge";
 import { Separator } from "@/app/components/ui/separator";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from "@/app/components/ui/select";
+import type { ProviderInfo } from "./lib/types";
 import { cn } from "@/app/lib/utils";
 
 interface Agent {
@@ -17,6 +27,14 @@ interface Agent {
   model: { provider: string; model: string };
   persona: string;
   tools: string[];
+}
+
+interface ModelOption {
+  provider: string;
+  providerName: string;
+  id: string;
+  label: string;
+  hint?: string;
 }
 
 type MessageRole = "user" | "assistant" | "tool" | "system";
@@ -49,6 +67,7 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
+  const [modelOptions, setModelOptions] = useState<ModelOption[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -111,6 +130,32 @@ export default function ChatPage() {
       );
     return () => ctrl.abort();
   }, [loadAgentsAndSessions]);
+
+  useEffect(() => {
+    const ctrl = new AbortController();
+    fetch(`${API_BASE}/api/models`, { signal: ctrl.signal })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(r.statusText))))
+      .then((providers: ProviderInfo[]) => {
+        const opts: ModelOption[] = [];
+        for (const p of providers) {
+          for (const m of p.models ?? []) {
+            opts.push({
+              provider: p.id,
+              providerName: p.name,
+              id: m.id,
+              label: m.label,
+              hint: m.hint,
+            });
+          }
+        }
+        setModelOptions(opts);
+      })
+      .catch((e) => {
+        if ((e as Error).name === "AbortError") return;
+        // Soft fail: header just shows the current model as plain text.
+      });
+    return () => ctrl.abort();
+  }, []);
 
   useEffect(() => {
     if (!activeSessionId) {
@@ -420,9 +465,38 @@ export default function ChatPage() {
           <div className="flex items-center gap-3">
             <h2 className="text-sm font-semibold">{activeAgent?.name || "OpenAcme"}</h2>
             {activeAgent && (
-              <Badge variant="secondary" className="font-mono text-[10px]">
-                {activeAgent.model.provider}/{activeAgent.model.model}
-              </Badge>
+              <ModelQuickSwitch
+                agent={activeAgent}
+                options={modelOptions}
+                onChange={async (next) => {
+                  const prev = activeAgent;
+                  // Optimistic local update so the trigger label flips immediately.
+                  setAgents((list) =>
+                    list.map((a) =>
+                      a.id === prev.id
+                        ? { ...a, model: { ...a.model, provider: next.provider, model: next.id } }
+                        : a
+                    )
+                  );
+                  try {
+                    const res = await fetch(`${API_BASE}/api/agents/${prev.id}`, {
+                      method: "PUT",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        model: { ...prev.model, provider: next.provider, model: next.id },
+                      }),
+                    });
+                    if (!res.ok) throw new Error(await res.text());
+                    toast.success(`Switched to ${next.label}`);
+                  } catch (err) {
+                    // Roll back on failure.
+                    setAgents((list) => list.map((a) => (a.id === prev.id ? prev : a)));
+                    toast.error("Failed to switch model", {
+                      description: err instanceof Error ? err.message : String(err),
+                    });
+                  }
+                }}
+              />
             )}
           </div>
         </header>
@@ -576,8 +650,8 @@ function MessageBubble({
         ))}
 
         {message.content && (
-          <div className="text-sm leading-relaxed whitespace-pre-wrap break-words">
-            {message.content}
+          <div className="text-sm break-words">
+            <Markdown>{message.content}</Markdown>
             {isStreaming && (
               <span className="ml-0.5 inline-block h-4 w-[2px] translate-y-[3px] bg-primary animate-pulse" />
             )}
@@ -585,5 +659,74 @@ function MessageBubble({
         )}
       </div>
     </div>
+  );
+}
+
+function ModelQuickSwitch({
+  agent,
+  options,
+  onChange,
+}: {
+  agent: Agent;
+  options: ModelOption[];
+  onChange: (next: ModelOption) => void;
+}) {
+  const value = `${agent.model.provider}/${agent.model.model}`;
+  const grouped = options.reduce<Record<string, ModelOption[]>>((acc, opt) => {
+    (acc[opt.providerName] ??= []).push(opt);
+    return acc;
+  }, {});
+  // If the current agent's model isn't in the curated presets, surface it as
+  // a sticky "Current" group so the trigger has something to show.
+  const isKnown = options.some(
+    (o) => o.provider === agent.model.provider && o.id === agent.model.model
+  );
+
+  return (
+    <Select
+      value={value}
+      onValueChange={(next) => {
+        const opt = options.find((o) => `${o.provider}/${o.id}` === next);
+        if (opt) onChange(opt);
+      }}
+    >
+      <SelectTrigger
+        size="sm"
+        className="h-7 w-auto gap-1.5 border-dashed bg-muted/40 px-2 font-mono text-[11px]"
+        aria-label="Switch model"
+      >
+        <SelectValue placeholder={value} />
+      </SelectTrigger>
+      <SelectContent className="max-h-80">
+        {!isKnown && (
+          <SelectGroup>
+            <SelectLabel>Current (custom)</SelectLabel>
+            <SelectItem value={value}>
+              <span className="font-mono">{value}</span>
+            </SelectItem>
+          </SelectGroup>
+        )}
+        {Object.entries(grouped).map(([providerName, opts]) => (
+          <SelectGroup key={providerName}>
+            <SelectLabel>{providerName}</SelectLabel>
+            {opts.map((o) => (
+              <SelectItem
+                key={`${o.provider}/${o.id}`}
+                value={`${o.provider}/${o.id}`}
+              >
+                <div className="flex flex-col items-start">
+                  <span>{o.label}</span>
+                  {o.hint && (
+                    <span className="text-[10px] text-muted-foreground">
+                      {o.hint}
+                    </span>
+                  )}
+                </div>
+              </SelectItem>
+            ))}
+          </SelectGroup>
+        ))}
+      </SelectContent>
+    </Select>
   );
 }
