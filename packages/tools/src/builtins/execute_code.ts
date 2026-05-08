@@ -61,6 +61,18 @@ class PythonRepl {
     const proc = spawn(PYTHON_BIN, ["-u", SIDECAR_PATH], {
       stdio: ["pipe", "pipe", "pipe"],
     });
+    // Don't pin the Node event loop on the sidecar — the host CLI must be
+    // able to exit cleanly while a long-lived REPL exists. The stdio
+    // streams are also socket-backed and pin the loop; their `unref` isn't
+    // in the type defs but exists at runtime.
+    proc.unref();
+    const refable = (s: unknown): { unref?: () => void } | null =>
+      s && typeof s === "object" && "unref" in s
+        ? (s as { unref: () => void })
+        : null;
+    refable(proc.stdin)?.unref?.();
+    refable(proc.stdout)?.unref?.();
+    refable(proc.stderr)?.unref?.();
     proc.on("exit", () => {
       this.proc = null;
       this.buf = "";
