@@ -40,5 +40,11 @@ yarn-error.log*
 .hermes-ref/
 .playwright-cli/
 
+# Inherited reference docs — kept locally, not part of the repo
+docs/HERMES_ARCHITECTURE_DEEP_DIVE.md
+docs/HERMES_TOOLS_REFERENCE.md
+docs/IMPLEMENTATION_GUIDE.md
+docs/README.md
+
 # Claude Code worktrees
 .claude/worktrees/
