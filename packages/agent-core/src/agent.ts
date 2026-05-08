@@ -205,9 +205,9 @@ export class Agent {
       // Reactive recovery path — only attempts 1 may compress + retry.
       if (attempt === 1) {
         const classified = classifyError(recoverableError);
-        if (classified.shouldCompress && classified.reason) {
+        if (classified.compressionReason) {
           try {
-            const childId = await this.compress(sessionId, classified.reason);
+            const childId = await this.compress(sessionId, classified.compressionReason);
             if (childId !== sessionId) {
               yield { type: "session", sessionId: childId };
               sessionId = childId;

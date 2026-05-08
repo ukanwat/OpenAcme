@@ -1,33 +1,27 @@
 import { APICallError } from "ai";
 
 /**
- * Decide whether an error from a model call should trigger compression+retry.
+ * Decide whether an error from a model call should trigger reactive
+ * compression + retry. Mirrors the three compression-triggering branches of
+ * Hermes's `classify_api_error` (`.hermes-ref/agent/error_classifier.py`):
  *
- * Two reasons qualify, mirroring Hermes's reactive triggers:
- *   - `payload_too_large` — HTTP 413 (request body too big for the gateway)
- *   - `context_overflow`  — provider rejected because input tokens exceeded
- *                           the model's context window (usually 400/422,
- *                           sometimes 500 from local backends like vLLM)
+ *   - 413 / `request entity too large` → payload_too_large
+ *   - 400 + context-overflow phrasing → context_overflow
+ *   - 429 + "extra usage" + "long context" → Anthropic long-context tier
+ *     gate, recovered the same way as a plain context overflow
  *
- * Vercel AI SDK throws `APICallError` for HTTP-layer failures and gives us
- * `statusCode` + `responseBody` cleanly — we use the static `isInstance`
- * guard instead of probing fields ourselves. For exotic backends or wrapper
- * gateways that swallow the status, we still do message-pattern matching
- * over `responseBody` and `error.message` as a fallback.
- *
- * Pattern source: `.hermes-ref/agent/error_classifier.py:147-201`. Hermes
- * hardened these against real production traffic across vLLM, Ollama,
- * llama.cpp, AWS Bedrock, Anthropic, and OpenAI — copying the patterns is
- * cheap insurance even though the SDK normalizes most cases for us.
+ * Other reasons in Hermes's taxonomy (auth, billing, rate_limit, model_not_
+ * found, provider_policy_blocked, image_too_large, ...) drive credential
+ * rotation or provider fallback in Hermes — neither of which exists here on
+ * top of the Vercel AI SDK. Adding them as informational classifications
+ * would just be dead weight, so we don't.
  */
 
 export type CompressionReason = "payload_too_large" | "context_overflow";
 
 export interface ClassifiedError {
-  shouldCompress: boolean;
-  reason?: CompressionReason;
-  statusCode?: number;
-  message: string;
+  /** Non-null iff this error should trigger reactive compression + retry. */
+  compressionReason: CompressionReason | null;
 }
 
 const PAYLOAD_TOO_LARGE_PATTERNS = [
@@ -36,11 +30,12 @@ const PAYLOAD_TOO_LARGE_PATTERNS = [
   "error code: 413",
 ];
 
-// Provider phrases for "your input ran past the model's context window".
-// We pattern-match against either the SDK-extracted `responseBody` or, if
-// that's absent, the error `message`. The list is intentionally broad —
-// missing a context-overflow signal means the session gets stuck in a
-// retry loop, which is much worse than over-triggering compression.
+// English + code-style + CJK + Bedrock variants. We pattern-match on a
+// lowercased concatenation of `error.message` and `responseBody`, so
+// underscore-separated error codes (e.g. `context_length_exceeded`) need
+// their own entries — `"context length exceeded"` (spaced) won't match
+// them. Over-triggering compression is much less harmful than missing a
+// signal and getting stuck in a retry loop.
 const CONTEXT_OVERFLOW_PATTERNS = [
   "context length",
   "context size",
@@ -54,6 +49,9 @@ const CONTEXT_OVERFLOW_PATTERNS = [
   "prompt exceeds max length",
   "max_tokens",
   "maximum number of tokens",
+  // Code-style variants (OpenAI / OpenRouter `error.code` strings)
+  "context_length_exceeded",
+  "max_tokens_exceeded",
   // vLLM / local inference
   "exceeds the max_model_len",
   "max_model_len",
@@ -66,59 +64,66 @@ const CONTEXT_OVERFLOW_PATTERNS = [
   // llama.cpp / llama-server
   "slot context",
   "n_ctx_slot",
-  // AWS Bedrock Converse API
+  // CJK error messages from some Asian providers (DashScope, Qwen, etc.)
+  "超过最大长度",
+  "上下文长度",
+  // AWS Bedrock Converse
   "max input token",
   "input token",
   "exceeds the maximum number of input tokens",
 ];
 
-/**
- * Pull as much text as we can out of an arbitrary thrown value so we can
- * pattern-match it. APICallError carries `responseBody` (raw provider JSON
- * or text); plain Errors only have `message`. Both are joined and lowercased.
- */
-function extractText(err: unknown): string {
-  if (typeof err === "string") return err.toLowerCase();
-  if (!err || typeof err !== "object") return String(err).toLowerCase();
-  const parts: string[] = [];
-  if (APICallError.isInstance(err)) {
-    if (err.responseBody) parts.push(err.responseBody);
-    if (err.message) parts.push(err.message);
-  } else {
-    const e = err as { message?: string; toString?: () => string };
-    if (e.message) parts.push(e.message);
-    else parts.push(String(err));
-  }
-  return parts.join(" ").toLowerCase();
-}
-
 function extractStatus(err: unknown): number | undefined {
   if (APICallError.isInstance(err)) return err.statusCode;
   if (err && typeof err === "object") {
-    const e = err as { status?: number; statusCode?: number };
-    return e.status ?? e.statusCode;
+    const e = err as { status?: number; statusCode?: number; cause?: unknown };
+    if (typeof e.statusCode === "number") return e.statusCode;
+    if (typeof e.status === "number" && e.status >= 100 && e.status < 600) {
+      return e.status;
+    }
+    // One-hop cause walk for wrapped APICallErrors.
+    if (e.cause && e.cause !== err) return extractStatus(e.cause);
   }
   return undefined;
+}
+
+function extractText(err: unknown): string {
+  if (typeof err === "string") return err.toLowerCase();
+  if (APICallError.isInstance(err)) {
+    // Substring matching `responseBody` directly catches OpenRouter's
+    // `error.metadata.raw` wrapping of upstream provider messages without
+    // having to parse the JSON.
+    return `${err.message ?? ""} ${err.responseBody ?? ""}`.toLowerCase();
+  }
+  if (err && typeof err === "object") {
+    const m = (err as { message?: string }).message;
+    return (m ?? String(err)).toLowerCase();
+  }
+  return String(err).toLowerCase();
 }
 
 export function classifyError(err: unknown): ClassifiedError {
   const statusCode = extractStatus(err);
   const text = extractText(err);
-  const message = err instanceof Error ? err.message : String(err);
 
-  // 413 status code is the strongest signal — straight to payload compression.
-  if (statusCode === 413) {
-    return { shouldCompress: true, reason: "payload_too_large", statusCode, message };
+  if (statusCode === 413) return { compressionReason: "payload_too_large" };
+
+  // Anthropic long-context tier gate. Match BEFORE generic 429 → no-op
+  // (we don't classify rate limits at all).
+  if (
+    statusCode === 429 &&
+    text.includes("extra usage") &&
+    text.includes("long context")
+  ) {
+    return { compressionReason: "context_overflow" };
   }
+
   if (PAYLOAD_TOO_LARGE_PATTERNS.some((p) => text.includes(p))) {
-    return { shouldCompress: true, reason: "payload_too_large", statusCode, message };
+    return { compressionReason: "payload_too_large" };
   }
-
-  // Context overflow — varies by status code (400/422/500 depending on
-  // backend), so we match on text only.
   if (CONTEXT_OVERFLOW_PATTERNS.some((p) => text.includes(p))) {
-    return { shouldCompress: true, reason: "context_overflow", statusCode, message };
+    return { compressionReason: "context_overflow" };
   }
 
-  return { shouldCompress: false, statusCode, message };
+  return { compressionReason: null };
 }
