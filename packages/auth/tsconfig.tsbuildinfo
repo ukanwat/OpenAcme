@@ -1,1 +1,0 @@
-{"root":["./src/browser.ts","./src/index.ts","./src/jwt.ts","./src/loopback.ts","./src/oauth-anthropic.ts","./src/oauth-openai.ts","./src/pkce.ts","./src/refresh.ts","./src/store.ts","./src/transforms-anthropic.ts","./src/transforms-openai.ts","./src/types.ts"],"version":"5.9.2"}
