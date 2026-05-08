@@ -196,7 +196,7 @@ Per-agent `skills` array filters which skills are exposed; empty/missing means a
 - **Errors**: throw `Error` with a clear message; let the agent loop surface it as a `StreamChunk` of type `error`. Don't swallow.
 - **No emojis** in code or commit messages unless the user asks.
 - **No new docs** unless asked. Working notes belong in PRs / commits, not in `docs/`.
-- **Comments**: only for the non-obvious *why*. Don't restate the code. Don't write multi-paragraph docstrings.
+- **Comments**: only for the non-obvious *why*. Don't restate the code. Don't write multi-paragraph docstrings. Keep them short — one or two lines. Long comments tend to go stale and rarely earn their keep.
 - **No backwards-compat shims** for unreleased / unpublished surfaces — change the code.
 
 ---

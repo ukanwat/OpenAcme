@@ -41,7 +41,7 @@ export async function chatCommand(opts: {
       return;
     }
     const { renderApp } = await import("../tui/render.js");
-    await renderApp({ manager, agent });
+    await renderApp({ manager, agent, dataDir: config.dataDir });
   } finally {
     await manager.close();
   }

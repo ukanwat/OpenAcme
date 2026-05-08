@@ -10,11 +10,13 @@ import { App } from "./App.js";
 export async function renderApp({
   manager,
   agent,
+  dataDir,
 }: {
   manager: AgentManager;
   agent: AgentDefinition;
+  dataDir: string;
 }): Promise<void> {
-  const app = render(<App manager={manager} agent={agent} />);
+  const app = render(<App manager={manager} agent={agent} dataDir={dataDir} />);
 
   const onSigterm = () => {
     app.unmount();

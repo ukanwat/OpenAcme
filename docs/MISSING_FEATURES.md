@@ -1,329 +1,162 @@
-# OpenAcme - Missing Features & Gaps
+# OpenAcme — Roadmap
 
-This document outlines features present in the Hermes reference implementation (`.hermes-ref/`) that OpenAcme currently lacks.
-
----
-
-## Tools Gap
-
-### Current State: 9 tools
-### Target State: 69+ tools
-
-| Category | Hermes Has | OpenAcme Has | Gap |
-|----------|------------|--------------|-----|
-| File Operations | 4 | 6 | `edit` + `apply_patch` (V4A multi-file) implemented |
-| Terminal/Execution | 3 | 1 | `execute_code`, `process` missing |
-| Browser Automation | 11 | 0 | Full suite missing |
-| Web Tools | 2 | 2 | `web_search` (Tavily/Exa/Brave) + `web_extract` (Mozilla Readability) implemented |
-| Vision & Media | 3 | 0 | `vision_analyze`, `image_generate`, `text_to_speech` missing |
-| Skills Management | 3 | 0 | `skills_list`, `skill_view`, `skill_manage` missing |
-| Memory & Sessions | 2 | 0 | `memory`, `session_search` missing |
-| Task Management | 8 | 0 | Full kanban suite missing |
-| Scheduling | 1 | 0 | `cronjob` missing |
-| Agent Delegation | 2 | 0 | `delegate_task`, `mixture_of_agents` missing |
-| Communication | 1 | 0 | `send_message` (35+ platforms) missing |
-| Platform Integrations | 16 | 0 | Discord, Feishu, Yuanbao, Home Assistant missing |
-| RL Training | 10 | 0 | Full RL suite missing |
-| Utility | 2 | 0 | `clarify`, MCP dynamic tools missing |
-
-### Priority Tools to Implement
-
-**P0 - Critical:**
-- [x] `edit` - Search/replace code-editing primitive (cascade: simple → line-trimmed → block-anchor → whitespace-normalized)
-- [x] `apply_patch` - V4A multi-file patches (add / update / delete / move) with atomic rollback
-- [x] `web_search` - Tavily / Exa / Brave provider abstraction
-- [x] `web_extract` - Mozilla Readability + Turndown (markdown / text / html)
-- [ ] `clarify` - Ask user for clarification
-- [ ] `memory` - Persistent agent memory (SOUL.md, MEMORY.md, USER.md)
-- [x] `session_search` - FTS5 search across conversation history
-
-**P1 - High:**
-- [ ] `delegate_task` - Spawn subagents for parallel work
-- [ ] `execute_code` - Python REPL execution
-- [ ] `process` - Background process management
-- [ ] `vision_analyze` - Image analysis with vision models
-- [ ] `image_generate` - Image generation
-
-**P2 - Medium:**
-- [ ] `browser_*` suite (11 tools) - Full browser automation
-- [ ] `cronjob` - Scheduled task execution
-- [ ] `kanban_*` suite (7 tools) - Task management
-- [ ] `todo` - Personal TODO management
-- [ ] `text_to_speech` - TTS capability
-
-**P3 - Platform Integrations:**
-- [ ] `send_message` - Multi-platform messaging gateway
-- [ ] `discord_*` - Discord integration
-- [ ] `ha_*` - Home Assistant smart home
-- [ ] `feishu_*` - Feishu/Lark integration
+What's built, what's open, what's deferred. `.hermes-ref/` paths are mining references, not parity targets.
 
 ---
 
-## Messaging Gateway
+## Built-in tools
 
-### Current State: None
-### Target State: 35+ platforms
+**Shipped (12 tools across 9 files in `packages/tools/src/builtins/`):**
 
-Hermes supports running as a bot on:
-- Telegram
-- Discord
-- Slack
-- WhatsApp
-- Signal
-- Email
-- SMS
-- WeChat (Weixin)
-- DingTalk
-- Feishu/Lark
-- WeChat Work
-- QQ
-- Matrix
-- Mattermost
-- IRC
-- And 20+ more...
+- File ops: `read_file`, `write_file`, `list_files`, `search_files`
+- Code editing: `edit` (cascade match: simple → line-trimmed → block-anchor → whitespace-normalized), `apply_patch` (V4A multi-file, atomic)
+- Execution: `shell`, `execute_code` (persistent Python REPL via sidecar), `process` (background process management)
+- Web: `web_search` (Tavily / Exa / Brave), `web_extract` (Mozilla Readability + Turndown)
+- History: `session_search` (FTS5 across messages, session-aware via AsyncLocalStorage)
 
-**What's Needed:**
-- [ ] Gateway architecture (`gateway/run.py` equivalent)
-- [ ] Platform adapter abstraction
-- [ ] Concurrent platform handling
-- [ ] Voice transcription across platforms
-- [ ] Cross-platform session continuity
-- [ ] Platform-specific auth flows
-- [ ] Media handling (images, documents, voice)
-- [ ] Rate limiting per platform
+Plus dynamic MCP tools, namespaced `mcp-<server>__<tool>`.
+
+**Open — high impact:**
+
+- [ ] `clarify` — ask the user mid-turn when intent is ambiguous. No equivalent today; agent has to guess or fail.
+- [ ] `memory` — persistent agent memory (e.g. SOUL.md / MEMORY.md / USER.md). Sessions persist; the agent doesn't.
+- [ ] `delegate_task` — spawn a subagent for parallel / isolated work. Ref: `.hermes-ref/tools/delegate_tool.py`.
+- [ ] `vision_analyze` — image input via vision-capable models.
+
+**Open — additive:**
+
+- [ ] Browser automation suite (12 tools: navigate, snapshot, click, type, scroll, back, press, get_images, vision, console, cdp, dialog). Ref: `.hermes-ref/tools/browser_tool.py`.
+- [ ] `image_generate`, `text_to_speech`, audio transcription.
+- [ ] Task management: `todo`, kanban suite.
+- [ ] `cronjob` — scheduled task execution.
+- [ ] `send_message` — multi-platform messaging gateway.
 
 ---
 
-## Memory System
+## Architecture / foundations
 
-### Current State: None
-### Target State: 8 memory providers
+These change what the platform *can* do, independent of any single tool.
 
-**Missing Components:**
-- [ ] `MemoryManager` - Orchestrates memory providers
-- [ ] Built-in memory provider (SOUL.md, MEMORY.md, USER.md)
-- [ ] Plugin architecture for external providers:
-  - [ ] Honcho (dialectic user modeling)
-  - [ ] Mem0
-  - [ ] Supermemory
-  - [ ] Holographic (embeddings-based)
-  - [ ] Others...
-- [ ] System prompt generation with memory context
-- [ ] Pre-turn prefetch, post-turn sync
-- [ ] Streaming context scrubber
-- [ ] Context fencing (prevent injection)
+### Memory system
 
----
+**State:** none.
+**Why it matters:** without memory, the agent forgets across sessions; user has to re-establish context every time.
+**Sketch:**
+- `MemoryManager` orchestrating one or more providers
+- Built-in provider over markdown files in `~/.openacme/memory/` (SOUL / MEMORY / USER pattern)
+- Plugin slot for external providers (Honcho, Mem0, Supermemory, etc. — see `.hermes-ref/plugins/memory/`)
+- System-prompt injection of relevant memories pre-turn
+- Streaming context scrubber so memory tags don't leak in deltas
 
-## Terminal Backends
+### Context compression
 
-### Current State: Local only
-### Target State: 6 backends
+**State:** none. `behavior.maxIterations: 90` is a hard ceiling.
+**Why it matters:** long conversations hit the model context window with no graceful degrade.
+**Sketch:**
+- Token counting per provider/model
+- LLM-based summarization of older messages
+- Session splitting via `parent_session_id` chains (already in schema for `messages` indirectly via `sessions`; would need explicit field)
+- Provider-specific prompt cache awareness
+- Ref: `.hermes-ref/trajectory_compressor.py`
 
-**Missing Backends:**
-- [ ] Docker - Containerized execution with file sync
-- [ ] SSH - Remote machine execution
-- [ ] Modal - Serverless GPU cloud (hibernates when idle)
-- [ ] Daytona - Managed dev environments
-- [ ] Singularity - HPC clusters
-- [ ] Vercel Sandbox - Serverless execution
+### Approval / guardrails
 
-**Each Backend Needs:**
-- [ ] File synchronization
-- [ ] Streaming output with structured logging
-- [ ] Process registry
-- [ ] Checkpoint management
-- [ ] Environment variable injection
-- [ ] Working directory isolation
+**State:** `shell.ts` has a destructive-pattern *warning*; no real approval flow.
+**Why it matters:** can't safely expand tool surface (delegate, browser, etc.) without it.
+**Sketch:**
+- Command classifier (safe / requires-approval / blocked)
+- Per-user / per-agent allowlists & blocklists
+- Approval request → user decision → execute, with audit log
+- Path safety validator for file ops
+- URL safety validator for web tools
+- Ref: `.hermes-ref/tools/approval.py`, `path_security.py`, `url_safety.py`
 
----
+### Terminal backends
 
-## Cron Scheduler
+**State:** local only.
+**Open backends:** Docker, SSH, Modal (serverless GPU), Daytona, Vercel sandbox, Singularity (HPC).
+**Each needs:** file sync, streaming output, process registry, env var injection, working-directory isolation.
+**Ref:** `.hermes-ref/tools/environments/`.
 
-### Current State: None
-### Target State: Full scheduler
+### Web ↔ server auth
 
-**Missing:**
-- [ ] `scheduler.py` equivalent - Tick-based job execution
-- [ ] Job definitions and storage
-- [ ] File-based locking for multi-process safety
-- [ ] Per-job toolset overrides
-- [ ] Delivery to any messaging platform
-- [ ] Timezone-aware scheduling
-- [ ] Natural language job creation
+**State:** none — assumes a trusted local environment.
+**Open:** session/token layer before exposing the server beyond loopback or building features that imply auth.
+
+### Tests
+
+**State:** vitest wired; most packages have no specs.
+**Open:** unit tests for tools, integration tests for the agent loop, E2E for the HTTP routes, CLI command tests.
 
 ---
 
-## Skills System
+## Skills system
 
-### Current State: Basic skeleton
-### Target State: 100+ bundled skills across 26 categories
+**State:** discovery + progressive disclosure shipped (`packages/skills`). Empty catalog.
 
-**Missing Categories:**
-- [ ] `software-development/` (13 skills)
-- [ ] `productivity/` (11 skills)
-- [ ] `research/` (8 skills)
-- [ ] `creative/` (22 skills)
-- [ ] `github/` (9 skills)
-- [ ] `mlops/` (10 skills)
-- [ ] And 20+ more categories...
-
-**Missing Infrastructure:**
-- [ ] Skills Hub integration (agentskills.io)
-- [ ] FTS5 search across skill content
-- [ ] Skill versioning & dependencies
-- [ ] Platform restrictions (macOS, Linux, Windows)
-- [ ] Prerequisites checking (env vars, commands)
-- [ ] Linked files & templates
-- [ ] Auto-creation of skills from complex tasks
+**Open:**
+- Bundled skill catalog
+- Skills Hub integration (agentskills.io)
+- FTS5 search across skill bodies
+- Skill versioning, dependencies, prerequisites checking
+- Auto-creation of skills from complex tasks
 
 ---
 
-## CLI Commands
+## CLI surface
 
-### Current State: ~5 commands
-### Target State: 50+ commands
+**State:** `/new`, `/clear`, `/help`, `/exit`, `/model`, `/agent` in the Ink TUI; `setup`, `start`, `chat`, `login`, `logout` as binary subcommands.
 
-**Missing Commands:**
-- [ ] `/new`, `/reset` - Session management
-- [ ] `/model` - Switch LLM provider/model
-- [ ] `/personality` - Set agent persona
-- [ ] `/retry`, `/undo` - Undo last turn
-- [ ] `/compress`, `/usage` - Context management
-- [ ] `/skills` - Browse & activate skills
-- [ ] `/platforms` - Gateway status
-- [ ] `/logs`, `/doctor` - Diagnostics
-- [ ] `/kanban` - Task board
-- [ ] `/tools` - Enable/disable tools
-- [ ] `/memory` - Memory operations
-- [ ] `/goal`, `/focus` - Goal tracking
-- [ ] And 35+ more...
+**Open slash commands:**
+- `/retry`, `/undo` — turn-level undo
+- `/compress`, `/usage` — context management visibility
+- `/memory` — memory operations
+- `/skills` — browse / activate
+- `/tools` — enable / disable
+- `/doctor` — install diagnostics
+- `/export`, `/import` — session portability
 
-**Missing CLI Features:**
-- [ ] Multi-line editing with prompt_toolkit
-- [ ] Slash-command autocomplete
-- [ ] Conversation history browsing
-- [ ] Streaming output with syntax highlighting
-- [ ] Rich formatting (tables, boxes, colors)
+**Open features:**
+- Slash-command autocomplete (already paletted, just sparse)
+- Conversation history browsing
+- Per-provider rate / cost tracking displayed in the TUI
 
 ---
 
-## Advanced Features
+## Messaging gateway
 
-### Tool Guardrails & Safety
-- [ ] Approval workflows for dangerous operations
-- [ ] Command allowlist/blocklist
-- [ ] File path safety validation
-- [ ] Dry-run mode (preview without executing)
+**State:** none.
 
-### Context Management
-- [ ] Token budget management
-- [ ] Message summarization/compression
-- [ ] Session splitting via parent_id chains
-- [ ] Provider-specific prompt caching
-
-### Rate Limiting & Cost
-- [ ] Per-provider rate tracking
-- [ ] Retry logic with backoff
-- [ ] Multi-account billing support
-- [ ] Cost tracking per session
-
-### MCP Enhancements
-- [ ] Dynamic tool discovery from MCP servers
-- [ ] HTTP, stdio, custom transports
-- [ ] Per-server timeout configuration
-- [ ] Sampling support
-- [ ] OAuth integration for MCP
-
-### RL Training (Optional/Advanced)
-- [ ] Environment framework (Atropos, gymnasium)
-- [ ] Training configuration management
-- [ ] Batch trajectory generation
-- [ ] Results tracking
+Hermes runs as a bot on 35+ platforms (Telegram, Discord, Slack, WhatsApp, Signal, Email, Matrix, etc.). Open question whether OpenAcme wants any of this — if yes, the architecture is well-trodden in `.hermes-ref/gateway/` and the platform adapter pattern (`gateway/platforms/base.py`) is the entry point.
 
 ---
 
-## Configuration & Setup
+## Configuration & ops
 
-**Missing:**
-- [ ] Interactive setup wizard (`openacme setup`)
-- [ ] Doctor command for diagnostics (`openacme doctor`)
-- [ ] Profile-aware paths (multiple user profiles)
-- [ ] Config migration across versions
-- [ ] Atomic YAML writes (prevent corruption)
+**State:** interactive `setup` wizard ships; merges into existing config without overwriting.
 
----
-
-## Testing
-
-### Current State: 0 tests
-### Target State: Comprehensive coverage
-
-**Needed:**
-- [ ] Unit tests for tools
-- [ ] Integration tests for agent loop
-- [ ] E2E tests for API endpoints
-- [ ] Platform adapter tests
-- [ ] CLI command tests
+**Open:**
+- `doctor` command for diagnostics (config validation, auth health, MCP connectivity, tool checks)
+- Multi-profile support
+- Config migration across versions
+- Dockerfile / Homebrew formula / install script for non-`pnpm install` distribution
 
 ---
 
-## Deployment
+## Deferred / out of scope (for now)
 
-**Missing:**
-- [ ] Dockerfile
-- [ ] Homebrew formula
-- [ ] Install script (Linux/macOS/Termux)
-- [ ] Nix package
-- [ ] npm/npx distribution
+- RL training tools (the 10 `rl_*` tools in `.hermes-ref/tools/rl_training_tool.py`) — orthogonal to the agent platform.
+- Most platform-specific integrations (Feishu, Yuanbao, Home Assistant, Discord-as-tool) — only worth pulling in if a real user case appears.
+- Mixture-of-agents routing — interesting but blocked on `delegate_task` landing first.
 
 ---
 
-## Summary Statistics
+## Recommended next-up
 
-| Metric | Hermes | OpenAcme | Gap |
-|--------|--------|----------|-----|
-| Built-in Tools | 69 | 9 | 60 |
-| Messaging Platforms | 35+ | 0 | 35+ |
-| Memory Providers | 8 | 0 | 8 |
-| Skill Categories | 26 | 0 | 26 |
-| Terminal Backends | 6 | 1 | 5 |
-| CLI Commands | 50+ | ~5 | 45+ |
-| Tests | ~15,000 | 0 | ~15,000 |
+If picking three things that pay back the most for the least surface area:
 
----
+1. **Memory system** + **context compression** — the pair unlocks long-running, persistent agents.
+2. **Approval / guardrail layer** — required before safely growing the tool surface.
+3. **`clarify` tool** — small change, immediately makes the agent feel less brittle.
 
-## Recommended Implementation Order
-
-### Phase 1: Core Tools
-1. `patch` tool
-2. `web_search` + `web_extract`
-3. `clarify` tool
-4. `memory` tool
-5. `session_search` with FTS5
-
-### Phase 2: Agent Capabilities
-6. `delegate_task` for subagents
-7. `execute_code` Python REPL
-8. `process` management
-9. Context compression
-10. Tool guardrails
-
-### Phase 3: CLI Enhancement
-11. Rich CLI with 20+ commands
-12. Setup wizard
-13. Doctor diagnostics
-14. Slash-command autocomplete
-
-### Phase 4: Platform Integrations
-15. Gateway architecture
-16. Telegram adapter
-17. Discord adapter
-18. Slack adapter
-
-### Phase 5: Advanced
-19. Browser automation suite
-20. Vision tools
-21. Image generation
-22. Cron scheduler
-23. Multiple terminal backends
+Everything else is additive and can be sequenced after.

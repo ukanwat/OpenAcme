@@ -14,21 +14,29 @@ const PROVIDERS: Provider[] = [
 export function ModelPicker({
   currentProvider,
   currentModel,
+  configured,
   onSelect,
   onCancel,
 }: {
   currentProvider: Provider;
   currentModel: string;
+  configured: Record<string, boolean>;
   onSelect: (next: { provider: Provider; model: string; label: string }) => void;
   onCancel: () => void;
 }) {
   const items: (PickerItem & { provider: Provider; model: string })[] = [];
   for (const provider of PROVIDERS) {
+    // Hide providers without credentials, but always keep the agent's current
+    // provider so `initialKey` matches and the user can see what's selected.
+    const isCurrent = provider === currentProvider;
+    if (!configured[provider] && !isCurrent) continue;
+    const unconfigured = !configured[provider];
     for (const preset of MODEL_PRESETS[provider]) {
+      const baseHint = provider + (preset.hint ? ` · ${preset.hint}` : "");
       items.push({
         key: `${provider}/${preset.id}`,
         label: `${preset.label}`,
-        hint: provider + (preset.hint ? ` · ${preset.hint}` : ""),
+        hint: unconfigured ? `${baseHint} · no credentials` : baseHint,
         provider,
         model: preset.id,
       });

@@ -3,8 +3,11 @@ import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
 import { AgentManager } from "./agent-manager.js";
 import { AgentDefinitionSchema, type Config, type AgentDefinition } from "@openacme/config";
-import { listProviders, MODEL_PRESETS } from "@openacme/llm-provider";
-import { readAuthFile } from "@openacme/auth";
+import {
+  listProviders,
+  MODEL_PRESETS,
+  detectProviderCredentials,
+} from "@openacme/llm-provider";
 import { registry as toolRegistry } from "@openacme/tools";
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
@@ -150,6 +153,13 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
 
     const effectiveSessionId = sessionId || randomUUID();
 
+    // The underlying Request's AbortSignal fires when the client closes the
+    // SSE connection (e.g. user clicked Stop, navigated away, or the tab
+    // crashed). Plumb it down to streamText so the LLM call actually
+    // terminates — without this, an aborted fetch only closes the wire and
+    // the model keeps running until it decides it's done.
+    const signal = c.req.raw.signal;
+
     return streamSSE(c, async (stream) => {
       try {
         // Emit the resolved session id first so the client can pin it across turns
@@ -163,7 +173,8 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
         for await (const chunk of manager.chat(
           agentId,
           effectiveSessionId,
-          message
+          message,
+          { signal }
         )) {
           await stream.writeSSE({
             event: chunk.type,
@@ -171,6 +182,10 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
           });
         }
       } catch (error) {
+        // Abort during writeSSE (client disconnected) is expected — the
+        // agent has already received the signal and will yield `stopped` on
+        // its own. Don't surface it as a stream error.
+        if (signal.aborted) return;
         await stream.writeSSE({
           event: "error",
           data: JSON.stringify({
@@ -423,40 +438,7 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
   // ── API Keys ──
   const envPath = path.join(config.dataDir, ".env");
 
-  // Get which API keys are configured (not the actual values).
-  // A provider is "configured" if either an API key is present (.env or
-  // process.env) OR there is an OAuth entry in auth.json (subscription auth).
-  app.get("/api/keys", (c) => {
-    const providers = listProviders();
-    const configured: Record<string, boolean> = {};
-    const sources: Record<string, "api_key" | "oauth"> = {};
-
-    let envVars: Record<string, string> = {};
-    if (fs.existsSync(envPath)) {
-      const envContent = fs.readFileSync(envPath, "utf-8");
-      envVars = dotenv.parse(envContent);
-    }
-
-    const authFile = readAuthFile(config.dataDir);
-
-    for (const provider of providers) {
-      const hasApiKey =
-        !!provider.envVar &&
-        (!!process.env[provider.envVar] || !!envVars[provider.envVar]);
-
-      const hasOAuth =
-        (provider.id === "openai" || provider.id === "anthropic") &&
-        !!authFile[provider.id]?.access_token;
-
-      configured[provider.id] = hasApiKey || hasOAuth;
-      // Prefer api_key source if both are present (matches registry resolution
-      // when config.auth is unset/api_key).
-      if (hasApiKey) sources[provider.id] = "api_key";
-      else if (hasOAuth) sources[provider.id] = "oauth";
-    }
-
-    return c.json({ configured, sources, envPath });
-  });
+  app.get("/api/keys", (c) => c.json(detectProviderCredentials(config.dataDir)));
 
   // Save an API key to the .env file
   app.post("/api/keys", async (c) => {

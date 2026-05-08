@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { ArrowUp, Bot, User, Wrench, Sparkles, MessageSquare, Trash2 } from "lucide-react";
+import { ArrowUp, Bot, User, Wrench, Sparkles, MessageSquare, Trash2, Square } from "lucide-react";
 import { toast } from "sonner";
 import { Sidebar } from "./components/Sidebar";
 import { Markdown } from "./components/Markdown";
@@ -73,7 +73,10 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
-  const [modelOptions, setModelOptions] = useState<ModelOption[]>([]);
+  const [modelCatalog, setModelCatalog] = useState<{
+    providers: ProviderInfo[];
+    configured: Record<string, boolean>;
+  }>({ providers: [], configured: {} });
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -139,22 +142,18 @@ export default function ChatPage() {
 
   useEffect(() => {
     const ctrl = new AbortController();
-    fetch(`${API_BASE}/api/models`, { signal: ctrl.signal })
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(r.statusText))))
-      .then((providers: ProviderInfo[]) => {
-        const opts: ModelOption[] = [];
-        for (const p of providers) {
-          for (const m of p.models ?? []) {
-            opts.push({
-              provider: p.id,
-              providerName: p.name,
-              id: m.id,
-              label: m.label,
-              hint: m.hint,
-            });
-          }
-        }
-        setModelOptions(opts);
+    Promise.all([
+      fetch(`${API_BASE}/api/models`, { signal: ctrl.signal }).then((r) =>
+        r.ok ? (r.json() as Promise<ProviderInfo[]>) : Promise.reject(new Error(r.statusText))
+      ),
+      fetch(`${API_BASE}/api/keys`, { signal: ctrl.signal })
+        .then((r): Promise<{ configured: Record<string, boolean> }> | { configured: Record<string, boolean> } =>
+          r.ok ? r.json() : { configured: {} }
+        )
+        .catch(() => ({ configured: {} as Record<string, boolean> })),
+    ])
+      .then(([providers, keys]) => {
+        setModelCatalog({ providers, configured: keys.configured });
       })
       .catch((e) => {
         if ((e as Error).name === "AbortError") return;
@@ -305,6 +304,11 @@ export default function ChatPage() {
         case "error":
           streamErrored = true;
           toast.error("Stream error", { description: data.error as string });
+          break;
+        case "stopped":
+          // Server-confirmed user cancel. Partial parts already in the
+          // assistant message stay visible; the finally block clears
+          // isStreaming and the send button reappears.
           break;
         case "done":
           break;
@@ -521,7 +525,7 @@ export default function ChatPage() {
             {activeAgent && (
               <ModelQuickSwitch
                 agent={activeAgent}
-                options={modelOptions}
+                catalog={modelCatalog}
                 onChange={async (next) => {
                   const prev = activeAgent;
                   // Optimistic local update so the trigger label flips immediately.
@@ -617,16 +621,29 @@ export default function ChatPage() {
               rows={1}
               className="min-h-[44px] max-h-48 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 font-sans"
             />
-            <Button
-              size="icon"
-              onClick={sendMessage}
-              disabled={isStreaming || !input.trim() || !activeAgentId}
-              className="shrink-0"
-              aria-label="Send message"
-            >
-              <ArrowUp className="size-4" />
-              <span className="sr-only">Send</span>
-            </Button>
+            {isStreaming ? (
+              <Button
+                size="icon"
+                variant="destructive"
+                onClick={() => streamCtrlRef.current?.abort()}
+                className="shrink-0"
+                aria-label="Stop generating"
+              >
+                <Square className="size-4 fill-current" />
+                <span className="sr-only">Stop</span>
+              </Button>
+            ) : (
+              <Button
+                size="icon"
+                onClick={sendMessage}
+                disabled={!input.trim() || !activeAgentId}
+                className="shrink-0"
+                aria-label="Send message"
+              >
+                <ArrowUp className="size-4" />
+                <span className="sr-only">Send</span>
+              </Button>
+            )}
           </div>
           <p className="mx-auto mt-2 max-w-3xl px-1 text-[11px] text-muted-foreground">
             Press{" "}
@@ -834,14 +851,30 @@ function MessageBubble({
 
 function ModelQuickSwitch({
   agent,
-  options,
+  catalog,
   onChange,
 }: {
   agent: Agent;
-  options: ModelOption[];
+  catalog: { providers: ProviderInfo[]; configured: Record<string, boolean> };
   onChange: (next: ModelOption) => void;
 }) {
   const value = `${agent.model.provider}/${agent.model.model}`;
+  // Show a provider's models if it has credentials OR it's the agent's current
+  // provider (so a user who explicitly set up an Ollama/Custom agent can still
+  // switch between models within that provider).
+  const options: ModelOption[] = [];
+  for (const p of catalog.providers) {
+    if (!catalog.configured[p.id] && p.id !== agent.model.provider) continue;
+    for (const m of p.models ?? []) {
+      options.push({
+        provider: p.id,
+        providerName: p.name,
+        id: m.id,
+        label: m.label,
+        hint: m.hint,
+      });
+    }
+  }
   const grouped = options.reduce<Record<string, ModelOption[]>>((acc, opt) => {
     (acc[opt.providerName] ??= []).push(opt);
     return acc;

@@ -171,6 +171,22 @@ export function reducer(state: AppState, action: Action): AppState {
             status: "error",
             inflight: { ...inflight, error: chunk.error },
           };
+        case "stopped": {
+          // User-cancelled: finalize whatever streamed so far and drop back
+          // to idle. Mirrors `done` minus usage; no error styling.
+          const parts = inflight.parts.map<AssistantPart>((p) =>
+            p.kind === "text"
+              ? { ...p, rendered: p.text ? renderMarkdown(p.text) : "" }
+              : p
+          );
+          const finalized: Message = { ...inflight, parts, finalized: true };
+          return {
+            ...state,
+            committed: [...state.committed, finalized],
+            inflight: null,
+            status: "idle",
+          };
+        }
         case "done": {
           // Pre-render markdown per text-part so the static frame doesn't
           // re-parse on every paint. (Each text part is a contiguous run of

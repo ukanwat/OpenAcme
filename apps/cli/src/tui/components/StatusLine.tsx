@@ -13,7 +13,7 @@ export function StatusLine({
 }) {
   const indicator =
     status === "streaming"
-      ? <Text color="cyan">● streaming</Text>
+      ? <Text color="cyan">● streaming <Text dimColor>· Esc to stop</Text></Text>
       : status === "error"
         ? <Text color="red">● error</Text>
         : <Text color="green">● idle</Text>;

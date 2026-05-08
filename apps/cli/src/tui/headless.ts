@@ -28,8 +28,16 @@ export async function runHeadless(
   }
 
   const sessionId = `cli-headless-${Date.now()}`;
+  // Ctrl+C aborts the in-flight LLM call; the agent yields `stopped` and
+  // the loop exits cleanly. `process.once` so a second SIGINT (e.g. while
+  // we're flushing) hits the default handler and force-quits.
+  const ctrl = new AbortController();
+  const onSigint = () => ctrl.abort();
+  process.once("SIGINT", onSigint);
   try {
-    for await (const chunk of manager.chat(agentId, sessionId, input)) {
+    for await (const chunk of manager.chat(agentId, sessionId, input, {
+      signal: ctrl.signal,
+    })) {
       switch (chunk.type) {
         case "text-delta":
           process.stdout.write(chunk.text);
@@ -49,6 +57,10 @@ export async function runHeadless(
           process.stderr.write(`[error] ${chunk.error}\n`);
           process.exitCode = 1;
           break;
+        case "stopped":
+          process.stderr.write("\n[stopped]\n");
+          process.exitCode = 130; // conventional exit for SIGINT
+          break;
       }
     }
     process.stdout.write("\n");
@@ -57,5 +69,7 @@ export async function runHeadless(
       `[error] ${err instanceof Error ? err.message : String(err)}\n`
     );
     process.exitCode = 1;
+  } finally {
+    process.removeListener("SIGINT", onSigint);
   }
 }

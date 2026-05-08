@@ -1,7 +1,8 @@
-import { Box, Text, useApp } from "ink";
+import { Box, Text, useApp, useInput } from "ink";
 import { useReducer, useState, useMemo, useCallback, useRef } from "react";
 import type { AgentManager } from "@openacme/server";
 import type { AgentDefinition } from "@openacme/config";
+import { detectProviderCredentials } from "@openacme/llm-provider";
 import { reducer, initState } from "./state.js";
 import { COMMANDS, findCommand, filterCommands, type CommandCtx } from "./commands.js";
 import { MessageList } from "./components/MessageList.js";
@@ -17,9 +18,10 @@ import { dbMessagesToTuiMessages } from "./restore.js";
 interface Props {
   manager: AgentManager;
   agent: AgentDefinition;
+  dataDir: string;
 }
 
-export function App({ manager, agent }: Props) {
+export function App({ manager, agent, dataDir }: Props) {
   const inkApp = useApp();
   const [state, dispatch] = useReducer(
     reducer,
@@ -34,6 +36,10 @@ export function App({ manager, agent }: Props) {
   const [input, setInput] = useState("");
   const [paletteIndex, setPaletteIndex] = useState(0);
   const sendingRef = useRef(false);
+  // AbortController for the in-flight turn. Created per `sendTurn`,
+  // nulled in `finally`. `useInput` below calls `.abort()` on Esc when
+  // status === "streaming"; the agent yields `stopped` and the loop ends.
+  const abortRef = useRef<AbortController | null>(null);
 
   const exit = useCallback(() => {
     inkApp.exit();
@@ -44,18 +50,26 @@ export function App({ manager, agent }: Props) {
     [manager, state.agentId, exit]
   );
 
+  const configuredProviders = useMemo(
+    () => detectProviderCredentials(dataDir).configured,
+    [dataDir]
+  );
+
   // ── Send a turn ────────────────────────────────────────────────────────
   const sendTurn = useCallback(
     async (text: string) => {
       if (sendingRef.current) return;
       sendingRef.current = true;
+      const ctrl = new AbortController();
+      abortRef.current = ctrl;
       dispatch({ type: "user-submit", text });
 
       try {
         for await (const chunk of manager.chat(
           state.agentId,
           state.sessionId,
-          text
+          text,
+          { signal: ctrl.signal }
         )) {
           dispatch({ type: "chunk", chunk });
         }
@@ -65,11 +79,21 @@ export function App({ manager, agent }: Props) {
           error: err instanceof Error ? err.message : String(err),
         });
       } finally {
+        if (abortRef.current === ctrl) abortRef.current = null;
         sendingRef.current = false;
       }
     },
     [manager, state.agentId, state.sessionId]
   );
+
+  // Esc-to-stop while streaming. Lives at the App level rather than inside
+  // MultilineInput because that input is `disabled` mid-stream, which gates
+  // its own useInput. Multiple Ink useInput hooks coexist fine.
+  useInput((_input, key) => {
+    if (key.escape && state.status === "streaming") {
+      abortRef.current?.abort();
+    }
+  });
 
   // ── Slash command dispatch ─────────────────────────────────────────────
   const runSlashCommand = useCallback(
@@ -194,6 +218,7 @@ export function App({ manager, agent }: Props) {
         <ModelPicker
           currentProvider={agent.model.provider}
           currentModel={agent.model.model}
+          configured={configuredProviders}
           onSelect={async ({ provider, model, label }) => {
             try {
               manager.updateAgent(state.agentId, {

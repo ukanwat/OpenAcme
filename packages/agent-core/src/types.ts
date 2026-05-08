@@ -7,6 +7,7 @@ export type StreamChunk =
   | { type: "tool-call"; toolName: string; args: Record<string, unknown>; toolCallId: string }
   | { type: "tool-result"; toolName: string; result: string; toolCallId: string }
   | { type: "error"; error: string }
+  | { type: "stopped" }
   | { type: "done"; usage?: TokenUsage };
 
 export interface TokenUsage {

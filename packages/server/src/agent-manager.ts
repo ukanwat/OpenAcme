@@ -171,14 +171,18 @@ export class AgentManager {
 
   /**
    * Chat with an agent — returns an async iterable for streaming.
+   *
+   * `opts.signal` cancels the in-flight LLM call; the agent yields a
+   * single `{type: "stopped"}` chunk and returns.
    */
   async *chat(
     agentId: string,
     sessionId: string,
-    message: string
+    message: string,
+    opts?: { signal?: AbortSignal }
   ): AsyncIterable<StreamChunk> {
     const agent = this.getAgent(agentId);
-    yield* agent.chat(sessionId, message);
+    yield* agent.chat(sessionId, message, opts);
   }
 
   private createAgentFromDef(def: AgentDefinition): Agent {

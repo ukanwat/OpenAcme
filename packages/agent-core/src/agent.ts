@@ -52,8 +52,17 @@ export class Agent {
    */
   async *chat(
     sessionId: string,
-    userMessage: string
+    userMessage: string,
+    opts?: { signal?: AbortSignal }
   ): AsyncIterable<StreamChunk> {
+    // Pre-flight cancel: caller already aborted (e.g. user double-clicked
+    // stop, or fetch was cancelled before reaching the route). Skip
+    // persisting the user message — they didn't actually commit to it.
+    if (opts?.signal?.aborted) {
+      yield { type: "stopped" };
+      return;
+    }
+
     // Ensure session exists. Honor caller-supplied id so the SSE `session`
     // event the server pre-emitted matches the row we persist against.
     let session = this.sessionStore.get(sessionId);
@@ -105,6 +114,7 @@ export class Agent {
           messages,
           tools: tools as Parameters<typeof streamText>[0]["tools"],
           maxSteps: this.config.maxSteps,
+          abortSignal: opts?.signal,
           experimental_telemetry: {
             isEnabled: true,
             functionId: this.config.id,
@@ -208,6 +218,20 @@ export class Agent {
         return;
       } catch (err) {
         recoverableError = err;
+      }
+
+      // User cancel — exit cleanly without classifying or compressing.
+      // Partial assistant output (text/tool calls already streamed to the
+      // client) is intentionally not persisted on cancel: `result.steps`
+      // isn't reliably finalized after an aborted stream, and the user
+      // message stays in history so a retry just works.
+      if (
+        opts?.signal?.aborted ||
+        (recoverableError instanceof Error &&
+          recoverableError.name === "AbortError")
+      ) {
+        yield { type: "stopped" };
+        return;
       }
 
       // Reactive recovery path — only attempts 1 may compress + retry.
