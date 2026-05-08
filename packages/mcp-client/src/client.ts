@@ -699,6 +699,7 @@ export class MCPClient {
         command: config.command,
         args: config.args,
         env,
+        cwd: config.cwd,
         // MCP servers' own readiness / diagnostic lines on stderr
         // ("Secure MCP Filesystem Server running on stdio", etc.) leak
         // into our terminal if we let them inherit. Discard them — we

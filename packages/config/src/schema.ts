@@ -91,6 +91,10 @@ export const MCPServerConfigSchema = z
   .object({
     command: z.string().optional(),
     args: z.array(z.string()).optional(),
+    // Working directory for stdio servers. Most MCP servers take explicit
+    // path args, but a few resolve relative paths from cwd (custom user
+    // servers, some Python ones). Ignored for url-based transports.
+    cwd: z.string().optional(),
     url: z.string().optional(),
     env: z.record(z.string()).optional(),
     headers: z.record(z.string()).optional(),
