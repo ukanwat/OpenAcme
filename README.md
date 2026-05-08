@@ -223,6 +223,6 @@ Per-package: `pnpm --filter @openacme/<pkg> <script>`.
 
 <div align="center">
 
-**MIT** © [Utkarsh Kanwat](mailto:utkarsh@autonomyai.io) · [github.com/ukanwat/OpenAcme](https://github.com/ukanwat/OpenAcme)
+**MIT** © [Utkarsh Kanwat](mailto:utkarshkanwat@gmail.com) · [github.com/ukanwat/OpenAcme](https://github.com/ukanwat/OpenAcme)
 
 </div>
