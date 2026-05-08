@@ -1,6 +1,6 @@
 import { streamText, type CoreMessage } from "ai";
 import { getModel } from "@openacme/llm-provider";
-import type { ToolRegistry } from "@openacme/tools";
+import { toolCallContext, type ToolRegistry } from "@openacme/tools";
 import type { SessionStore, MessageStore, Message } from "@openacme/db";
 import { buildSystemPrompt } from "./prompt.js";
 import { Compressor, resolveThreshold } from "./compression.js";
@@ -89,6 +89,14 @@ export class Agent {
 
       let fullContent = "";
       let recoverableError: unknown = null;
+
+      // Make the active session id visible to tool handlers via
+      // AsyncLocalStorage. `enterWith` is the right primitive for an async
+      // generator: it sets the store for the rest of this async path
+      // without requiring a callback wrapper that would conflict with
+      // `yield`. Reactive retry on attempt 2 re-enters with the swapped
+      // (child) sessionId, which is what `session_search` should see.
+      toolCallContext.enterWith({ sessionId });
 
       try {
         const result = streamText({

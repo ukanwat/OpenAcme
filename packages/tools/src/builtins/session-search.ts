@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { registry } from "../registry.js";
+import { getCurrentSessionId } from "../session-context.js";
 
 export interface SessionSearchHit {
   content: string;
@@ -13,14 +14,38 @@ export type SessionSearchFn = (
   limit?: number
 ) => SessionSearchHit[];
 
+export type ResolveRootFn = (sessionId: string) => string;
+
+export interface SessionSearchBindings {
+  search: SessionSearchFn;
+  resolveRoot: ResolveRootFn;
+}
+
 // Bound at runtime by AgentManager so this package stays free of a runtime
 // dependency on @openacme/db (avoids a circular: db → tools → db). Until
 // `bindSessionSearch` is called, the tool reports a clear error rather than
 // silently returning empty results.
-let searchFn: SessionSearchFn | null = null;
+let bindings: SessionSearchBindings | null = null;
 
-export function bindSessionSearch(fn: SessionSearchFn): void {
-  searchFn = fn;
+export function bindSessionSearch(b: SessionSearchBindings): void {
+  bindings = b;
+}
+
+/** How many raw FTS hits to pull per surfaced result, before dedup-by-root.
+ *  Compression chains and repeated tool outputs in a single conversation
+ *  inflate per-session hits, so we over-fetch to make sure dedup leaves us
+ *  with enough distinct conversations. Hard cap protects against pathological
+ *  queries that match thousands of rows. */
+const FTS_OVERFETCH_FACTOR = 5;
+const FTS_FETCH_CAP = 50;
+
+interface DedupedHit {
+  rootSessionId: string;
+  /** Best (lowest = most relevant) BM25 rank across all matches in the lineage. */
+  rank: number;
+  /** Most-relevant matching message content from the lineage. */
+  content: string;
+  role: string;
 }
 
 registry.register({
@@ -28,7 +53,9 @@ registry.register({
   toolset: "memory",
   description:
     "Full-text search across all prior conversation messages (FTS5/BM25). " +
-    "Use to recall earlier context the user mentioned in another session.",
+    "Use to recall earlier context the user mentioned in another session. " +
+    "The current conversation's lineage is excluded automatically — this is " +
+    "long-term memory, not a re-read of your own context.",
   parameters: z.object({
     query: z
       .string()
@@ -46,14 +73,72 @@ registry.register({
   emoji: "🧠",
   parallelSafe: true,
   handler: async (args) => {
-    const { query, limit } = args as { query: string; limit?: number };
-    if (!searchFn) {
+    const { query, limit: rawLimit } = args as {
+      query: string;
+      limit?: number;
+    };
+    if (!bindings) {
       return JSON.stringify({
         error:
           "session_search not initialized — AgentManager must call bindSessionSearch().",
       });
     }
-    const results = searchFn(query, limit ?? 10);
-    return JSON.stringify({ success: true, query, count: results.length, results });
+    const limit = rawLimit ?? 10;
+
+    const currentSessionId = getCurrentSessionId();
+    const currentRoot = currentSessionId
+      ? bindings.resolveRoot(currentSessionId)
+      : null;
+
+    // Over-fetch so dedup-by-root has enough distinct conversations to
+    // satisfy `limit`. Two reasons hits collapse: (1) one conversation that
+    // produced many matching messages, (2) compression forks that turned
+    // one conversation into multiple session rows.
+    const fetchLimit = Math.min(
+      Math.max(limit * FTS_OVERFETCH_FACTOR, limit),
+      FTS_FETCH_CAP
+    );
+    const raw = bindings.search(query, fetchLimit);
+
+    const byRoot = new Map<string, DedupedHit>();
+    for (const hit of raw) {
+      const root = bindings.resolveRoot(hit.sessionId);
+      if (currentRoot !== null && root === currentRoot) continue;
+
+      const existing = byRoot.get(root);
+      if (!existing) {
+        byRoot.set(root, {
+          rootSessionId: root,
+          rank: hit.rank,
+          content: hit.content,
+          role: hit.role,
+        });
+        continue;
+      }
+      // FTS5 BM25 returns a negative score where lower is more relevant.
+      // Keep the best representative match for each lineage.
+      if (hit.rank < existing.rank) {
+        existing.rank = hit.rank;
+        existing.content = hit.content;
+        existing.role = hit.role;
+      }
+    }
+
+    const results = Array.from(byRoot.values())
+      .sort((a, b) => a.rank - b.rank)
+      .slice(0, limit)
+      .map((r) => ({
+        sessionId: r.rootSessionId,
+        role: r.role,
+        rank: r.rank,
+        content: r.content,
+      }));
+
+    return JSON.stringify({
+      success: true,
+      query,
+      count: results.length,
+      results,
+    });
   },
 });

@@ -46,8 +46,12 @@ export class AgentManager {
 
     // Wire the FTS5-backed cross-session search into the `session_search`
     // tool. Done here so @openacme/tools doesn't need a runtime dep on
-    // @openacme/db.
-    bindSessionSearch((query, limit) => this.messageStore.search(query, limit));
+    // @openacme/db. `resolveRoot` lets the tool collapse compression chains
+    // back to one root and exclude the current conversation's lineage.
+    bindSessionSearch({
+      search: (query, limit) => this.messageStore.search(query, limit),
+      resolveRoot: (sessionId) => this.sessionStore.getRoot(sessionId),
+    });
 
     // Load skills
     this.skillRegistry = new SkillRegistry();

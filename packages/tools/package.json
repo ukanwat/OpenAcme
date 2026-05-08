@@ -47,9 +47,11 @@
   },
   "devDependencies": {
     "@repo/typescript-config": "workspace:*",
+    "@types/better-sqlite3": "^7.6.12",
     "@types/jsdom": "^21.1.7",
     "@types/node": "^22.15.3",
     "@types/turndown": "^5.0.5",
+    "better-sqlite3": "^11.7.0",
     "typescript": "5.9.2",
     "vitest": "^2.1.9"
   }

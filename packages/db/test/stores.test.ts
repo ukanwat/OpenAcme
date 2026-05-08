@@ -80,6 +80,45 @@ describe("SessionStore — fork chain", () => {
     });
     expect(child?.title).toBe("Parent title");
   });
+
+  describe("getRoot", () => {
+    it("returns the input id for a root session", () => {
+      sessions.create("a1", { id: "root1" });
+      expect(sessions.getRoot("root1")).toBe("root1");
+    });
+
+    it("walks one level up from a child", () => {
+      sessions.create("a1", { id: "p" });
+      sessions.create("a1", { id: "c", parentSessionId: "p" });
+      expect(sessions.getRoot("c")).toBe("p");
+    });
+
+    it("walks the whole chain to the topmost ancestor", () => {
+      sessions.create("a1", { id: "g" });
+      sessions.create("a1", { id: "p", parentSessionId: "g" });
+      sessions.create("a1", { id: "c", parentSessionId: "p" });
+      expect(sessions.getRoot("c")).toBe("g");
+    });
+
+    it("returns the input id when the session row doesn't exist", () => {
+      expect(sessions.getRoot("missing")).toBe("missing");
+    });
+
+    it("breaks cycles instead of looping forever", () => {
+      // Sneak past the FK by inserting both rows then patching parents
+      // through raw SQL — drizzle won't let us build a cycle via the API.
+      sessions.create("a1", { id: "x" });
+      sessions.create("a1", { id: "y", parentSessionId: "x" });
+      db.prepare("UPDATE sessions SET parent_session_id = ? WHERE id = ?").run(
+        "y",
+        "x"
+      );
+      const root = sessions.getRoot("x");
+      // Either node is acceptable; what matters is it returns rather than
+      // hangs.
+      expect(["x", "y"]).toContain(root);
+    });
+  });
 });
 
 describe("MessageStore — appendMany and ordering", () => {

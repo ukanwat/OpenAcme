@@ -2,9 +2,16 @@ export { ToolRegistry, registry } from "./registry.js";
 export type { ToolEntry, ToolSchema, ToolDefinition, ToolInfo } from "./types.js";
 export {
   bindSessionSearch,
+  type SessionSearchBindings,
   type SessionSearchFn,
   type SessionSearchHit,
+  type ResolveRootFn,
 } from "./builtins/session-search.js";
+export {
+  toolCallContext,
+  getCurrentSessionId,
+  type ToolCallContext,
+} from "./session-context.js";
 
 // Import builtins to trigger self-registration
 import "./builtins/shell.js";

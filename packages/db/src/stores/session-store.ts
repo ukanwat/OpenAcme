@@ -126,6 +126,33 @@ export function createSessionStore(db: Database.Database) {
       );
     },
 
+    /**
+     * Walk `parent_session_id` to the root of the compression chain.
+     * Returns the input id if the session has no parent (or doesn't exist —
+     * caller's responsibility to validate the input). Cycle-safe via a
+     * visited set; a malformed graph short-circuits at the first repeat.
+     *
+     * Used by `session_search` to (a) collapse a chain of compression forks
+     * into one hit and (b) recognize the current conversation across
+     * compression boundaries so the agent doesn't surface its own pre-fork
+     * messages as cross-session memory.
+     */
+    getRoot(sessionId: string): string {
+      let current = sessionId;
+      const visited = new Set<string>();
+      while (!visited.has(current)) {
+        visited.add(current);
+        const row = orm
+          .select({ parentSessionId: sessions.parentSessionId })
+          .from(sessions)
+          .where(eq(sessions.id, current))
+          .get();
+        if (!row || !row.parentSessionId) return current;
+        current = row.parentSessionId;
+      }
+      return current;
+    },
+
     updateTitle(id: string, title: string): void {
       orm
         .update(sessions)
