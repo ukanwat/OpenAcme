@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import "@openacme/config/telemetry-bootstrap";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

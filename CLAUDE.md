@@ -171,7 +171,7 @@ Never log raw tokens. Never write tokens anywhere except via `store.ts`.
 
 `loader.ts:loadConfig(dataDirOverride?)` resolves the data dir, reads `config.yaml` (or `.json`), merges with defaults, validates with Zod. **Always go through the schema** — don't read raw config elsewhere.
 
-Env vars: `OPENACME_DATA_DIR` (set early by CLI so `auth.json` is findable without threading), `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GOOGLE_GENERATIVE_AI_API_KEY` / `OPENROUTER_API_KEY`, `OPENACME_DEBUG`.
+Env vars: `OPENACME_DATA_DIR` (set early by CLI so `auth.json` is findable without threading), `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GOOGLE_GENERATIVE_AI_API_KEY` / `OPENROUTER_API_KEY`, `OPENACME_DEBUG`. Dev-only telemetry: `OPENACME_TELEMETRY=1` enables OTel/Logfire export, `LOGFIRE_TOKEN` is the bearer token (loaded from repo-root `.env`); off by default so user installs ship inert.
 
 ---
 

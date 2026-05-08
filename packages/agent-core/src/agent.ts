@@ -97,6 +97,11 @@ export class Agent {
           messages,
           tools: tools as Parameters<typeof streamText>[0]["tools"],
           maxSteps: this.config.maxSteps,
+          experimental_telemetry: {
+            isEnabled: true,
+            functionId: this.config.id,
+            metadata: { sessionId, attempt },
+          },
         });
 
         for await (const part of result.fullStream) {

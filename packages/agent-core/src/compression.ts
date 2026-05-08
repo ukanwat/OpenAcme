@@ -1280,6 +1280,11 @@ export class Compressor {
         model: getModel(m),
         prompt,
         maxTokens: Math.floor(opts.summaryBudget * 1.3),
+        experimental_telemetry: {
+          isEnabled: true,
+          functionId: "compression-summarizer",
+          metadata: { model: modelLabel(m) },
+        },
       });
       return res.text.trim();
     };

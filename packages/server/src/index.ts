@@ -1,3 +1,4 @@
+import "@openacme/config/telemetry-bootstrap";
 import { serve } from "@hono/node-server";
 import { loadConfig } from "@openacme/config";
 import { createApp } from "./app.js";

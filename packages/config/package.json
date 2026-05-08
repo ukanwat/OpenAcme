@@ -22,6 +22,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./telemetry-bootstrap": {
+      "types": "./dist/telemetry-bootstrap.d.ts",
+      "import": "./dist/telemetry-bootstrap.js"
     }
   },
   "files": [
@@ -42,7 +46,13 @@
     "yaml": "^2.7.1",
     "zod": "^3.24.4",
     "dotenv": "^16.5.0",
-    "gray-matter": "^4.0.3"
+    "gray-matter": "^4.0.3",
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/sdk-node": "^0.57.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.57.0",
+    "@opentelemetry/auto-instrumentations-node": "^0.55.0",
+    "@opentelemetry/resources": "^1.30.0",
+    "@opentelemetry/semantic-conventions": "^1.30.0"
   },
   "devDependencies": {
     "@repo/typescript-config": "workspace:*",
