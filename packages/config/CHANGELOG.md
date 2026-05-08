@@ -1,8 +1,8 @@
-# @openacme/cli
+# @openacme/config
 
 ## 0.2.0
 
-### Minor Changes
+### Patch Changes
 
 - Anthropic Agent Skills standard + agent-loadable skill bodies.
   - `@openacme/skills` parses canonical top-level frontmatter (`tags`, `related-skills`) while still reading legacy `metadata.hermes.*`. Skill folders are walked at load time so companion files (`scripts/*`, `references/*`, …) are recorded as resources without being read until requested. New `parseSkillDirectory` + `Skill.resources`/`Skill.dirPath`.
@@ -13,20 +13,3 @@
   - `@openacme/config` adds `skill_view` to the default agent tools array.
 
   All `@openacme/*` packages bump together (changeset `fixed` group) so users always get a uniform version across the workspace.
-
-### Patch Changes
-
-- Updated dependencies []:
-  - @openacme/skills@0.2.0
-  - @openacme/server@0.2.0
-  - @openacme/agent-core@0.2.0
-  - @openacme/config@0.2.0
-  - @openacme/db@0.2.0
-  - @openacme/llm-provider@0.2.0
-  - @openacme/auth@0.2.0
-
-## 0.1.1
-
-### Patch Changes
-
-- Read the CLI version from `package.json` at runtime instead of hardcoding it. `openacme --version` now reflects the actual installed version.

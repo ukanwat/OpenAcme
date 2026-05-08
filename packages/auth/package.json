@@ -1,6 +1,6 @@
 {
   "name": "@openacme/auth",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "OAuth login (ChatGPT subscription / Claude Code) and token storage for OpenAcme.",
   "license": "MIT",
   "author": "Utkarsh Kanwat",

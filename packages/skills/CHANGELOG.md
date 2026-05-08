@@ -1,4 +1,4 @@
-# @openacme/cli
+# @openacme/skills
 
 ## 0.2.0
 
@@ -17,16 +17,4 @@
 ### Patch Changes
 
 - Updated dependencies []:
-  - @openacme/skills@0.2.0
-  - @openacme/server@0.2.0
-  - @openacme/agent-core@0.2.0
   - @openacme/config@0.2.0
-  - @openacme/db@0.2.0
-  - @openacme/llm-provider@0.2.0
-  - @openacme/auth@0.2.0
-
-## 0.1.1
-
-### Patch Changes
-
-- Read the CLI version from `package.json` at runtime instead of hardcoding it. `openacme --version` now reflects the actual installed version.
