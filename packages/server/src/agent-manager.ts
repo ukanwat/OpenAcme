@@ -1,10 +1,12 @@
 import { Agent, type AgentConfig, type StreamChunk } from "@openacme/agent-core";
 import {
   createAgentStore,
+  loadGlobalMcpServers,
   lookupModelMetadata,
   type AgentDefinition,
   type AgentStore,
   type Config,
+  type MCPServerConfig,
 } from "@openacme/config";
 import {
   createDatabase,
@@ -18,7 +20,18 @@ import {
   bindSessionSearch,
   bindSkillView,
 } from "@openacme/tools";
-import { MCPClient } from "@openacme/mcp-client";
+import {
+  MCPClient,
+  FileMCPTokenStore,
+  type MCPTokenStore,
+  type OAuthCallback,
+  type ServerStatus,
+} from "@openacme/mcp-client";
+import {
+  awaitLoopbackCallback,
+  openBrowser,
+  looksHeadless,
+} from "@openacme/auth";
 import { SkillRegistry, type SkillIndexEntry } from "@openacme/skills";
 import * as path from "node:path";
 
@@ -93,25 +106,131 @@ export class AgentManager {
   }
 
   /**
-   * Initialize MCP connections for all agents that have MCP servers configured.
-   * Called after construction (async init).
+   * Initialize MCP connections for every agent at boot.
+   *
+   * Each agent gets its own `MCPClient` so per-agent disable/private
+   * servers don't leak across agents and so `disconnectServer` on one
+   * agent leaves the others untouched.
    */
   async initMCP(): Promise<void> {
-    for (const agentDef of this.agentStore.list()) {
-      const servers = agentDef.mcpServers;
-      if (!servers || Object.keys(servers).length === 0) continue;
+    // Parallelize across agents — each gets its own MCPClient and connects
+    // independently, so there's no shared state to serialize on. Cuts boot
+    // time roughly N× for N agents pointing at the same servers.
+    await Promise.all(
+      this.agentStore
+        .list()
+        .map((def) => this.reinitMCPForAgent(def.id))
+    );
+  }
 
-      const mcpClient = new MCPClient(toolRegistry);
-      const { connected, failed } = await mcpClient.connect(servers);
+  /**
+   * Resolve the effective server set for one agent:
+   *   (global mcp.json) − agentDef.mcpDisabled  ∪  agentDef.mcpServers
+   *
+   * No merging by name. Collisions are rejected on agent-store write,
+   * so the only way they reach here is a hand-edit of mcp.json after
+   * the agent was saved — log and skip the global one to avoid
+   * silently shadowing the user's per-agent intent.
+   */
+  serversForAgent(def: AgentDefinition): Record<string, MCPServerConfig> {
+    const global = loadGlobalMcpServers(this.config.dataDir);
+    const disabled = new Set(def.mcpDisabled ?? []);
+    const out: Record<string, MCPServerConfig> = {};
 
-      if (connected.length > 0) {
-        this.mcpClients.set(agentDef.id, mcpClient);
-        console.log(`  🔌 Agent '${agentDef.name}': MCP connected → ${connected.join(", ")}`);
+    for (const [name, cfg] of Object.entries(global)) {
+      if (disabled.has(name)) continue;
+      // Defensive only — agent-store rejects this collision on write,
+      // so it'd take an out-of-band hand-edit to mcp.json AFTER the agent
+      // was saved to land here. Skip silently; the user's intent (the
+      // private entry) wins on the next save round-trip.
+      if (Object.prototype.hasOwnProperty.call(def.mcpServers ?? {}, name)) {
+        continue;
       }
-      if (failed.length > 0) {
-        console.warn(`  ⚠️  Agent '${agentDef.name}': MCP failed → ${failed.join(", ")}`);
-      }
+      out[name] = cfg;
     }
+    for (const [name, cfg] of Object.entries(def.mcpServers ?? {})) {
+      out[name] = cfg;
+    }
+    return out;
+  }
+
+  /**
+   * Tear down and rebuild the MCP client for one agent. Called from
+   * `initMCP` and agent CRUD. (No file watcher: editing `mcp.json`
+   * requires a server restart by design — simpler model than reasoning
+   * about hot reload races.)
+   */
+  async reinitMCPForAgent(id: string): Promise<void> {
+    const def = this.agentStore.get(id);
+    if (!def) {
+      // Agent may have been deleted between the change event and the
+      // reinit — disconnect any leftover client and bail.
+      const stale = this.mcpClients.get(id);
+      if (stale) {
+        await stale.disconnect();
+        this.mcpClients.delete(id);
+      }
+      return;
+    }
+
+    const existing = this.mcpClients.get(id);
+    if (existing) {
+      await existing.disconnect();
+      this.mcpClients.delete(id);
+    }
+
+    const servers = this.serversForAgent(def);
+    if (Object.keys(servers).length === 0) {
+      // Drop the cached Agent so any tool change (not just MCP) lands
+      // on the next chat call.
+      this.agents.delete(id);
+      return;
+    }
+
+    const mcpClient = new MCPClient(toolRegistry, {
+      tokenStore: this.mcpTokenStore(),
+      oauthRedirectUrl: this.mcpOAuthRedirectUrl(),
+      onUnauthorized: this.mcpOAuthCallback,
+    });
+    // Boot/reinit don't drive the browser flow — they'd block for up to
+    // 5min waiting for the loopback. Servers needing auth land in
+    // `awaiting_oauth`; the user explicitly hits the connect endpoint
+    // (which omits skipOAuth) to authorize.
+    await mcpClient.connect(servers, { skipOAuth: true });
+    this.mcpClients.set(id, mcpClient);
+
+    // System prompt + tool list both depend on MCP discovery — evict
+    // the cached Agent so the next chat picks up the new tool set.
+    // Per-server state (connected/failed/awaiting_oauth/lastError) lives
+    // in `getStatus()` for callers that want to surface it.
+    this.agents.delete(id);
+  }
+
+  /**
+   * MCP server status, optionally scoped to one agent.
+   */
+  getMcpStatus(agentId?: string): Array<{ agentId: string; servers: ServerStatus[] }> {
+    const ids = agentId ? [agentId] : [...this.mcpClients.keys()];
+    return ids.map((id) => ({
+      agentId: id,
+      servers: this.mcpClients.get(id)?.getStatus() ?? [],
+    }));
+  }
+
+  /**
+   * Direct access to a per-agent MCP client. Used by per-server
+   * connect/disconnect/test routes that need to touch the live client.
+   */
+  getMcpClient(agentId: string): MCPClient | undefined {
+    return this.mcpClients.get(agentId);
+  }
+
+  /**
+   * Wipe stored OAuth tokens for one MCP server. Used by the reauth
+   * endpoint — next connect will trigger a fresh browser flow.
+   */
+  async clearMcpOAuthTokens(serverName: string): Promise<void> {
+    await this.mcpTokenStore().deleteTokens(serverName);
   }
 
   /**
@@ -136,35 +255,54 @@ export class AgentManager {
   }
 
   /**
-   * Create a new agent definition.
+   * Create a new agent definition. If MCP servers are configured (global
+   * or private), we reinit MCP so the new agent picks them up immediately.
    */
-  createAgent(def: AgentDefinition): Agent {
+  async createAgent(def: AgentDefinition): Promise<Agent> {
     this.agentStore.upsert(def);
+    await this.reinitMCPForAgent(def.id);
     const agent = this.createAgentFromDef(def);
     this.agents.set(def.id, agent);
     return agent;
   }
 
   /**
-   * Update an existing agent definition.
+   * Update an existing agent definition. Reinit MCP if the change touched
+   * any MCP-relevant field — otherwise just evict the cached Agent.
    */
-  updateAgent(id: string, updates: Partial<AgentDefinition>): AgentDefinition {
+  async updateAgent(
+    id: string,
+    updates: Partial<AgentDefinition>
+  ): Promise<AgentDefinition> {
     const existing = this.agentStore.get(id);
     if (!existing) throw new Error(`Agent not found: ${id}`);
 
     const updated = { ...existing, ...updates, id };
     this.agentStore.upsert(updated);
 
-    // Evict cached agent instance so it gets recreated with new config
-    this.agents.delete(id);
+    const mcpChanged =
+      hasOwn(updates, "mcpServers") || hasOwn(updates, "mcpDisabled");
+
+    if (mcpChanged) {
+      await this.reinitMCPForAgent(id);
+    } else {
+      // Tool list / persona / model only — just evict the cached Agent.
+      this.agents.delete(id);
+    }
 
     return updated;
   }
 
   /**
-   * Delete an agent.
+   * Delete an agent. Disconnects its MCP client so stdio subprocesses
+   * don't leak.
    */
-  deleteAgent(id: string): void {
+  async deleteAgent(id: string): Promise<void> {
+    const mcpClient = this.mcpClients.get(id);
+    if (mcpClient) {
+      await mcpClient.disconnect();
+      this.mcpClients.delete(id);
+    }
     this.agents.delete(id);
     this.agentStore.delete(id);
   }
@@ -186,11 +324,14 @@ export class AgentManager {
   }
 
   private createAgentFromDef(def: AgentDefinition): Agent {
-    // Collect MCP tool names for this agent
+    // Collect MCP tool names for this agent. `getStatus` now includes
+    // disabled/failed/disconnected entries (their tool list is empty),
+    // so filter to actively connected servers — explicit > implicit.
     const mcpToolNames: string[] = [];
     const mcpClient = this.mcpClients.get(def.id);
     if (mcpClient) {
       for (const status of mcpClient.getStatus()) {
+        if (!status.connected) continue;
         mcpToolNames.push(...status.tools);
       }
     }
@@ -247,6 +388,71 @@ export class AgentManager {
     });
   }
 
+  // ── MCP OAuth wiring ─────────────────────────────────────────────────────
+  //
+  // `MCPClient` is provider-agnostic — it doesn't import `@openacme/auth`.
+  // The pieces below are AgentManager's OS-side glue: a file-backed token
+  // store under `<dataDir>/mcp-tokens/`, a loopback URL for the OAuth
+  // callback, and a callback that runs the browser flow via the existing
+  // `@openacme/auth` primitives.
+
+  private _mcpTokenStore?: MCPTokenStore;
+  private _mcpLoopbackPort = 17331;
+
+  private mcpTokenStore(): MCPTokenStore {
+    if (!this._mcpTokenStore) {
+      this._mcpTokenStore = new FileMCPTokenStore(
+        path.join(this.config.dataDir, "mcp-tokens")
+      );
+    }
+    return this._mcpTokenStore;
+  }
+
+  private mcpOAuthRedirectUrl(): string {
+    return `http://127.0.0.1:${this._mcpLoopbackPort}/auth/callback`;
+  }
+
+  /**
+   * Drive the OAuth flow when `MCPClient` hits an `UnauthorizedError`.
+   * Prints the URL (so it's never lost on a failed browser open),
+   * launches the system browser when not headless, and waits for the
+   * loopback callback to resolve with the auth code.
+   */
+  private mcpOAuthCallback: OAuthCallback = async ({
+    serverName,
+    authorizationUrl,
+    redirectUrl,
+  }) => {
+    // The MCP SDK omits `state` from the authorization request — OAuth 2.1
+    // PKCE alone covers CSRF, and `state` is optional. Pass `expectedState:
+    // ""` so the loopback skips state validation and accepts a callback
+    // with just `?code=...`. (If a server DOES echo back state we'll
+    // accept whatever it sends; PKCE is what binds it to our session.)
+    const sdkState = authorizationUrl.searchParams.get("state") ?? "";
+
+    const url = authorizationUrl.toString();
+    // Open the system browser when we can. Headless callers (SSH, CI) are
+    // expected to drive auth from a separate channel — this code path is
+    // synchronous-await on the loopback, so a non-TTY caller has already
+    // chosen to wait. We don't print to stdout because the CLI may be
+    // running an Ink TUI; the URL is also returned to API callers via the
+    // `awaiting_oauth` state on `getStatus()`.
+    if (!looksHeadless()) openBrowser(url);
+
+    try {
+      const { code } = await awaitLoopbackCallback({
+        port: this._mcpLoopbackPort,
+        expectedState: sdkState,
+        callbackPath: "/auth/callback",
+        timeoutMs: 5 * 60_000,
+      });
+      void redirectUrl;
+      return { code };
+    } catch {
+      return { cancelled: true };
+    }
+  };
+
   /**
    * Close all connections.
    */
@@ -256,4 +462,8 @@ export class AgentManager {
     }
     this.db.close();
   }
+}
+
+function hasOwn<T extends object>(obj: T, key: PropertyKey): boolean {
+  return Object.prototype.hasOwnProperty.call(obj, key);
 }

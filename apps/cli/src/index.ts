@@ -16,6 +16,12 @@ import {
   skillsAddCommand,
   skillsRemoveCommand,
 } from "./commands/skills.js";
+import {
+  mcpListCommand,
+  mcpStatusCommand,
+  mcpRemoveCommand,
+  mcpTestCommand,
+} from "./commands/mcp.js";
 import { showBanner } from "./tui/banner.js";
 
 const pkg = JSON.parse(
@@ -102,6 +108,37 @@ skills
   .description("Delete an installed skill")
   .option("-d, --data-dir <path>", "Data directory (default: ~/.openacme)")
   .action(skillsRemoveCommand);
+
+const mcp = program
+  .command("mcp")
+  .description("Manage MCP servers (Model Context Protocol)");
+
+mcp
+  .command("list")
+  .description("List configured MCP servers from ~/.openacme/mcp.json")
+  .option("-d, --data-dir <path>", "Data directory (default: ~/.openacme)")
+  .action(mcpListCommand);
+
+mcp
+  .command("status")
+  .description("Live-test every MCP server and report status")
+  .option("-d, --data-dir <path>", "Data directory (default: ~/.openacme)")
+  .action(mcpStatusCommand);
+
+// `add` and `edit` go through hand-editing `~/.openacme/mcp.json` directly
+// (or via the web UI's Settings → MCP → Edit JSON dialog). Same shape as
+// Claude Desktop / Cursor / Cline, so configs paste in cleanly.
+mcp
+  .command("remove <name>")
+  .description("Remove an MCP server from mcp.json")
+  .option("-d, --data-dir <path>", "Data directory (default: ~/.openacme)")
+  .action(mcpRemoveCommand);
+
+mcp
+  .command("test <name>")
+  .description("Dry-run a server's connection without registering its tools")
+  .option("-d, --data-dir <path>", "Data directory (default: ~/.openacme)")
+  .action(mcpTestCommand);
 
 // Resolve the data dir once so the LLM provider's OAuth path can find auth.json
 // without us threading the path through every call site.

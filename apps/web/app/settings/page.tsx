@@ -1,13 +1,32 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { Check, Key, Server, Cpu, Boxes, Loader2 } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import {
+  Check,
+  Key,
+  Server,
+  Cpu,
+  Boxes,
+  Loader2,
+  Pencil,
+  Plug,
+  RefreshCw,
+  Trash2,
+  Plus,
+  FileJson,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Sidebar } from "../components/Sidebar";
 import { API_BASE } from "../lib/api";
+import {
+  MCPServerForm,
+  type MCPServerConfigDto,
+  type MCPServerFormValue,
+} from "../components/MCPServerForm";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
+import { Textarea } from "@/app/components/ui/textarea";
 import { Badge } from "@/app/components/ui/badge";
 import {
   Card,
@@ -22,6 +41,13 @@ import {
   TabsList,
   TabsTrigger,
 } from "@/app/components/ui/tabs";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/app/components/ui/dialog";
 
 interface ServerConfig {
   dataDir: string;
@@ -38,6 +64,70 @@ interface Provider {
   defaultBaseUrl?: string;
 }
 
+interface McpServerStatus {
+  name: string;
+  state: "disabled" | "disconnected" | "connecting" | "connected" | "failed" | "awaiting_oauth";
+  connected: boolean;
+  toolCount: number;
+  tools: string[];
+  lastError?: string;
+  attemptCount: number;
+  transport?: "http" | "sse" | "stdio";
+}
+
+interface McpStatusPayload {
+  agents: { agentId: string; servers: McpServerStatus[] }[];
+}
+
+/**
+ * Aggregate status across every agent for one server name. A global server
+ * shows up in every agent's MCP client; we want one row in the UI.
+ */
+function aggregateStatus(
+  name: string,
+  status: McpStatusPayload | null
+): McpServerStatus | null {
+  if (!status) return null;
+  const matches: McpServerStatus[] = [];
+  for (const a of status.agents) {
+    for (const s of a.servers) {
+      if (s.name === name) matches.push(s);
+    }
+  }
+  if (matches.length === 0) return null;
+  // Prefer the most-informative entry: connected > awaiting_oauth > failed >
+  // connecting > disconnected > disabled.
+  const order: McpServerStatus["state"][] = [
+    "connected",
+    "awaiting_oauth",
+    "failed",
+    "connecting",
+    "disconnected",
+    "disabled",
+  ];
+  matches.sort(
+    (a, b) => order.indexOf(a.state) - order.indexOf(b.state)
+  );
+  return matches[0] ?? null;
+}
+
+function statePillClass(state: McpServerStatus["state"]): string {
+  switch (state) {
+    case "connected":
+      return "bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/20";
+    case "awaiting_oauth":
+      return "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20";
+    case "failed":
+      return "bg-destructive/10 text-destructive border-destructive/20";
+    case "connecting":
+      return "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20";
+    case "disabled":
+      return "bg-muted text-muted-foreground border-border";
+    default:
+      return "bg-muted text-muted-foreground border-border";
+  }
+}
+
 export default function SettingsPage() {
   const [config, setConfig] = useState<ServerConfig | null>(null);
   const [providers, setProviders] = useState<Provider[]>([]);
@@ -45,12 +135,44 @@ export default function SettingsPage() {
   const [apiKeyInputs, setApiKeyInputs] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState<string | null>(null);
 
+  // MCP state — global catalog + aggregated per-server status across agents.
+  const [mcpServers, setMcpServers] = useState<Record<string, MCPServerConfigDto>>({});
+  const [mcpStatus, setMcpStatus] = useState<McpStatusPayload | null>(null);
+  const [mcpLoading, setMcpLoading] = useState(false);
+  const [mcpDialog, setMcpDialog] = useState<
+    | { mode: "add" }
+    | { mode: "edit"; initial: MCPServerFormValue }
+    | null
+  >(null);
+  const [mcpRefreshing, setMcpRefreshing] = useState<string | null>(null);
+  // Raw-JSON editor state — for users who'd rather paste/edit verbatim
+  // than use the dialog form. Saves to PUT /api/mcp/global which validates.
+  const [mcpJsonOpen, setMcpJsonOpen] = useState(false);
+  const [mcpJsonText, setMcpJsonText] = useState("");
+  const [mcpJsonError, setMcpJsonError] = useState<string | null>(null);
+  const [mcpJsonSaving, setMcpJsonSaving] = useState(false);
+
   useEffect(() => {
     const ctrl = new AbortController();
     loadConfig(ctrl.signal);
     loadProviders(ctrl.signal);
     loadConfiguredKeys(ctrl.signal);
+    loadMcp(ctrl.signal);
     return () => ctrl.abort();
+    // loadMcp is useCallback-stabilized; intentionally run-once at mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Poll MCP status while the MCP tab is visible — connection states change
+  // as servers reconnect or hit OAuth flows. 4s is fast enough that the UI
+  // feels live without hammering the server.
+  useEffect(() => {
+    const id = setInterval(() => {
+      loadMcpStatus().catch(() => {});
+    }, 4000);
+    return () => clearInterval(id);
+    // loadMcpStatus is useCallback-stabilized.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadConfig = async (signal?: AbortSignal) => {
@@ -109,6 +231,176 @@ export default function SettingsPage() {
       toast.error("Failed to save API key");
     } finally {
       setSaving(null);
+    }
+  };
+
+  // ── MCP ──
+
+  const loadMcp = useCallback(async (signal?: AbortSignal) => {
+    setMcpLoading(true);
+    try {
+      const [g, s] = await Promise.all([
+        fetch(`${API_BASE}/api/mcp/global`, { signal }).then((r) => r.json()),
+        fetch(`${API_BASE}/api/mcp/status`, { signal }).then((r) => r.json()),
+      ]);
+      setMcpServers(g.mcpServers ?? {});
+      setMcpStatus(s as McpStatusPayload);
+    } catch (e) {
+      if ((e as Error).name === "AbortError") return;
+      toast.error("Failed to load MCP servers");
+    } finally {
+      setMcpLoading(false);
+    }
+  }, []);
+
+  const loadMcpStatus = useCallback(async () => {
+    const res = await fetch(`${API_BASE}/api/mcp/status`);
+    if (res.ok) setMcpStatus((await res.json()) as McpStatusPayload);
+  }, []);
+
+  const saveGlobalServers = async (
+    next: Record<string, MCPServerConfigDto>
+  ) => {
+    const res = await fetch(`${API_BASE}/api/mcp/global`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mcpServers: next }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error ?? `HTTP ${res.status}`);
+    }
+    return ((await res.json()).mcpServers ?? {}) as Record<string, MCPServerConfigDto>;
+  };
+
+  const handleMcpSubmit = async (value: MCPServerFormValue) => {
+    const next: Record<string, MCPServerConfigDto> = { ...mcpServers };
+    next[value.name] = value.config;
+    try {
+      const saved = await saveGlobalServers(next);
+      setMcpServers(saved);
+      setMcpDialog(null);
+      toast.success(`Saved '${value.name}'`);
+      await loadMcpStatus();
+    } catch (e) {
+      toast.error("Save failed", { description: (e as Error).message });
+    }
+  };
+
+  const handleMcpDelete = async (name: string) => {
+    if (!confirm(`Remove MCP server '${name}'? This affects every agent.`)) return;
+    const next: Record<string, MCPServerConfigDto> = { ...mcpServers };
+    delete next[name];
+    try {
+      const saved = await saveGlobalServers(next);
+      setMcpServers(saved);
+      toast.success(`Removed '${name}'`);
+      await loadMcpStatus();
+    } catch (e) {
+      toast.error("Delete failed", { description: (e as Error).message });
+    }
+  };
+
+  const handleMcpToggleEnabled = async (name: string) => {
+    const cur = mcpServers[name];
+    if (!cur) return;
+    const next: Record<string, MCPServerConfigDto> = {
+      ...mcpServers,
+      [name]: { ...cur, enabled: cur.enabled === false ? true : false },
+    };
+    try {
+      const saved = await saveGlobalServers(next);
+      setMcpServers(saved);
+      await loadMcpStatus();
+    } catch (e) {
+      toast.error("Update failed", { description: (e as Error).message });
+    }
+  };
+
+  const handleMcpReconnect = async (name: string) => {
+    if (!mcpStatus) return;
+    setMcpRefreshing(name);
+    try {
+      // Reconnect on every agent that has this server.
+      const targets = mcpStatus.agents.filter((a) =>
+        a.servers.some((s) => s.name === name)
+      );
+      await Promise.all(
+        targets.map((a) =>
+          fetch(`${API_BASE}/api/agents/${a.agentId}/mcp/servers/${encodeURIComponent(name)}/reconnect`, {
+            method: "POST",
+          })
+        )
+      );
+      toast.success(`Reconnecting '${name}'`);
+      await loadMcpStatus();
+    } catch (e) {
+      toast.error("Reconnect failed", { description: (e as Error).message });
+    } finally {
+      setMcpRefreshing(null);
+    }
+  };
+
+  const handleMcpTest = async (
+    value: MCPServerFormValue
+  ): Promise<{ ok: boolean; error?: string; tools?: string[]; transport?: string }> => {
+    const res = await fetch(`${API_BASE}/api/mcp/test`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(value.config),
+    });
+    return await res.json();
+  };
+
+  const openMcpJsonEditor = () => {
+    setMcpJsonText(
+      JSON.stringify({ mcpServers: mcpServers }, null, 2)
+    );
+    setMcpJsonError(null);
+    setMcpJsonOpen(true);
+  };
+
+  const saveMcpJson = async () => {
+    setMcpJsonError(null);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(mcpJsonText);
+    } catch (e) {
+      setMcpJsonError(`JSON parse error: ${(e as Error).message}`);
+      return;
+    }
+    // Tolerate either { mcpServers: {...} } or { ...directly... }, matching
+    // what people commonly paste from Claude Desktop / Cursor.
+    const body: { mcpServers: unknown } =
+      parsed &&
+      typeof parsed === "object" &&
+      "mcpServers" in (parsed as Record<string, unknown>)
+        ? (parsed as { mcpServers: unknown })
+        : { mcpServers: parsed };
+
+    setMcpJsonSaving(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/mcp/global`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        const detail = Array.isArray(data.details)
+          ? `\n${data.details.join("\n")}`
+          : "";
+        setMcpJsonError(`${data.error ?? `HTTP ${res.status}`}${detail}`);
+        return;
+      }
+      setMcpServers(data.mcpServers ?? {});
+      setMcpJsonOpen(false);
+      toast.success("Saved mcp.json");
+      await loadMcpStatus();
+    } catch (e) {
+      setMcpJsonError((e as Error).message);
+    } finally {
+      setMcpJsonSaving(false);
     }
   };
 
@@ -313,29 +605,232 @@ export default function SettingsPage() {
 
               <TabsContent value="mcp">
                 <Card>
-                  <CardHeader>
-                    <CardTitle>MCP servers</CardTitle>
-                    <CardDescription>
-                      Configured per agent in <code className="font-mono">config.yaml</code>{" "}
-                      under the agent&apos;s <code className="font-mono">mcpServers</code>{" "}
-                      section.
-                    </CardDescription>
+                  <CardHeader className="flex flex-row items-start justify-between gap-2">
+                    <div>
+                      <CardTitle>MCP servers</CardTitle>
+                      <CardDescription>
+                        Defined in{" "}
+                        <code className="font-mono">
+                          {config?.dataDir ?? "~/.openacme"}/mcp.json
+                        </code>
+                        . Inherited by every agent. Per-agent exclusions and
+                        agent-private servers live on each agent.
+                      </CardDescription>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={openMcpJsonEditor}
+                        title="Edit raw mcp.json"
+                      >
+                        <FileJson className="size-4" />
+                        Edit JSON
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={() => setMcpDialog({ mode: "add" })}
+                      >
+                        <Plus className="size-4" />
+                        Add server
+                      </Button>
+                    </div>
                   </CardHeader>
                   <CardContent>
-                    <pre className="overflow-x-auto rounded-md border bg-muted/40 p-4 font-mono text-xs leading-relaxed">
-{`agents:
-  - id: default
-    name: Default Agent
-    mcpServers:
-      filesystem:
-        command: npx
-        args:
-          - -y
-          - "@modelcontextprotocol/server-filesystem"
-          - /path/to/allowed/dir`}
-                    </pre>
+                    {mcpLoading && Object.keys(mcpServers).length === 0 ? (
+                      <p className="text-sm text-muted-foreground">Loading…</p>
+                    ) : Object.keys(mcpServers).length === 0 ? (
+                      <p className="text-sm text-muted-foreground">
+                        No MCP servers configured yet. Click &ldquo;Add
+                        server&rdquo; to start.
+                      </p>
+                    ) : (
+                      <ul className="grid gap-2">
+                        {Object.entries(mcpServers).map(([name, cfg]) => {
+                          const status = aggregateStatus(name, mcpStatus);
+                          const state =
+                            cfg.enabled === false
+                              ? ("disabled" as const)
+                              : status?.state ?? ("disconnected" as const);
+                          const transport =
+                            status?.transport ?? cfg.transport ?? (cfg.command ? "stdio" : undefined);
+                          return (
+                            <li
+                              key={name}
+                              className="flex flex-col gap-2 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between"
+                            >
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="font-medium text-sm">
+                                    {name}
+                                  </span>
+                                  <span
+                                    className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide ${statePillClass(state)}`}
+                                  >
+                                    {state}
+                                  </span>
+                                  {transport && (
+                                    <Badge variant="secondary" className="text-[10px]">
+                                      {transport}
+                                    </Badge>
+                                  )}
+                                  {status && status.toolCount > 0 && (
+                                    <span className="text-[11px] text-muted-foreground">
+                                      {status.toolCount} tools
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
+                                  {cfg.command
+                                    ? `${cfg.command}${cfg.args && cfg.args.length > 0 ? " " + cfg.args.join(" ") : ""}`
+                                    : cfg.url ?? ""}
+                                </div>
+                                {status?.lastError && (
+                                  <div className="mt-1 text-[11px] text-destructive line-clamp-2">
+                                    {status.lastError}
+                                  </div>
+                                )}
+                              </div>
+                              <div className="flex flex-wrap items-center gap-1">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleMcpReconnect(name)}
+                                  disabled={mcpRefreshing === name || cfg.enabled === false}
+                                  title="Reconnect"
+                                >
+                                  {mcpRefreshing === name ? (
+                                    <Loader2 className="size-4 animate-spin" />
+                                  ) : (
+                                    <RefreshCw className="size-4" />
+                                  )}
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleMcpToggleEnabled(name)}
+                                  title={cfg.enabled === false ? "Enable" : "Disable"}
+                                >
+                                  <Plug className="size-4" />
+                                  {cfg.enabled === false ? "Enable" : "Disable"}
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() =>
+                                    setMcpDialog({
+                                      mode: "edit",
+                                      initial: { name, config: cfg },
+                                    })
+                                  }
+                                  title="Edit"
+                                >
+                                  <Pencil className="size-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleMcpDelete(name)}
+                                  title="Delete"
+                                >
+                                  <Trash2 className="size-4" />
+                                </Button>
+                              </div>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
                   </CardContent>
                 </Card>
+
+                <Dialog
+                  open={mcpDialog !== null}
+                  onOpenChange={(open) => {
+                    if (!open) setMcpDialog(null);
+                  }}
+                >
+                  <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+                    <DialogHeader>
+                      <DialogTitle>
+                        {mcpDialog?.mode === "edit"
+                          ? `Edit '${mcpDialog.initial.name}'`
+                          : "Add MCP server"}
+                      </DialogTitle>
+                      <DialogDescription>
+                        Same JSON shape Claude Desktop / Cursor / Cline use —
+                        you can paste configs from those apps directly.
+                      </DialogDescription>
+                    </DialogHeader>
+                    {mcpDialog && (
+                      <MCPServerForm
+                        initial={
+                          mcpDialog.mode === "edit"
+                            ? mcpDialog.initial
+                            : undefined
+                        }
+                        lockName={mcpDialog.mode === "edit"}
+                        reservedNames={
+                          mcpDialog.mode === "add"
+                            ? Object.keys(mcpServers)
+                            : []
+                        }
+                        onSubmit={handleMcpSubmit}
+                        onCancel={() => setMcpDialog(null)}
+                        onTest={handleMcpTest}
+                      />
+                    )}
+                  </DialogContent>
+                </Dialog>
+
+                <Dialog
+                  open={mcpJsonOpen}
+                  onOpenChange={(open) => {
+                    if (!open) setMcpJsonOpen(false);
+                  }}
+                >
+                  <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+                    <DialogHeader>
+                      <DialogTitle>Edit mcp.json</DialogTitle>
+                      <DialogDescription>
+                        Same JSON shape Claude Desktop, Cursor, and Cline use.
+                        Paste a config from any of those, or hand-edit. Validated
+                        on save — invalid configs aren&apos;t persisted.
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="grid gap-3">
+                      <Textarea
+                        value={mcpJsonText}
+                        onChange={(e) => {
+                          setMcpJsonText(e.target.value);
+                          setMcpJsonError(null);
+                        }}
+                        rows={20}
+                        spellCheck={false}
+                        className="font-mono text-xs"
+                      />
+                      {mcpJsonError && (
+                        <pre className="whitespace-pre-wrap rounded-md border border-destructive/40 bg-destructive/5 p-3 text-xs text-destructive">
+                          {mcpJsonError}
+                        </pre>
+                      )}
+                      <div className="flex items-center justify-end gap-2">
+                        <Button
+                          variant="outline"
+                          onClick={() => setMcpJsonOpen(false)}
+                        >
+                          Cancel
+                        </Button>
+                        <Button onClick={saveMcpJson} disabled={mcpJsonSaving}>
+                          {mcpJsonSaving && (
+                            <Loader2 className="size-4 animate-spin" />
+                          )}
+                          Save
+                        </Button>
+                      </div>
+                    </div>
+                  </DialogContent>
+                </Dialog>
               </TabsContent>
             </Tabs>
           </div>

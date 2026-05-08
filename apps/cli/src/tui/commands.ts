@@ -67,6 +67,12 @@ export const COMMANDS: CommandDef[] = [
     category: "agent",
     handler: (c) => c.dispatch({ type: "open-skills-overlay" }),
   },
+  {
+    name: "mcp",
+    description: "Show MCP servers + status for this agent",
+    category: "agent",
+    handler: (c) => c.dispatch({ type: "open-mcp-overlay" }),
+  },
 ];
 
 export function findCommand(input: string): CommandDef | undefined {

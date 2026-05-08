@@ -28,6 +28,18 @@ export {
 export { openBrowser, looksHeadless } from "./browser.js";
 
 export {
+  awaitLoopbackCallback,
+  type LoopbackResult,
+  type LoopbackOptions,
+} from "./loopback.js";
+
+export {
+  generateState,
+  generateVerifier,
+  generateChallenge,
+} from "./pkce.js";
+
+export {
   transformAnthropicOAuthBody,
   transformAnthropicOAuthResponse,
   stripToolPrefix,

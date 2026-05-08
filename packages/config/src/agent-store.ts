@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import matter from "gray-matter";
 import { AgentDefinitionSchema, type AgentDefinition } from "./schema.js";
+import { loadGlobalMcpServers } from "./mcp-store.js";
 
 /**
  * File-based agent store. Each agent lives in its own folder under
@@ -110,6 +111,31 @@ function serializeAgent(agent: AgentDefinition): string {
 }
 
 export function createAgentStore(agentsDir: string): AgentStore {
+  // Where the global mcp.json lives — the parent of `agents/` is the
+  // dataDir per layout convention (see AgentManager construction).
+  const dataDir = path.dirname(agentsDir);
+
+  // Per-agent server names must NOT collide with global catalog names.
+  // Per-agent is for agent-PRIVATE servers; if the user wants to change a
+  // global server's config, they edit mcp.json. If they want to exclude a
+  // global server from one agent, they put its name in `mcpDisabled`.
+  function assertNoGlobalCollisions(agent: AgentDefinition): void {
+    const privateNames = Object.keys(agent.mcpServers ?? {});
+    if (privateNames.length === 0) return;
+    const global = loadGlobalMcpServers(dataDir);
+    const collisions = privateNames.filter((n) =>
+      Object.prototype.hasOwnProperty.call(global, n)
+    );
+    if (collisions.length > 0) {
+      throw new Error(
+        `Agent '${agent.id}': mcpServers names ${JSON.stringify(collisions)} ` +
+          `conflict with the global mcp.json catalog. ` +
+          `Either rename the agent-private server, or remove it from mcp.json. ` +
+          `To exclude the global server from this agent, add its name to mcpDisabled instead.`
+      );
+    }
+  }
+
   return {
     list(): AgentDefinition[] {
       if (!fs.existsSync(agentsDir)) return [];
@@ -140,6 +166,7 @@ export function createAgentStore(agentsDir: string): AgentStore {
       // Validate before writing — better to fail fast than persist a file
       // that won't load back.
       const validated = AgentDefinitionSchema.parse(agent);
+      assertNoGlobalCollisions(validated);
       const folder = agentFolder(agentsDir, validated.id);
       const filePath = path.join(folder, AGENT_FILE);
       const folderExistedBefore = fs.existsSync(folder);

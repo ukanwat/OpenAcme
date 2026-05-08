@@ -1,2 +1,15 @@
-export { MCPClient } from "./client.js";
+export {
+  MCPClient,
+  type MCPClientOptions,
+  type OAuthCallback,
+  type ServerStatus,
+  type ServerState,
+  type ConnectResult,
+  type ResolvedTransport,
+} from "./client.js";
 export { buildSafeEnv, sanitizeError, scanDescription } from "./security.js";
+export {
+  FileMCPTokenStore,
+  InMemoryMCPTokenStore,
+  type MCPTokenStore,
+} from "./token-store.js";

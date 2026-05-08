@@ -48,6 +48,7 @@ export interface AppState {
   agentPickerOpen: boolean;
   sessionPickerOpen: boolean;
   skillsOverlayOpen: boolean;
+  mcpOverlayOpen: boolean;
 }
 
 export type Action =
@@ -62,6 +63,7 @@ export type Action =
   | { type: "open-agent-picker" }
   | { type: "open-session-picker" }
   | { type: "open-skills-overlay" }
+  | { type: "open-mcp-overlay" }
   | { type: "open-palette" }
   | { type: "set-agent"; agentId: string; agentName: string; modelLabel: string }
   | {
@@ -246,6 +248,7 @@ export function reducer(state: AppState, action: Action): AppState {
         agentPickerOpen: false,
         sessionPickerOpen: false,
         skillsOverlayOpen: false,
+        mcpOverlayOpen: false,
       };
     case "open-model-picker":
       return { ...state, modelPickerOpen: true, paletteOpen: false };
@@ -255,6 +258,8 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, sessionPickerOpen: true, paletteOpen: false };
     case "open-skills-overlay":
       return { ...state, skillsOverlayOpen: true, paletteOpen: false };
+    case "open-mcp-overlay":
+      return { ...state, mcpOverlayOpen: true, paletteOpen: false };
     case "open-palette":
       return { ...state, paletteOpen: true };
     case "set-agent":
@@ -314,6 +319,7 @@ export function initState(opts: {
     agentPickerOpen: false,
     sessionPickerOpen: false,
     skillsOverlayOpen: false,
+    mcpOverlayOpen: false,
   };
 }
 

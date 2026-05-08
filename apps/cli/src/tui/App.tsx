@@ -13,6 +13,7 @@ import { ModelPicker } from "./components/ModelPicker.js";
 import { AgentPicker } from "./components/AgentPicker.js";
 import { SessionPicker, type SessionRow } from "./components/SessionPicker.js";
 import { SkillsOverlay } from "./components/SkillsOverlay.js";
+import { MCPOverlay } from "./components/MCPOverlay.js";
 import { dbMessagesToTuiMessages } from "./restore.js";
 
 interface Props {
@@ -125,7 +126,8 @@ export function App({ manager, agent, dataDir }: Props) {
     !state.modelPickerOpen &&
     !state.agentPickerOpen &&
     !state.sessionPickerOpen &&
-    !state.skillsOverlayOpen;
+    !state.skillsOverlayOpen &&
+    !state.mcpOverlayOpen;
   const matches = paletteOpen ? filterCommands(input) : [];
 
   // ── Submit ─────────────────────────────────────────────────────────────
@@ -201,6 +203,7 @@ export function App({ manager, agent, dataDir }: Props) {
     state.agentPickerOpen ||
     state.sessionPickerOpen ||
     state.skillsOverlayOpen ||
+    state.mcpOverlayOpen ||
     state.status === "streaming";
 
   return (
@@ -221,7 +224,7 @@ export function App({ manager, agent, dataDir }: Props) {
           configured={configuredProviders}
           onSelect={async ({ provider, model, label }) => {
             try {
-              manager.updateAgent(state.agentId, {
+              await manager.updateAgent(state.agentId, {
                 model: { ...agent.model, provider, model },
               });
               dispatch({
@@ -301,6 +304,14 @@ export function App({ manager, agent, dataDir }: Props) {
       {state.skillsOverlayOpen && (
         <SkillsOverlay
           skills={manager.skillRegistry.getIndex()}
+          onClose={() => dispatch({ type: "close-overlays" })}
+        />
+      )}
+
+      {state.mcpOverlayOpen && (
+        <MCPOverlay
+          mcpClient={manager.getMcpClient(state.agentId)}
+          dataDir={dataDir}
           onClose={() => dispatch({ type: "close-overlays" })}
         />
       )}

@@ -7,6 +7,7 @@ export {
   ModelMetadataSchema,
   AuthModeSchema,
   MCPServerConfigSchema,
+  MCPTransportSchema,
   AgentDefinitionSchema,
   ServerConfigSchema,
   AgentBehaviorSchema,
@@ -18,6 +19,7 @@ export {
   type ModelMetadata,
   type AuthMode,
   type MCPServerConfig,
+  type MCPTransport,
   type AgentDefinition,
   type ServerConfig,
   type AgentBehavior,
@@ -34,3 +36,5 @@ export {
 } from "./loader.js";
 
 export { createAgentStore, type AgentStore } from "./agent-store.js";
+
+export { loadGlobalMcpServers, saveGlobalMcpServers } from "./mcp-store.js";

@@ -67,18 +67,47 @@ export const ModelConfigSchema = z.object({
 export type ModelConfig = z.infer<typeof ModelConfigSchema>;
 
 /**
- * MCP server configuration — how to connect to an external MCP server.
+ * Transport for an MCP server.
+ *
+ * - `stdio` — local subprocess; selected automatically when `command` is set.
+ * - `http`  — Streamable HTTP (MCP spec rev 2025-03-26+).
+ * - `sse`   — legacy HTTP+SSE; still supported for backwards-compat.
+ *
+ * When omitted on a URL-based server we try `http` first and fall back to
+ * `sse` on a 404/405 from the POST /mcp endpoint (canonical "speaks SSE
+ * only" signal). Set explicitly to skip auto-detect.
  */
-export const MCPServerConfigSchema = z.object({
-  command: z.string().optional(),
-  args: z.array(z.string()).optional(),
-  url: z.string().optional(),
-  env: z.record(z.string()).optional(),
-  headers: z.record(z.string()).optional(),
-  timeout: z.number().default(120),
-  connectTimeout: z.number().default(60),
-  allowedTools: z.array(z.string()).optional(),
-});
+export const MCPTransportSchema = z.enum(["http", "sse", "stdio"]);
+export type MCPTransport = z.infer<typeof MCPTransportSchema>;
+
+/**
+ * MCP server configuration — how to connect to an external MCP server.
+ *
+ * Same JSON shape Claude Desktop / Cursor / Cline use, so users can
+ * paste configs from anywhere. Lives at `<dataDir>/mcp.json` (catalog,
+ * inherited by every agent) or per-agent for agent-private servers.
+ */
+export const MCPServerConfigSchema = z
+  .object({
+    command: z.string().optional(),
+    args: z.array(z.string()).optional(),
+    url: z.string().optional(),
+    env: z.record(z.string()).optional(),
+    headers: z.record(z.string()).optional(),
+    timeout: z.number().positive().default(120),
+    connectTimeout: z.number().positive().default(60),
+    allowedTools: z.array(z.string()).optional(),
+    // `enabled.default(true)` is load-bearing: every config in the wild
+    // predates this field and must keep connecting on upgrade.
+    enabled: z.boolean().default(true),
+    transport: MCPTransportSchema.optional(),
+  })
+  // Catches the "neither command nor url" config at validation time
+  // instead of at connect time — tighter feedback for both the API and
+  // the YAML/JSON loaders.
+  .refine((cfg) => Boolean(cfg.command) || Boolean(cfg.url), {
+    message: "MCP server must specify either 'command' (stdio) or 'url' (HTTP/SSE)",
+  });
 export type MCPServerConfig = z.infer<typeof MCPServerConfigSchema>;
 
 /**
@@ -106,7 +135,13 @@ export const AgentDefinitionSchema = z.object({
       "execute_code",
       "process",
     ]),
+  // Agent-PRIVATE MCP servers — names must not collide with the global
+  // catalog at `<dataDir>/mcp.json`. The agent-store enforces this on
+  // write; the manager re-checks defensively when assembling the union.
   mcpServers: z.record(MCPServerConfigSchema).default({}),
+  // Names of global mcp.json servers this agent should NOT receive.
+  // Empty (default) = inherit everything.
+  mcpDisabled: z.array(z.string()).default([]),
   skills: z.array(z.string()).default([]),
 });
 export type AgentDefinition = z.infer<typeof AgentDefinitionSchema>;

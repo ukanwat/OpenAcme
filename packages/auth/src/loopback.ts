@@ -7,6 +7,12 @@ export interface LoopbackResult {
 
 export interface LoopbackOptions {
   port: number;
+  /**
+   * State to validate against. Set to an empty string to skip state
+   * validation entirely — required for OAuth 2.1 PKCE-only flows where
+   * the authorization request omits `state` (the MCP SDK does this).
+   * The localhost-only loopback + PKCE is sufficient for CSRF.
+   */
   expectedState: string;
   /** Path the OAuth provider redirects to. Default: /auth/callback */
   callbackPath?: string;
@@ -51,22 +57,33 @@ export function awaitLoopbackCallback(opts: LoopbackOptions): Promise<LoopbackRe
           finish(() => reject(new Error(`OAuth error: ${error}`)));
           return;
         }
-        if (!code || !state) {
+        if (!code) {
           res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
-          res.end(htmlPage("Missing code or state. You can close this tab."));
-          finish(() => reject(new Error("OAuth callback missing code or state")));
+          res.end(htmlPage("Missing code. You can close this tab."));
+          finish(() => reject(new Error("OAuth callback missing code")));
           return;
         }
-        if (state !== expectedState) {
-          res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
-          res.end(htmlPage("State mismatch. You can close this tab."));
-          finish(() => reject(new Error("OAuth state mismatch")));
-          return;
+        // State validation is skipped when `expectedState` is empty —
+        // OAuth 2.1 PKCE-only flows (e.g. the MCP SDK) don't include
+        // `state` in the authorization request.
+        if (expectedState !== "") {
+          if (!state) {
+            res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
+            res.end(htmlPage("Missing state. You can close this tab."));
+            finish(() => reject(new Error("OAuth callback missing state")));
+            return;
+          }
+          if (state !== expectedState) {
+            res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
+            res.end(htmlPage("State mismatch. You can close this tab."));
+            finish(() => reject(new Error("OAuth state mismatch")));
+            return;
+          }
         }
 
         res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
         res.end(htmlPage("Sign-in complete. You can close this tab and return to your terminal."));
-        finish(() => resolve({ code, state }));
+        finish(() => resolve({ code, state: state ?? "" }));
       } catch (err) {
         finish(() => reject(err instanceof Error ? err : new Error(String(err))));
       }

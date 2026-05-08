@@ -2,13 +2,22 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
 import { AgentManager } from "./agent-manager.js";
-import { AgentDefinitionSchema, type Config, type AgentDefinition } from "@openacme/config";
+import {
+  AgentDefinitionSchema,
+  MCPServerConfigSchema,
+  loadGlobalMcpServers,
+  saveGlobalMcpServers,
+  type Config,
+  type AgentDefinition,
+  type MCPServerConfig,
+} from "@openacme/config";
 import {
   listProviders,
   MODEL_PRESETS,
   detectProviderCredentials,
 } from "@openacme/llm-provider";
 import { registry as toolRegistry } from "@openacme/tools";
+import { MCPClient } from "@openacme/mcp-client";
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -71,7 +80,11 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
     }
 
     const def = parseResult.data;
-    manager.createAgent(def);
+    try {
+      await manager.createAgent(def);
+    } catch (e) {
+      return c.json({ error: (e as Error).message }, 400);
+    }
     return c.json(def, 201);
   });
 
@@ -84,7 +97,7 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
     }
 
     try {
-      const updated = manager.updateAgent(c.req.param("id"), body);
+      const updated = await manager.updateAgent(c.req.param("id"), body);
       return c.json(updated);
     } catch (e) {
       const message = (e as Error).message;
@@ -96,12 +109,12 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
     }
   });
 
-  app.delete("/api/agents/:id", (c) => {
+  app.delete("/api/agents/:id", async (c) => {
     const id = c.req.param("id");
     try {
       // Check if agent exists first
       manager.getAgent(id);
-      manager.deleteAgent(id);
+      await manager.deleteAgent(id);
       return c.json({ success: true });
     } catch {
       return c.json({ error: "Agent not found" }, 404);
@@ -215,6 +228,204 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
       tools: toolRegistry.getInfo(),
       toolsets: toolRegistry.getToolsets(),
     });
+  });
+
+  // ── MCP ──
+
+  // Status of every agent's MCP servers — connected, failed, disabled,
+  // awaiting_oauth — used by the UI to render the status panel.
+  app.get("/api/mcp/status", (c) => {
+    return c.json({ agents: manager.getMcpStatus() });
+  });
+
+  app.get("/api/agents/:id/mcp/status", (c) => {
+    const id = c.req.param("id");
+    const def = manager.agentStore.get(id);
+    if (!def) return c.json({ error: "Agent not found" }, 404);
+    const servers = manager.getMcpClient(id)?.getStatus() ?? [];
+    return c.json({ agentId: id, servers });
+  });
+
+  // Force a full reinit of one agent's MCP — disconnect + reconnect every
+  // server. Use after a global mcp.json edit when the watcher missed it
+  // (e.g., on a network filesystem) or to recover from a transient failure.
+  app.post("/api/agents/:id/mcp/refresh", async (c) => {
+    const id = c.req.param("id");
+    const def = manager.agentStore.get(id);
+    if (!def) return c.json({ error: "Agent not found" }, 404);
+    await manager.reinitMCPForAgent(id);
+    const servers = manager.getMcpClient(id)?.getStatus() ?? [];
+    return c.json({ agentId: id, servers });
+  });
+
+  // Per-server connect/disconnect/reconnect for an agent.
+  app.post("/api/agents/:id/mcp/servers/:name/connect", async (c) => {
+    const client = manager.getMcpClient(c.req.param("id"));
+    if (!client) return c.json({ error: "Agent has no MCP client" }, 404);
+    return c.json(await client.connectServer(c.req.param("name")));
+  });
+
+  app.post("/api/agents/:id/mcp/servers/:name/disconnect", async (c) => {
+    const client = manager.getMcpClient(c.req.param("id"));
+    if (!client) return c.json({ error: "Agent has no MCP client" }, 404);
+    await client.disconnectServer(c.req.param("name"));
+    return c.json({ ok: true });
+  });
+
+  app.post("/api/agents/:id/mcp/servers/:name/reconnect", async (c) => {
+    const client = manager.getMcpClient(c.req.param("id"));
+    if (!client) return c.json({ error: "Agent has no MCP client" }, 404);
+    return c.json(await client.reconnect(c.req.param("name")));
+  });
+
+  // Force a fresh OAuth flow — clears stored tokens for that server,
+  // then reconnects. Use when a token's been revoked server-side or
+  // when the user wants to switch accounts.
+  app.post("/api/agents/:id/mcp/servers/:name/reauth", async (c) => {
+    const client = manager.getMcpClient(c.req.param("id"));
+    if (!client) return c.json({ error: "Agent has no MCP client" }, 404);
+    const name = c.req.param("name");
+    await manager.clearMcpOAuthTokens(name);
+    return c.json(await client.reconnect(name));
+  });
+
+  // Dry-run a config without registering any tools — for the "Test
+  // connection" UI button. Body is a single MCPServerConfig.
+  app.post("/api/mcp/test", async (c) => {
+    let raw: unknown;
+    try {
+      raw = await c.req.json();
+    } catch {
+      return c.json({ error: "Invalid JSON" }, 400);
+    }
+    const parsed = MCPServerConfigSchema.safeParse(raw);
+    if (!parsed.success) {
+      return c.json(
+        {
+          error: "Validation failed",
+          details: parsed.error.errors.map(
+            (err: { path: (string | number)[]; message: string }) =>
+              `${err.path.join(".")}: ${err.message}`
+          ),
+        },
+        400
+      );
+    }
+    // `testConnection` opens a transport, lists tools, closes — never
+    // touches the registry or the manager's per-agent maps. Use a
+    // throwaway client so we don't disturb any live agent state.
+    const probe = new MCPClient(toolRegistry);
+    const result = await probe.testConnection(parsed.data);
+    return c.json(result);
+  });
+
+  // ── Global MCP catalog (~/.openacme/mcp.json) ──
+
+  app.get("/api/mcp/global", (c) => {
+    return c.json({ mcpServers: loadGlobalMcpServers(config.dataDir) });
+  });
+
+  // PUT replaces the whole catalog. Triggers reinit for every agent so
+  // the new/changed/removed servers take effect without a process restart.
+  app.put("/api/mcp/global", async (c) => {
+    let raw: unknown;
+    try {
+      raw = await c.req.json();
+    } catch {
+      return c.json({ error: "Invalid JSON" }, 400);
+    }
+    const body = (raw && typeof raw === "object" ? raw : {}) as {
+      mcpServers?: unknown;
+    };
+    if (
+      body.mcpServers !== undefined &&
+      (typeof body.mcpServers !== "object" || body.mcpServers === null)
+    ) {
+      return c.json({ error: "mcpServers must be an object" }, 400);
+    }
+    const entries = Object.entries(
+      (body.mcpServers ?? {}) as Record<string, unknown>
+    );
+    const validated: Record<string, MCPServerConfig> = {};
+    for (const [name, cfg] of entries) {
+      const result = MCPServerConfigSchema.safeParse(cfg);
+      if (!result.success) {
+        return c.json(
+          {
+            error: `Invalid config for server '${name}'`,
+            details: result.error.errors.map(
+              (err: { path: (string | number)[]; message: string }) =>
+                `${err.path.join(".")}: ${err.message}`
+            ),
+          },
+          400
+        );
+      }
+      validated[name] = result.data;
+    }
+    saveGlobalMcpServers(config.dataDir, validated);
+    for (const def of manager.listAgents()) {
+      await manager.reinitMCPForAgent(def.id);
+    }
+    return c.json({ mcpServers: validated });
+  });
+
+  // Per-agent private servers. The agent-store rejects writes whose names
+  // collide with the global catalog.
+  app.post("/api/agents/:id/mcp/servers", async (c) => {
+    const id = c.req.param("id");
+    const def = manager.agentStore.get(id);
+    if (!def) return c.json({ error: "Agent not found" }, 404);
+    let raw: unknown;
+    try {
+      raw = await c.req.json();
+    } catch {
+      return c.json({ error: "Invalid JSON" }, 400);
+    }
+    const body = (raw && typeof raw === "object" ? raw : {}) as {
+      name?: unknown;
+      config?: unknown;
+    };
+    if (typeof body.name !== "string" || body.name.length === 0) {
+      return c.json({ error: "'name' must be a non-empty string" }, 400);
+    }
+    const cfgResult = MCPServerConfigSchema.safeParse(body.config);
+    if (!cfgResult.success) {
+      return c.json(
+        {
+          error: "Invalid server config",
+          details: cfgResult.error.errors.map(
+            (err: { path: (string | number)[]; message: string }) =>
+              `${err.path.join(".")}: ${err.message}`
+          ),
+        },
+        400
+      );
+    }
+    const next: Record<string, MCPServerConfig> = {
+      ...(def.mcpServers ?? {}),
+      [body.name]: cfgResult.data,
+    };
+    try {
+      await manager.updateAgent(id, { mcpServers: next });
+    } catch (e) {
+      return c.json({ error: (e as Error).message }, 400);
+    }
+    return c.json({ id, mcpServers: next });
+  });
+
+  app.delete("/api/agents/:id/mcp/servers/:name", async (c) => {
+    const id = c.req.param("id");
+    const name = c.req.param("name");
+    const def = manager.agentStore.get(id);
+    if (!def) return c.json({ error: "Agent not found" }, 404);
+    if (!Object.prototype.hasOwnProperty.call(def.mcpServers ?? {}, name)) {
+      return c.json({ error: "Server not found in agent" }, 404);
+    }
+    const next: Record<string, MCPServerConfig> = { ...def.mcpServers };
+    delete next[name];
+    await manager.updateAgent(id, { mcpServers: next });
+    return c.json({ id, mcpServers: next });
   });
 
   // ── Skills ──

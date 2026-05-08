@@ -26,6 +26,7 @@ function makeAgent(
     persona,
     tools: ["shell"],
     mcpServers: {},
+    mcpDisabled: [],
     skills: [],
   };
 }

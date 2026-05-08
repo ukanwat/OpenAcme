@@ -169,6 +169,7 @@ async function addAgentReusingProvider(
     persona: DEFAULT_PERSONA,
     tools: DEFAULT_TOOLS,
     mcpServers: {},
+    mcpDisabled: [],
     skills: [],
   };
   try {
@@ -281,6 +282,7 @@ async function configureProviderAndCreateAgent(
       persona: DEFAULT_PERSONA,
       tools: DEFAULT_TOOLS,
       mcpServers: {},
+      mcpDisabled: [],
       skills: [],
     };
     savedAction = `Added agent: ${newId}`;
@@ -295,6 +297,7 @@ async function configureProviderAndCreateAgent(
       persona: DEFAULT_PERSONA,
       tools: DEFAULT_TOOLS,
       mcpServers: {},
+      mcpDisabled: [],
       skills: [],
     };
     savedAction = `Created agent: ${savedAgent.id}`;
@@ -333,6 +336,7 @@ async function configureProviderAndCreateAgent(
   ];
   if (auth.mode === "oauth") summaryLines.push(`Tokens: ${path.join(dataDir, "auth.json")}`);
   if (auth.mode === "api_key" && provider.envVar) summaryLines.push(`API key: ${path.join(dataDir, ".env")}`);
+  summaryLines.push(`MCP servers: ${path.join(dataDir, "mcp.json")} — paste any Claude Desktop / Cursor config to add`);
   p.note(summaryLines.join("\n"), "Summary");
 
   p.outro("Setup complete! Run: openacme start");
