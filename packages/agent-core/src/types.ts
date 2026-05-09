@@ -11,9 +11,9 @@ export type StreamChunk =
   | { type: "done"; usage?: TokenUsage };
 
 export interface TokenUsage {
-  promptTokens: number;
-  completionTokens: number;
-  totalTokens: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
 }
 
 export interface AgentConfig {

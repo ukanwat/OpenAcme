@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from 'zod';
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { registry } from "../registry.js";

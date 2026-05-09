@@ -1,4 +1,8 @@
-import type { LanguageModel } from "ai";
+import {
+  wrapLanguageModel,
+  defaultSettingsMiddleware,
+  type LanguageModel,
+} from "ai";
 import type { ModelConfig, Provider } from "@openacme/config";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createAnthropic } from "@ai-sdk/anthropic";
@@ -39,6 +43,16 @@ function anthropicSupports1mContext(model: string): boolean {
   // Date suffixes like 20250514 are model versions, not minor; treat as 4.0
   const effMinor = minor > 99 ? 0 : minor;
   return major > 4 || (major === 4 && effMinor >= 6);
+}
+
+/** Opus 4.7 400s when `fine-grained-tool-streaming-2025-05-14` is set; the
+ *  upstream @ai-sdk/anthropic@3.x strips it for that model on its own
+ *  codepath. We bypass the SDK with a custom fetch, so we must mirror the
+ *  exclusion ourselves. */
+function anthropicSupportsFineGrainedToolStreaming(model: string): boolean {
+  const m = model.toLowerCase();
+  if (m.includes("opus") && (m.includes("4-7") || m.includes("4.7"))) return false;
+  return true;
 }
 
 /**
@@ -116,7 +130,19 @@ const providerFactories: Record<
         },
       });
       // ChatGPT backend speaks the Responses API, not Chat Completions.
-      return provider.responses(config.model);
+      // Inject `store: false` into per-call provider options so the SDK's
+      // message converter inlines `function_call` items in tool-call follow-up
+      // turns instead of emitting `item_reference` (the latter relies on the
+      // server having persisted the previous `fc_<id>` item, which never
+      // happens with `store: false` — the contract for ChatGPT-account Codex).
+      return wrapLanguageModel({
+        model: provider.responses(config.model),
+        middleware: defaultSettingsMiddleware({
+          settings: {
+            providerOptions: { openai: { store: false } },
+          },
+        }),
+      });
     }
     const provider = createOpenAI({
       apiKey: config.apiKey ?? process.env["OPENAI_API_KEY"],
@@ -148,10 +174,13 @@ const providerFactories: Record<
           headers.set("x-app", "cli");
           const betas = new Set<string>([
             "interleaved-thinking-2025-05-14",
-            "fine-grained-tool-streaming-2025-05-14",
             "claude-code-20250219",
             "oauth-2025-04-20",
           ]);
+          // Opus 4.7 400s on this header — mirror the SDK's per-model strip.
+          if (anthropicSupportsFineGrainedToolStreaming(config.model)) {
+            betas.add("fine-grained-tool-streaming-2025-05-14");
+          }
           // 1M context is gated to Opus/Sonnet 4.6+; Haiku and older models
           // reject it ("long context beta is not yet available").
           if (anthropicSupports1mContext(config.model)) {
@@ -236,7 +265,7 @@ const providerFactories: Record<
  * This is the primary entry point for LLM access across the platform.
  */
 export function getModel(config: ModelConfig): LanguageModel {
-  const factory = providerFactories[config.provider];
+  const factory = providerFactories[config.provider as Provider];
   if (!factory) {
     throw new Error(`Unknown provider: ${config.provider}`);
   }

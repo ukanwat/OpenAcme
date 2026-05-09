@@ -1,4 +1,4 @@
-import { streamText, type CoreMessage } from "ai";
+import { streamText, stepCountIs, type ModelMessage } from "ai";
 import { getModel } from "@openacme/llm-provider";
 import { toolCallContext, type ToolRegistry } from "@openacme/tools";
 import type { SessionStore, MessageStore, Message } from "@openacme/db";
@@ -113,7 +113,7 @@ export class Agent {
           system: systemPrompt,
           messages,
           tools: tools as Parameters<typeof streamText>[0]["tools"],
-          maxSteps: this.config.maxSteps,
+          stopWhen: stepCountIs(this.config.maxSteps),
           abortSignal: opts?.signal,
           experimental_telemetry: {
             isEnabled: true,
@@ -129,31 +129,31 @@ export class Agent {
             const tr = part as unknown as {
               toolCallId: string;
               toolName: string;
-              result: unknown;
+              output: unknown;
             };
             yield {
               type: "tool-result",
               toolName: tr.toolName,
               toolCallId: tr.toolCallId,
               result:
-                typeof tr.result === "string"
-                  ? tr.result
-                  : JSON.stringify(tr.result),
+                typeof tr.output === "string"
+                  ? tr.output
+                  : JSON.stringify(tr.output),
             };
             continue;
           }
 
           switch (part.type) {
             case "text-delta":
-              fullContent += part.textDelta;
-              yield { type: "text-delta", text: part.textDelta };
+              fullContent += part.text;
+              yield { type: "text-delta", text: part.text };
               break;
             case "tool-call": {
               const toolCallId = part.toolCallId ?? randomUUID();
               yield {
                 type: "tool-call",
                 toolName: part.toolName,
-                args: part.args as Record<string, unknown>,
+                args: part.input as Record<string, unknown>,
                 toolCallId,
               };
               break;
@@ -163,7 +163,8 @@ export class Agent {
               // path handles both this and stream-stopping errors uniformly.
               throw part.error;
             default:
-              // step-finish, reasoning, source, finish — captured below.
+              // start, start-step, finish-step, finish, tool-input-start/delta/end,
+              // tool-error, reasoning-*, source, file, raw — all ignored.
               break;
           }
         }
@@ -195,8 +196,8 @@ export class Agent {
         if (
           threshold !== null &&
           usage &&
-          typeof usage.promptTokens === "number" &&
-          this.compressor.shouldCompress(sessionId, usage.promptTokens, threshold)
+          typeof usage.inputTokens === "number" &&
+          this.compressor.shouldCompress(sessionId, usage.inputTokens, threshold)
         ) {
           const childId = await this.compress(sessionId, "proactive");
           if (childId !== sessionId) {
@@ -209,8 +210,8 @@ export class Agent {
           type: "done",
           usage: usage
             ? {
-                promptTokens: usage.promptTokens,
-                completionTokens: usage.completionTokens,
+                inputTokens: usage.inputTokens,
+                outputTokens: usage.outputTokens,
                 totalTokens: usage.totalTokens,
               }
             : undefined,
@@ -354,8 +355,8 @@ export class Agent {
    * tool messages become role:"tool" with a tool-result part. Drops
    * orphan tool calls (legacy DBs) by checking the next row.
    */
-  private buildCoreMessages(dbMessages: Message[]): CoreMessage[] {
-    const out: CoreMessage[] = [];
+  private buildCoreMessages(dbMessages: Message[]): ModelMessage[] {
+    const out: ModelMessage[] = [];
     for (let i = 0; i < dbMessages.length; i++) {
       const m = dbMessages[i]!;
 
@@ -367,10 +368,10 @@ export class Agent {
               type: "tool-result",
               toolCallId: m.toolCallId,
               toolName: m.toolName,
-              result: m.content ?? "",
+              output: { type: "text", value: m.content ?? "" },
             },
           ],
-        } as unknown as CoreMessage);
+        } as unknown as ModelMessage);
         continue;
       }
 
@@ -409,7 +410,7 @@ export class Agent {
             type: "tool-call",
             toolCallId: tc.toolCallId,
             toolName: tc.toolName,
-            args: tc.args,
+            input: tc.args,
           });
         }
 
@@ -417,7 +418,7 @@ export class Agent {
           out.push({
             role: "assistant",
             content: parts,
-          } as unknown as CoreMessage);
+          } as unknown as ModelMessage);
         }
         continue;
       }
@@ -432,10 +433,10 @@ export class Agent {
 
   private persistAssistantTurn(
     sessionId: string,
-    steps: Array<{
-      text?: string;
-      toolCalls?: Array<{ toolCallId: string; toolName: string; args: unknown }>;
-      toolResults?: unknown;
+    steps: ReadonlyArray<{
+      readonly text?: string;
+      readonly toolCalls?: ReadonlyArray<{ toolCallId: string; toolName: string; input?: unknown }>;
+      readonly toolResults?: unknown;
     }>
   ): void {
     try {
@@ -443,7 +444,7 @@ export class Agent {
         const stepCalls = (step.toolCalls ?? []).map((tc) => ({
           toolCallId: tc.toolCallId,
           toolName: tc.toolName,
-          args: tc.args,
+          args: tc.input,
         }));
         const stepText = step.text ?? "";
         const hasContent = stepText.length > 0 || stepCalls.length > 0;

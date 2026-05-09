@@ -1,4 +1,4 @@
-import { zodToJsonSchema } from "zod-to-json-schema";
+import { z } from "zod";
 import type { ToolEntry, ToolDefinition, ToolInfo } from "./types.js";
 
 /**
@@ -89,7 +89,7 @@ export class ToolRegistry {
         function: {
           name: entry.name,
           description: entry.description,
-          parameters: zodToJsonSchema(entry.parameters, { target: "openAi" }),
+          parameters: z.toJSONSchema(entry.parameters, { target: "draft-07" }),
         },
       });
     }
@@ -107,7 +107,7 @@ export class ToolRegistry {
 
       tools[entry.name] = {
         description: entry.description,
-        parameters: entry.parameters,
+        inputSchema: entry.parameters,
         execute: async (args: Record<string, unknown>) => {
           return entry.handler(args);
         },

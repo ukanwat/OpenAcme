@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from 'zod';
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { registry } from "../registry.js";

@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from 'zod';
 import { execSync } from "node:child_process";
 import { registry } from "../registry.js";
 

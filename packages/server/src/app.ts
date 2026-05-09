@@ -93,7 +93,7 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
     // Validate and apply defaults using Zod schema
     const parseResult = AgentDefinitionSchema.safeParse({ ...body, id });
     if (!parseResult.success) {
-      const errors = parseResult.error.errors.map(e => `${e.path.join(".")}: ${e.message}`);
+      const errors = parseResult.error.issues.map((e: { path: PropertyKey[]; message: string }) => `${e.path.join(".")}: ${e.message}`);
       return c.json({ error: "Validation failed", details: errors }, 400);
     }
 
@@ -321,8 +321,8 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
       return c.json(
         {
           error: "Validation failed",
-          details: parsed.error.errors.map(
-            (err: { path: (string | number)[]; message: string }) =>
+          details: parsed.error.issues.map(
+            (err: { path: PropertyKey[]; message: string }) =>
               `${err.path.join(".")}: ${err.message}`
           ),
         },
@@ -371,8 +371,8 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
         return c.json(
           {
             error: `Invalid config for server '${name}'`,
-            details: result.error.errors.map(
-              (err: { path: (string | number)[]; message: string }) =>
+            details: result.error.issues.map(
+              (err: { path: PropertyKey[]; message: string }) =>
                 `${err.path.join(".")}: ${err.message}`
             ),
           },
@@ -412,8 +412,8 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
       return c.json(
         {
           error: "Invalid server config",
-          details: cfgResult.error.errors.map(
-            (err: { path: (string | number)[]; message: string }) =>
+          details: cfgResult.error.issues.map(
+            (err: { path: PropertyKey[]; message: string }) =>
               `${err.path.join(".")}: ${err.message}`
           ),
         },

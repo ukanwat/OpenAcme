@@ -42,6 +42,9 @@ const { streamTextMock, generateTextMock, getModelMock, APICallErrorMock } =
 vi.mock("ai", () => ({
   streamText: streamTextMock,
   generateText: generateTextMock,
+  // v5+ stop-condition factory; agent.ts imports it but the mocked streamText
+  // ignores the value, so any sentinel works.
+  stepCountIs: (n: number) => ({ kind: "step-count", count: n }),
   // The classifier imports APICallError statically — provide a stand-in
   // that satisfies `APICallError.isInstance(err)`.
   APICallError: APICallErrorMock,
@@ -64,7 +67,7 @@ const stubToolRegistry = {
 } as unknown as ToolRegistry;
 
 interface StreamResultOpts {
-  promptTokens?: number;
+  inputTokens?: number;
   text?: string;
 }
 
@@ -74,9 +77,9 @@ function mockStreamResult(opts: StreamResultOpts = {}) {
       // Empty — text-delta path isn't under test here.
     })(),
     usage: Promise.resolve({
-      promptTokens: opts.promptTokens ?? 100,
-      completionTokens: 10,
-      totalTokens: (opts.promptTokens ?? 100) + 10,
+      inputTokens: opts.inputTokens ?? 100,
+      outputTokens: 10,
+      totalTokens: (opts.inputTokens ?? 100) + 10,
     }),
     steps: Promise.resolve([
       { text: opts.text ?? "ok", toolCalls: [], toolResults: [] },
@@ -191,7 +194,7 @@ describe("Agent — proactive compression at end-of-turn", () => {
       { user: "u2", assistant: "a2" },
       { user: "u3", assistant: "a3" },
     ]);
-    streamTextMock.mockReturnValue(mockStreamResult({ promptTokens: 5000 }));
+    streamTextMock.mockReturnValue(mockStreamResult({ inputTokens: 5000 }));
 
     const agent = makeAgent({
       db,
@@ -231,7 +234,7 @@ describe("Agent — proactive compression at end-of-turn", () => {
     const db = freshDb();
     const sessions = createSessionStore(db);
     sessions.create("a1", { id: "s1" });
-    streamTextMock.mockReturnValue(mockStreamResult({ promptTokens: 50 }));
+    streamTextMock.mockReturnValue(mockStreamResult({ inputTokens: 50 }));
 
     const agent = makeAgent({ db, thresholdTokens: 1000 });
     const chunks = await drain(agent.chat("s1", "hi"));
@@ -245,7 +248,7 @@ describe("Agent — proactive compression at end-of-turn", () => {
     const db = freshDb();
     const sessions = createSessionStore(db);
     sessions.create("a1", { id: "s1" });
-    streamTextMock.mockReturnValue(mockStreamResult({ promptTokens: 999_999 }));
+    streamTextMock.mockReturnValue(mockStreamResult({ inputTokens: 999_999 }));
 
     const agent = makeAgent({ db, thresholdTokens: null });
     const chunks = await drain(agent.chat("s1", "hi"));
@@ -264,7 +267,7 @@ describe("Agent — proactive compression at end-of-turn", () => {
       { user: "u3", assistant: "a3" },
     ]);
 
-    streamTextMock.mockReturnValue(mockStreamResult({ promptTokens: 5000 }));
+    streamTextMock.mockReturnValue(mockStreamResult({ inputTokens: 5000 }));
     generateTextMock.mockResolvedValueOnce({
       text: "## Active Task\nFIRST_SUMMARY_BODY",
     });
@@ -286,7 +289,7 @@ describe("Agent — proactive compression at end-of-turn", () => {
       { user: "u5", assistant: "a5" },
     ]);
 
-    streamTextMock.mockReturnValue(mockStreamResult({ promptTokens: 8000 }));
+    streamTextMock.mockReturnValue(mockStreamResult({ inputTokens: 8000 }));
     generateTextMock.mockResolvedValueOnce({
       text: "## Active Task\nSECOND_SUMMARY_BODY",
     });
@@ -324,7 +327,7 @@ describe("Agent — reactive compression on provider errors", () => {
 
     streamTextMock
       .mockReturnValueOnce(failingStreamResult(new APICallErrorMock("413", 413)))
-      .mockReturnValueOnce(mockStreamResult({ promptTokens: 200 }));
+      .mockReturnValueOnce(mockStreamResult({ inputTokens: 200 }));
 
     const agent = makeAgent({
       db,
@@ -361,7 +364,7 @@ describe("Agent — reactive compression on provider errors", () => {
           )
         )
       )
-      .mockReturnValueOnce(mockStreamResult({ promptTokens: 200 }));
+      .mockReturnValueOnce(mockStreamResult({ inputTokens: 200 }));
 
     const agent = makeAgent({
       db,
@@ -442,7 +445,7 @@ describe("Agent — anti-thrashing & cooldown", () => {
     // generateText returns a HUGE summary so child won't be smaller than parent.
     const huge = "X".repeat(1_000_000);
     generateTextMock.mockResolvedValue({ text: huge });
-    streamTextMock.mockReturnValue(mockStreamResult({ promptTokens: 5000 }));
+    streamTextMock.mockReturnValue(mockStreamResult({ inputTokens: 5000 }));
 
     const agent = makeAgent({
       db,
@@ -493,7 +496,7 @@ describe("Agent — anti-thrashing & cooldown", () => {
       { user: "u3", assistant: "a3" },
     ]);
 
-    streamTextMock.mockReturnValue(mockStreamResult({ promptTokens: 5000 }));
+    streamTextMock.mockReturnValue(mockStreamResult({ inputTokens: 5000 }));
     generateTextMock.mockRejectedValue(new Error("500 internal error"));
 
     const agent = makeAgent({
@@ -534,7 +537,7 @@ describe("Agent — aux model fallback", () => {
       { user: "u3", assistant: "a3" },
     ]);
 
-    streamTextMock.mockReturnValue(mockStreamResult({ promptTokens: 5000 }));
+    streamTextMock.mockReturnValue(mockStreamResult({ inputTokens: 5000 }));
     // First call (aux model) fails; second call (main fallback) succeeds.
     generateTextMock
       .mockRejectedValueOnce(new Error("model not found"))

@@ -91,7 +91,7 @@ async function main() {
         inputModalities: pickArray(entry?.modalities?.input),
         outputModalities: pickArray(entry?.modalities?.output),
         supportsAttachment: pickBool(entry?.attachment),
-        supportsReasoning: pickBool(entry?.reasoning),
+        supportsReasoning: pickBool(entry?.reasoningText),
         supportsToolCall: pickBool(entry?.tool_call),
         supportsTemperature: pickBool(entry?.temperature),
         family: pickString(entry?.family),

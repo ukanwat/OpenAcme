@@ -130,7 +130,7 @@ export const SUMMARY_TOKENS_CEILING = 12_000;
  * char-based budget walk: 10 tokens × 4 chars/token ≈ 40 chars.
  *
  * Used only by the boundary walk; the trigger check uses real
- * `usage.promptTokens` from the model response.
+ * `usage.inputTokens` from the model response.
  */
 const MESSAGE_OVERHEAD_TOKENS = 10;
 const MESSAGE_OVERHEAD_CHARS = MESSAGE_OVERHEAD_TOKENS * CHARS_PER_TOKEN;
@@ -998,11 +998,11 @@ export class Compressor {
   /** Returns true iff a fresh compression should fire on this turn. */
   shouldCompress(
     sessionId: string,
-    promptTokens: number,
+    inputTokens: number,
     threshold: number | null
   ): boolean {
     if (threshold === null) return false;
-    if (promptTokens < threshold) return false;
+    if (inputTokens < threshold) return false;
     const s = this.state.get(sessionId);
     const recent = s?.recentSavings ?? [];
     if (recent.length >= 2 && recent.every((r) => r < 0.1)) return false;
@@ -1279,7 +1279,7 @@ export class Compressor {
       const res = await generateText({
         model: getModel(m),
         prompt,
-        maxTokens: Math.floor(opts.summaryBudget * 1.3),
+        maxOutputTokens: Math.floor(opts.summaryBudget * 1.3),
         experimental_telemetry: {
           isEnabled: true,
           functionId: "compression-summarizer",

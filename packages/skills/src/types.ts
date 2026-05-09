@@ -17,7 +17,7 @@
  *       tags: [...]
  *       related_skills: [...]
  */
-import { z } from "zod";
+import { z } from 'zod';
 
 const KebabName = z
   .string()

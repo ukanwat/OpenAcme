@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from 'zod';
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -62,7 +62,7 @@ export const ModelConfigSchema = z.object({
   baseUrl: z.string().optional(),
   apiKey: z.string().optional(),
   auth: AuthModeSchema.default("api_key"),
-  headers: z.record(z.string()).optional(),
+  headers: z.record(z.string(), z.string()).optional(),
 });
 export type ModelConfig = z.infer<typeof ModelConfigSchema>;
 
@@ -96,8 +96,8 @@ export const MCPServerConfigSchema = z
     // servers, some Python ones). Ignored for url-based transports.
     cwd: z.string().optional(),
     url: z.string().optional(),
-    env: z.record(z.string()).optional(),
-    headers: z.record(z.string()).optional(),
+    env: z.record(z.string(), z.string()).optional(),
+    headers: z.record(z.string(), z.string()).optional(),
     timeout: z.number().positive().default(120),
     connectTimeout: z.number().positive().default(60),
     allowedTools: z.array(z.string()).optional(),
@@ -120,7 +120,7 @@ export type MCPServerConfig = z.infer<typeof MCPServerConfigSchema>;
 export const AgentDefinitionSchema = z.object({
   id: z.string(),
   name: z.string(),
-  model: ModelConfigSchema.default({}),
+  model: ModelConfigSchema.prefault({}),
   persona: z.string().default("You are a helpful AI assistant."),
   tools: z
     .array(z.string())
@@ -142,7 +142,7 @@ export const AgentDefinitionSchema = z.object({
   // Agent-PRIVATE MCP servers — names must not collide with the global
   // catalog at `<dataDir>/mcp.json`. The agent-store enforces this on
   // write; the manager re-checks defensively when assembling the union.
-  mcpServers: z.record(MCPServerConfigSchema).default({}),
+  mcpServers: z.record(z.string(), MCPServerConfigSchema).default({}),
   // Names of global mcp.json servers this agent should NOT receive.
   // Empty (default) = inherit everything.
   mcpDisabled: z.array(z.string()).default([]),
@@ -258,7 +258,7 @@ export function lookupModelMetadata(model: ModelConfig): ModelMetadata {
 /**
  * Agent behavior configuration.
  *
- * Compression (Hermes-style): when a turn's `usage.promptTokens` crosses
+ * Compression (Hermes-style): when a turn's `usage.inputTokens` crosses
  * the threshold, the agent forks the session synchronously at end-of-turn.
  * The fork:
  *   1. Pre-prunes old tool results (dedup, 1-line summaries, JSON arg trim)
@@ -326,10 +326,10 @@ export type WebConfig = z.infer<typeof WebConfigSchema>;
  */
 export const ConfigSchema = z.object({
   dataDir: z.string().default("~/.openacme"),
-  model: ModelConfigSchema.default({}),
-  server: ServerConfigSchema.default({}),
-  behavior: AgentBehaviorSchema.default({}),
-  skills: SkillsConfigSchema.default({}),
-  web: WebConfigSchema.default({}),
+  model: ModelConfigSchema.prefault({}),
+  server: ServerConfigSchema.prefault({}),
+  behavior: AgentBehaviorSchema.prefault({}),
+  skills: SkillsConfigSchema.prefault({}),
+  web: WebConfigSchema.prefault({}),
 });
 export type Config = z.infer<typeof ConfigSchema>;

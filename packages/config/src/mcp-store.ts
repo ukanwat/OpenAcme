@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { z } from "zod";
+import { z } from 'zod';
 import { MCPServerConfigSchema, type MCPServerConfig } from "./schema.js";
 
 const FILE_NAME = "mcp.json";
@@ -21,7 +21,7 @@ const FILE_NAME = "mcp.json";
  * shuffle credentials around on every save.
  */
 const McpJsonSchema = z.object({
-  mcpServers: z.record(MCPServerConfigSchema).default({}),
+  mcpServers: z.record(z.string(), MCPServerConfigSchema).default({}),
 });
 
 function mcpPath(dataDir: string): string {

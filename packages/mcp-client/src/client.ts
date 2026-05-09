@@ -12,7 +12,7 @@ import type {
   OAuthClientMetadata,
   OAuthTokens,
 } from "@modelcontextprotocol/sdk/shared/auth.js";
-import { z } from "zod";
+import { z } from 'zod';
 import type { MCPServerConfig, MCPTransport } from "@openacme/config";
 import type { ToolRegistry } from "@openacme/tools";
 import { buildSafeEnv, sanitizeError, scanDescription } from "./security.js";
@@ -891,7 +891,7 @@ export class MCPClient {
 
   private jsonSchemaToZod(schema: unknown): z.ZodTypeAny {
     if (!schema || typeof schema !== "object") {
-      return z.record(z.unknown());
+      return z.record(z.string(), z.unknown());
     }
 
     const s = schema as Record<string, unknown>;
@@ -914,7 +914,7 @@ export class MCPClient {
       return z.object(shape);
     }
 
-    return z.record(z.unknown());
+    return z.record(z.string(), z.unknown());
   }
 
   private jsonSchemaPrimitiveToZod(schema: Record<string, unknown>): z.ZodTypeAny {

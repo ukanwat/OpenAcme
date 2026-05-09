@@ -54,7 +54,7 @@ describe("contentLengthForBudget", () => {
 
   it("counts file parts at IMAGE_CHAR_EQUIVALENT", () => {
     const len = contentLengthForBudget([
-      { type: "file", data: "blah", mimeType: "application/pdf" },
+      { type: "file", data: "blah", mediaType: "application/pdf" },
     ]);
     expect(len).toBe(IMAGE_CHAR_EQUIVALENT);
   });
