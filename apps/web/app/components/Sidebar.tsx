@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { MessageSquare, Bot, BookOpen, Settings, Zap } from "lucide-react";
+import { MessageSquare, Bot, BookOpen, Settings } from "lucide-react";
 import { cn } from "@/app/lib/utils";
 
 interface NavItem {
@@ -23,14 +23,13 @@ export function Sidebar({ children }: { children?: React.ReactNode }) {
 
   return (
     <aside className="flex w-64 shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground">
-      <div className="flex h-14 items-center gap-2 border-b px-4">
-        <div className="flex size-8 items-center justify-center rounded-md bg-primary text-primary-foreground">
-          <Zap className="size-4" />
-        </div>
-        <div className="flex flex-col">
-          <span className="text-sm font-semibold leading-none">OpenAcme</span>
-          <span className="text-[10px] text-muted-foreground">Agent Platform</span>
-        </div>
+      <div className="flex items-center border-b px-4 py-3">
+        <pre
+          className="text-[7.5px] leading-none text-primary select-none whitespace-pre"
+          style={{ fontFamily: "'SF Mono', Menlo, Monaco, 'Courier New', monospace" }}
+        >
+          {"█▀█ █▀█ █▀▀ █▄ █ ▄▀█ █▀▀ █▀▄▀█ █▀▀\n█▄█ █▀▀ ██▄ █ ▀█ █▀█ █▄▄ █ ▀ █ ██▄"}
+        </pre>
       </div>
 
       <nav className="flex flex-col gap-0.5 p-2">

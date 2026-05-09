@@ -2,7 +2,7 @@ import { Text } from "ink";
 import Gradient from "ink-gradient";
 
 const LOGO = [
-  "   ▄▄▄     ",
+  "   ▄▄▄    ",
   "    █     ",
   " ▄██████▄ ",
   "██  ██  ██",

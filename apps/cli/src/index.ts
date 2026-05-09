@@ -7,6 +7,15 @@ import { Command } from "commander";
 import { resolveDataDir } from "@openacme/config";
 import { setupCommand } from "./commands/setup.js";
 import { startCommand } from "./commands/start.js";
+import { stopCommand } from "./commands/stop.js";
+import { restartCommand } from "./commands/restart.js";
+import { statusCommand } from "./commands/status.js";
+import { logsCommand } from "./commands/logs.js";
+import { serveInternalCommand } from "./commands/__serve.js";
+import {
+  secretShowCommand,
+  secretRotateCommand,
+} from "./commands/secret.js";
 import { chatCommand } from "./commands/chat.js";
 import { loginCommand } from "./commands/login.js";
 import { logoutCommand } from "./commands/logout.js";
@@ -44,14 +53,90 @@ program
 // would receive opts without dataDir/port/noBrowser.
 program
   .command("start", { isDefault: true })
-  .description("Start the OpenAcme agent server")
+  .description("Start the OpenAcme daemon (idempotent; installs the service unit on first run)")
   .option("-d, --data-dir <path>", "Data directory (default: ~/.openacme)")
-  .option("-p, --port <number>", "Server port", "3210")
   .option("--no-browser", "Don't open browser automatically")
+  .option(
+    "--no-service",
+    "Skip launchd/systemd unit; spawn detached with PID file (no auto-restart)"
+  )
+  .option("--expose", "Bind to 0.0.0.0, generate a secret, and start (enables remote access)")
   .action(async (opts) => {
     await showBanner(pkg.version);
-    await startCommand(opts);
+    // Commander maps --no-service → opts.service=false and --no-browser →
+    // opts.browser=false. Remap to the shape our command functions expect.
+    await startCommand({
+      dataDir: opts.dataDir,
+      noBrowser: opts.browser === false,
+      noService: opts.service === false,
+      expose: opts.expose === true,
+    });
   });
+
+program
+  .command("stop")
+  .description("Stop the OpenAcme daemon (service unit stays installed)")
+  .option("-d, --data-dir <path>", "Data directory (default: ~/.openacme)")
+  .option("--no-service", "Operate against the no-service PID-file path")
+  .action((opts) => stopCommand({
+    dataDir: opts.dataDir,
+    noService: opts.service === false,
+  }));
+
+program
+  .command("restart")
+  .description("Restart the OpenAcme daemon")
+  .option("-d, --data-dir <path>", "Data directory (default: ~/.openacme)")
+  .option("--no-browser", "Don't open browser after restart")
+  .option("--no-service", "Operate against the no-service PID-file path")
+  .action((opts) => restartCommand({
+    dataDir: opts.dataDir,
+    noBrowser: opts.browser === false,
+    noService: opts.service === false,
+  }));
+
+program
+  .command("status")
+  .description("Show daemon state, PID, bind, uptime, and recent log")
+  .option("-d, --data-dir <path>", "Data directory (default: ~/.openacme)")
+  .option("--no-service", "Operate against the no-service PID-file path")
+  .action((opts) => statusCommand({
+    dataDir: opts.dataDir,
+    noService: opts.service === false,
+  }));
+
+program
+  .command("logs")
+  .description("Print the daemon log (use -f to follow)")
+  .option("-d, --data-dir <path>", "Data directory (default: ~/.openacme)")
+  .option("-f, --follow", "Follow new lines as they arrive")
+  .option("--tail <n>", "Lines to print initially (default: 200)")
+  .action(logsCommand);
+
+// Internal: the subcommand the service unit invokes to run the server in
+// the foreground. Hidden from --help so users don't run it directly.
+program
+  .command("__serve", { hidden: true })
+  .description("[internal] run the server foreground; invoked by launchd/systemd")
+  .option("-d, --data-dir <path>", "Data directory (default: ~/.openacme)")
+  .action(serveInternalCommand);
+
+const secret = program
+  .command("secret")
+  .description("Manage the access secret used for non-loopback web access");
+
+secret
+  .command("show", { isDefault: true })
+  .description("Print the current secret")
+  .option("-d, --data-dir <path>", "Data directory (default: ~/.openacme)")
+  .action(secretShowCommand);
+
+secret
+  .command("rotate")
+  .description("Generate a new secret (invalidates existing sessions)")
+  .option("-d, --data-dir <path>", "Data directory (default: ~/.openacme)")
+  .option("--no-service", "Operate against the no-service PID-file path")
+  .action(secretRotateCommand);
 
 program
   .command("setup")

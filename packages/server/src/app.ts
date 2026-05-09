@@ -1,12 +1,16 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
+import * as crypto from "node:crypto";
 import { AgentManager } from "./agent-manager.js";
+import { authMiddleware } from "./middleware/auth.js";
+import { registerAuthRoutes } from "./routes/auth.js";
 import {
   AgentDefinitionSchema,
   MCPServerConfigSchema,
   loadGlobalMcpServers,
   saveGlobalMcpServers,
+  readSecret,
   type Config,
   type AgentDefinition,
   type MCPServerConfig,
@@ -35,6 +39,20 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
 
   // Middleware
   app.use("/*", cors());
+
+  // Auth: load the secret once at boot so we can timing-safe-compare hashes
+  // on each request. Loopback Host always bypasses; the secret only matters
+  // when the daemon is bound non-loopback (or behind a tunnel).
+  const rawSecret = readSecret(config.dataDir);
+  const secretSha256 = rawSecret
+    ? crypto.createHash("sha256").update(rawSecret).digest("hex")
+    : null;
+
+  // Auth routes must be reachable without a cookie — mount BEFORE the
+  // gate. The middleware also whitelists /api/auth/* and /login, but
+  // mounting first is the belt to that suspenders.
+  registerAuthRoutes(app, { secretSha256 });
+  app.use("/*", authMiddleware({ secretSha256 }));
 
   // Health check
   app.get("/api/health", (c) =>
