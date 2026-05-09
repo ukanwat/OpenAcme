@@ -207,7 +207,9 @@ One line target, two cap. No multi-line blocks.
 
 Default to none. Write one only when the *why* is genuinely non-obvious from the code.
 
-Long *why* belongs in the commit message.
+Comments rot. Every reader has to decide whether they're still true, and the cost compounds across the codebase. A clear name plus a tight signature usually says enough; reach for a comment only when neither does.
+
+Long *why* belongs in the commit message. On code review, the default action against a stray multi-line comment is to delete or compress it.
 
 ---
 
