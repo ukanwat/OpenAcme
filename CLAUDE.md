@@ -196,8 +196,59 @@ Per-agent `skills` array filters which skills are exposed; empty/missing means a
 - **Errors**: throw `Error` with a clear message; let the agent loop surface it as a `StreamChunk` of type `error`. Don't swallow.
 - **No emojis** in code or commit messages unless the user asks.
 - **No new docs** unless asked. Working notes belong in PRs / commits, not in `docs/`.
-- **Comments — keep short or don't write them.** One line is the target, two is the cap. No multi-line `/** ... */` blocks unless it's a public API doc. Long comments rot — they pin behaviour to specific SDK versions, line numbers, or workarounds that move on. Cite a *why* the code can't show, then stop. If the WHY needs a paragraph, it belongs in the commit message or a `.claude/rules/*.md`, not the source.
+- **Comments**: keep short or don't write them. See the **Comments** section below — this is enforced.
 - **No backwards-compat shims** for unreleased / unpublished surfaces — change the code.
+
+---
+
+## Comments
+
+**One line is the target. Two is the cap. No multi-line `/** ... */` blocks except for public API docs.**
+
+Long comments rot. They pin behaviour to specific SDK versions, line numbers, or workarounds that move on, and the next reader has to decide whether the comment is still true. The cost compounds across the codebase.
+
+Default to **no comment**. Add one only when:
+
+- The *why* is non-obvious from the code (a hidden constraint, a workaround, a counter-intuitive choice).
+- The reason can't be inferred from the surrounding names + types.
+
+Don't write a comment that:
+
+- Restates what the code does (`// fetch the user`).
+- Explains an SDK or upstream API in prose (the SDK has docs; link if you must — one line).
+- Lists changelog history (`// added for v6 migration`, `// was textDelta in v4`).
+- Describes the call graph (`// called by AgentManager when ...`).
+
+If the WHY genuinely needs a paragraph, it goes in the **commit message** or a `.claude/rules/*.md` file — not the source. Source comments are read every time the file is opened; long-form context belongs where it's loaded only when the topic is relevant.
+
+### Examples
+
+**Bad** (5 lines, pins to specific SDK behaviour, restates the code):
+
+```ts
+// Inject `store: false` into per-call provider options so the SDK's
+// message converter inlines `function_call` items in tool-call follow-up
+// turns instead of emitting `item_reference` (the latter relies on the
+// server having persisted the previous `fc_<id>` item, which never
+// happens with `store: false` — the contract for ChatGPT-account Codex).
+return wrapLanguageModel({ model, middleware: defaultSettingsMiddleware({ ... }) });
+```
+
+**Good** (1–2 lines, names the non-obvious why, no version pinning):
+
+```ts
+// `store: false` propagates so the converter inlines function_call
+// (item_reference would need server persistence Codex doesn't have).
+return wrapLanguageModel({ model, middleware: defaultSettingsMiddleware({ ... }) });
+```
+
+**Best** (no comment — variable names + the rule file say enough):
+
+```ts
+return wrapLanguageModel({ model, middleware: codexInlineSettings });
+```
+
+When code review or a reader sees a multi-line comment outside a public API surface, the default action is to delete or compress it.
 
 ---
 
