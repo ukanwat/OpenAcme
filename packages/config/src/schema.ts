@@ -138,6 +138,7 @@ export const AgentDefinitionSchema = z.object({
       "web_extract",
       "execute_code",
       "process",
+      "memory",
     ]),
   // Agent-PRIVATE MCP servers — names must not collide with the global
   // catalog at `<dataDir>/mcp.json`. The agent-store enforces this on
@@ -147,6 +148,15 @@ export const AgentDefinitionSchema = z.object({
   // Empty (default) = inherit everything.
   mcpDisabled: z.array(z.string()).default([]),
   skills: z.array(z.string()).default([]),
+  // MEMORY.md cap in chars (Hermes default 2200). Bounded so the
+  // system-prompt injection stays small and the agent has consolidation
+  // pressure rather than infinite append.
+  // Mirror of `DEFAULT_MEMORY_CHAR_LIMIT` in `@openacme/memory`.
+  // Kept as a literal here to avoid a `config → memory` package dep
+  // (config is depended on by everything; pulling memory into the
+  // graph everywhere would couple them unnecessarily). If you change
+  // this, update the constant there too.
+  memoryCharLimit: z.number().int().positive().default(2200),
 });
 export type AgentDefinition = z.infer<typeof AgentDefinitionSchema>;
 

@@ -39,6 +39,7 @@
     "@openacme/db": "workspace:*",
     "@openacme/llm-provider": "workspace:*",
     "@openacme/mcp-client": "workspace:*",
+    "@openacme/memory": "workspace:*",
     "@openacme/server": "workspace:*",
     "@openacme/skills": "workspace:*",
     "@openacme/tools": "workspace:*",

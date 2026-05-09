@@ -1,15 +1,15 @@
 {
-  "name": "@openacme/agent-core",
+  "name": "@openacme/memory",
   "version": "0.2.0",
-  "description": "Agent runtime for the OpenAcme AI agent platform.",
+  "description": "Per-agent persistent memory for OpenAcme — bounded MEMORY.md store with atomic writes and threat scanning.",
   "license": "MIT",
   "author": "Utkarsh Kanwat",
-  "homepage": "https://github.com/ukanwat/OpenAcme/tree/main/packages/agent-core#readme",
+  "homepage": "https://github.com/ukanwat/OpenAcme/tree/main/packages/memory#readme",
   "bugs": "https://github.com/ukanwat/OpenAcme/issues",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/ukanwat/OpenAcme.git",
-    "directory": "packages/agent-core"
+    "directory": "packages/memory"
   },
   "publishConfig": {
     "access": "public",
@@ -32,25 +32,11 @@
   "scripts": {
     "build": "tsc --build",
     "check-types": "tsc --noEmit",
-    "dev": "tsc --watch",
-    "test": "vitest run",
-    "test:watch": "vitest"
-  },
-  "dependencies": {
-    "@openacme/config": "workspace:*",
-    "@openacme/db": "workspace:*",
-    "@openacme/llm-provider": "workspace:*",
-    "@openacme/memory": "workspace:*",
-    "@openacme/tools": "workspace:*",
-    "ai": "^6.0.177",
-    "zod": "^4.1.8"
+    "dev": "tsc --watch"
   },
   "devDependencies": {
     "@repo/typescript-config": "workspace:*",
-    "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.15.3",
-    "better-sqlite3": "^11.7.0",
-    "typescript": "5.9.2",
-    "vitest": "^2.1.9"
+    "typescript": "5.9.2"
   }
 }

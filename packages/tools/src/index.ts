@@ -15,8 +15,13 @@ export {
 export {
   toolCallContext,
   getCurrentSessionId,
+  getCurrentAgentId,
   type ToolCallContext,
 } from "./session-context.js";
+export {
+  bindMemory,
+  type MemoryBindings,
+} from "./builtins/memory.js";
 
 // Import builtins to trigger self-registration
 import "./builtins/shell.js";
@@ -29,3 +34,4 @@ import "./builtins/web-search.js";
 import "./builtins/execute_code.js";
 import "./builtins/process.js";
 import "./builtins/skill.js";
+import "./builtins/memory.js";

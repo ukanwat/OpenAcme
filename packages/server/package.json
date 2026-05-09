@@ -40,6 +40,7 @@
     "@openacme/config": "workspace:*",
     "@openacme/db": "workspace:*",
     "@openacme/llm-provider": "workspace:*",
+    "@openacme/memory": "workspace:*",
     "@openacme/tools": "workspace:*",
     "@openacme/agent-core": "workspace:*",
     "@openacme/mcp-client": "workspace:*",

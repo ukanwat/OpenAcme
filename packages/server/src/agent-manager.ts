@@ -19,7 +19,9 @@ import {
   registry as toolRegistry,
   bindSessionSearch,
   bindSkillView,
+  bindMemory,
 } from "@openacme/tools";
+import { MemoryStore } from "@openacme/memory";
 import {
   MCPClient,
   FileMCPTokenStore,
@@ -45,6 +47,8 @@ export class AgentManager {
   readonly sessionStore: SessionStore;
   readonly messageStore: MessageStore;
   readonly attachmentsRoot: string;
+  readonly agentsDir: string;
+  readonly memoryStore: MemoryStore;
   readonly agentStore: AgentStore;
   private config: Config;
   private mcpClients = new Map<string, MCPClient>();
@@ -62,8 +66,12 @@ export class AgentManager {
     // Agents live as folders at <dataDir>/agents/<id>/AGENT.md — the
     // directory is the only source of truth, no DB mirror, no shadow
     // state in config.yaml.
-    const agentsDir = path.join(config.dataDir, "agents");
-    this.agentStore = createAgentStore(agentsDir);
+    this.agentsDir = path.join(config.dataDir, "agents");
+    this.agentStore = createAgentStore(this.agentsDir);
+    // One MemoryStore per AgentManager — shared between every Agent
+    // instance and the `memory` tool's binding so the in-process mutex
+    // map is consistent across both write paths.
+    this.memoryStore = new MemoryStore(this.agentsDir);
 
     // Wire the FTS5-backed cross-session search into the `session_search`
     // tool. Done here so @openacme/tools doesn't need a runtime dep on
@@ -72,6 +80,21 @@ export class AgentManager {
     bindSessionSearch({
       search: (query, limit) => this.messageStore.search(query, limit),
       resolveRoot: (sessionId) => this.sessionStore.getRoot(sessionId),
+    });
+
+    // Wire the per-agent MEMORY.md root + char-limit lookup into the
+    // `memory` tool. Same bind pattern as session_search; memory tool
+    // resolves the active agentId from AsyncLocalStorage at handler call
+    // time and uses these closures to find the file and the cap.
+    bindMemory({
+      store: this.memoryStore,
+      getCharLimit: (agentId) => {
+        const def = this.agentStore.get(agentId);
+        if (!def) {
+          throw new Error(`Agent not found: ${agentId}`);
+        }
+        return def.memoryCharLimit;
+      },
     });
 
     // Load skills
@@ -366,6 +389,7 @@ export class AgentManager {
       tools: [...def.tools, ...mcpToolNames],
       maxSteps: b.maxSteps,
       skillsIndex,
+      memoryCharLimit: def.memoryCharLimit,
       compression: {
         thresholdTokens: b.compressionThresholdTokens,
         thresholdPercent: b.compressionThresholdPercent,
@@ -383,6 +407,7 @@ export class AgentManager {
       messageStore: this.messageStore,
       toolRegistry,
       attachmentsRoot: this.attachmentsRoot,
+      memoryStore: this.memoryStore,
     });
   }
 

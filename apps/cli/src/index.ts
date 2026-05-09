@@ -31,6 +31,10 @@ import {
   mcpRemoveCommand,
   mcpTestCommand,
 } from "./commands/mcp.js";
+import {
+  memoryShowCommand,
+  memoryStatusCommand,
+} from "./commands/memory.js";
 import { showBanner } from "./tui/banner.js";
 
 const pkg = JSON.parse(
@@ -224,6 +228,22 @@ mcp
   .description("Dry-run a server's connection without registering its tools")
   .option("-d, --data-dir <path>", "Data directory (default: ~/.openacme)")
   .action(mcpTestCommand);
+
+const memory = program
+  .command("memory")
+  .description("Inspect per-agent persistent memory (MEMORY.md)");
+
+memory
+  .command("status", { isDefault: true })
+  .description("List every agent and its memory usage")
+  .option("-d, --data-dir <path>", "Data directory (default: ~/.openacme)")
+  .action(memoryStatusCommand);
+
+memory
+  .command("show <agentId>")
+  .description("Print one agent's MEMORY.md (rendered for the system prompt)")
+  .option("-d, --data-dir <path>", "Data directory (default: ~/.openacme)")
+  .action(memoryShowCommand);
 
 // Resolve the data dir once so the LLM provider's OAuth path can find auth.json
 // without us threading the path through every call site.

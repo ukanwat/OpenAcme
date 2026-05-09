@@ -64,6 +64,9 @@ export interface AgentConfig {
   tools: string[];
   maxSteps: number;
   skillsIndex?: string;
+  /** MEMORY.md char cap (Hermes default 2200). Resolved from
+   *  `AgentDefinition.memoryCharLimit`. */
+  memoryCharLimit: number;
   compression?: CompressionConfig;
 }
 
