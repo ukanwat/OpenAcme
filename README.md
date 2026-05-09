@@ -38,7 +38,7 @@ git clone git@github.com:ukanwat/OpenAcme.git
 cd OpenAcme
 pnpm install              # pnpm 9 · Node ≥ 18
 pnpm build
-pnpm agent:setup          # interactive wizard → ~/.openacme/config.yaml
+pnpm agent setup          # interactive wizard → ~/.openacme/config.yaml
 pnpm agent                # starts background daemon + opens the web UI
 ```
 
@@ -47,7 +47,7 @@ The daemon registers itself with launchd (macOS) or systemd-user (Linux) on firs
 Or skip the browser and chat in the terminal:
 
 ```sh
-pnpm agent:chat           # in-process terminal chat (no server needed)
+pnpm agent chat           # in-process terminal chat (no server needed)
 ```
 
 ### Sign in with a subscription
@@ -111,7 +111,7 @@ By default OpenAcme binds to `127.0.0.1` — only accessible from the machine it
 ```sh
 openacme start --expose
 # or via pnpm:
-pnpm agent:start --expose
+pnpm agent start --expose
 ```
 
 This does three things atomically:
@@ -319,17 +319,17 @@ What hot-reloads:
 | `packages/agent-core/**`, `packages/tools/**`, etc. | Yes — their `tsc --watch` rebuilds dist/, server picks it up and restarts |
 | `apps/cli/**` | Recompiles to dist/, but the daemon isn't running in dev mode |
 
-When you stop `pnpm dev`, run `pnpm agent:start` to bring the daemon back up if you want it always-on again.
+When you stop `pnpm dev`, run `pnpm agent start` to bring the daemon back up if you want it always-on again.
 
 ### Daemon mode — production-style local install
 
 Use this when you're *using* OpenAcme, not editing it. The daemon runs in the background, survives reboots, restarts on crash, and serves the production-built web bundle from `:3210`.
 
 ```sh
-pnpm agent:start       # background daemon at http://localhost:3210
+pnpm agent start       # background daemon at http://localhost:3210
 ```
 
-The web bundle the daemon serves is rebuilt and copied into `packages/server/web/` only by `pnpm build`. So if you edited web code, you need a full `pnpm build` + `pnpm agent:restart` to see it through the daemon — or just use `pnpm dev` instead.
+The daemon serves the static UI directly from `apps/web/out/`. So if you edited web code, run `pnpm --filter web build` and the daemon picks it up on the next request — no copy step, no daemon restart needed. (Or just use `pnpm dev` if you want HMR.)
 
 ---
 
@@ -348,27 +348,27 @@ Daemon lifecycle:
 
 ```sh
 pnpm agent             # start daemon (idempotent, opens browser)
-pnpm agent:start       # same as above
-pnpm agent:stop        # stop daemon
-pnpm agent:restart     # restart daemon
-pnpm agent:status      # pid, bind, uptime, health, recent log
-pnpm agent:logs        # print last 200 log lines
-pnpm agent:logs -f     # follow the log live (Ctrl-C to quit)
+pnpm agent start       # same as above
+pnpm agent stop        # stop daemon
+pnpm agent restart     # restart daemon
+pnpm agent status      # pid, bind, uptime, health, recent log
+pnpm agent logs        # print last 200 log lines
+pnpm agent logs -f     # follow the log live (Ctrl-C to quit)
 ```
 
 Remote access:
 
 ```sh
-pnpm agent:start --expose  # open to network + generate secret
-pnpm agent:secret          # print current secret
-pnpm agent:secret rotate   # generate a new secret (invalidates sessions)
+pnpm agent start --expose  # open to network + generate secret
+pnpm agent secret          # print current secret
+pnpm agent secret rotate   # generate a new secret (invalidates sessions)
 ```
 
 Other:
 
 ```sh
-pnpm agent:setup       # interactive setup wizard
-pnpm agent:chat        # terminal chat (in-process, no server needed)
+pnpm agent setup       # interactive setup wizard
+pnpm agent chat        # terminal chat (in-process, no server needed)
 ```
 
 Direct CLI (after `pnpm build`):
