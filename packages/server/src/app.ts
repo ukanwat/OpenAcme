@@ -1,16 +1,23 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { streamSSE } from "hono/streaming";
 import * as crypto from "node:crypto";
+import {
+  createUIMessageStream,
+  createUIMessageStreamResponse,
+  type UIMessage,
+} from "ai";
+import type { OpenAcmeUIMessage } from "@openacme/agent-core";
 import { AgentManager } from "./agent-manager.js";
 import { authMiddleware } from "./middleware/auth.js";
 import { registerAuthRoutes } from "./routes/auth.js";
+import { registerUploadsRoutes, type UploadsContext } from "./routes/uploads.js";
 import {
   AgentDefinitionSchema,
   MCPServerConfigSchema,
   loadGlobalMcpServers,
   saveGlobalMcpServers,
   readSecret,
+  lookupModelMetadata,
   type Config,
   type AgentDefinition,
   type MCPServerConfig,
@@ -27,6 +34,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as dotenv from "dotenv";
+
+const PENDING_URL_RE = /^\/api\/attachments\/__pending__\/(pend_[^/]+)\/(.+)$/;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -53,6 +62,11 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
   // mounting first is the belt to that suspenders.
   registerAuthRoutes(app, { secretSha256 });
   app.use("/*", authMiddleware({ secretSha256 }));
+
+  // Attachment upload + serve routes. The orphan map returned here is
+  // shared with /api/chat below so we can resolve `attachmentId` parts
+  // back to a path on disk.
+  const uploads: UploadsContext = registerUploadsRoutes(app, manager);
 
   // Health check
   app.get("/api/health", (c) =>
@@ -150,6 +164,8 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
   });
 
   app.get("/api/sessions/:id/messages", (c) => {
+    // Returns UIMessage[] verbatim — useChat consumes these directly via
+    // setMessages on session change.
     const messages = manager.messageStore.getHistory(c.req.param("id"));
     return c.json(messages);
   });
@@ -163,7 +179,12 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
     return c.json({ success: true });
   });
 
-  // ── Chat (SSE streaming) ──
+  // ── Chat (UIMessage stream) ──
+  // SDK protocol — we wrap streamText inside createUIMessageStream so we
+  // can emit a custom `data-session` part for session-id pinning before
+  // the model starts producing tokens. The web client reads this part
+  // via useChat's onData. The handler does not persist incrementally;
+  // onFinish writes the new user UIMessage + the assembled response.
   app.post("/api/chat", async (c) => {
     let body: Record<string, unknown>;
     try {
@@ -172,70 +193,213 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
       return c.json({ error: "Invalid JSON" }, 400);
     }
 
-    const { agentId, sessionId, message } = body as {
+    const { agentId, sessionId, messages } = body as {
       agentId: string;
       sessionId?: string;
-      message: string;
+      messages: unknown;
     };
 
-    if (!agentId || !message) {
-      return c.json({ error: "agentId and message are required" }, 400);
+    if (!agentId || !Array.isArray(messages)) {
+      return c.json(
+        { error: "agentId and messages[] are required" },
+        400
+      );
     }
+
+    const def = manager.agentStore.get(agentId);
+    if (!def) return c.json({ error: "Agent not found" }, 404);
 
     const effectiveSessionId = sessionId || randomUUID();
 
-    // The underlying Request's AbortSignal fires when the client closes the
-    // SSE connection (e.g. user clicked Stop, navigated away, or the tab
-    // crashed). Plumb it down to streamText so the LLM call actually
-    // terminates — without this, an aborted fetch only closes the wire and
-    // the model keeps running until it decides it's done.
+    // Validate-then-commit: walk the incoming messages once to collect
+    // every pending id; verify they're all known; only then commit (move
+    // files under the session dir). Naive map-and-commit has a partial-
+    // failure footgun — earlier files would be moved before a later
+    // unknown id triggers the 400, leaving orphan files in the session
+    // dir with no message row to reference them.
+    const incoming = messages as UIMessage[];
+    const pendingIds: string[] = [];
+    for (const m of incoming) {
+      if (m.role !== "user") continue;
+      for (const p of m.parts) {
+        const tp = p as { type?: string; url?: string };
+        if (tp.type !== "file" || typeof tp.url !== "string") continue;
+        const match = tp.url.match(PENDING_URL_RE);
+        if (!match) continue;
+        const pendingId = match[1]!;
+        if (!uploads.pending.has(pendingId)) {
+          return c.json(
+            { error: `Unknown or expired attachment: ${pendingId}` },
+            400
+          );
+        }
+        pendingIds.push(pendingId);
+      }
+    }
+
+    // All pending ids are known — safe to commit. Cache results so
+    // each id only commits once even if referenced by multiple parts
+    // (defensive — useChat won't normally do that, but the user could
+    // hand-craft a request).
+    const committedById = new Map<
+      string,
+      ReturnType<typeof uploads.commit>
+    >();
+    const attachmentKinds: Array<"image" | "file"> = [];
+    const committed = incoming.map((m) => {
+      if (m.role !== "user") return m;
+      const parts = m.parts.map((p) => {
+        const tp = p as { type?: string; url?: string };
+        if (tp.type !== "file" || typeof tp.url !== "string") return p;
+        const match = tp.url.match(PENDING_URL_RE);
+        if (!match) return p;
+        const pendingId = match[1]!;
+        let result = committedById.get(pendingId);
+        if (result === undefined) {
+          result = uploads.commit(pendingId, effectiveSessionId);
+          committedById.set(pendingId, result);
+        }
+        if (!result) return p;
+        attachmentKinds.push(result.kind);
+        return {
+          ...(p as object),
+          url: result.url,
+          mediaType: result.mediaType,
+          filename: result.filename,
+        } as typeof p;
+      });
+      return { ...m, parts };
+    });
+
+    // Provider gating: reject file/image parts on text-only models. The
+    // bundled registry's `inputModalities` is the source of truth; an
+    // empty/missing list means "unknown" and we let the request through.
+    if (attachmentKinds.length > 0) {
+      const meta = lookupModelMetadata(def.model);
+      if (meta.inputModalities && meta.inputModalities.length > 0) {
+        const allowed = new Set(meta.inputModalities);
+        const hasImg = attachmentKinds.includes("image");
+        const hasFile = attachmentKinds.includes("file");
+        if (hasImg && !allowed.has("image")) {
+          return c.json(
+            {
+              error: `Model '${def.model.model}' does not accept images`,
+              supportedModalities: meta.inputModalities,
+            },
+            400
+          );
+        }
+        if (
+          hasFile &&
+          !allowed.has("pdf") &&
+          !allowed.has("file")
+        ) {
+          return c.json(
+            {
+              error: `Model '${def.model.model}' does not accept PDFs/files`,
+              supportedModalities: meta.inputModalities,
+            },
+            400
+          );
+        }
+      }
+    }
+
+    // Ensure the session row exists with the caller-supplied id BEFORE
+    // we write the user message inside onFinish.
+    if (!manager.sessionStore.get(effectiveSessionId)) {
+      manager.sessionStore.create(agentId, { id: effectiveSessionId });
+    }
+
     const signal = c.req.raw.signal;
 
-    return streamSSE(c, async (stream) => {
-      try {
-        // Emit the resolved session id first so the client can pin it across turns
-        // (when called without a sessionId, the server creates one — without this
-        // chunk the client would create a fresh session on every send).
-        await stream.writeSSE({
-          event: "session",
-          data: JSON.stringify({ type: "session", sessionId: effectiveSessionId }),
+    const stream = createUIMessageStream<OpenAcmeUIMessage>({
+      execute: async ({ writer }) => {
+        // Surface the resolved sessionId for the client. `transient: true`
+        // keeps it out of the persisted parts (only useChat's onData fires).
+        writer.write({
+          type: "data-session",
+          data: { sessionId: effectiveSessionId },
+          transient: true,
         });
-
-        for await (const chunk of manager.chat(
-          agentId,
-          effectiveSessionId,
-          message,
-          { signal }
-        )) {
-          await stream.writeSSE({
-            event: chunk.type,
-            data: JSON.stringify(chunk),
+        const agent = manager.getAgent(agentId);
+        const result = await agent.runStream({
+          sessionId: effectiveSessionId,
+          history: committed,
+          signal,
+        });
+        writer.merge(result.toUIMessageStream({ sendStart: false }));
+      },
+      originalMessages: committed as unknown as OpenAcmeUIMessage[],
+      generateId: () => randomUUID(),
+      onFinish: ({ responseMessage }) => {
+        // Persist the new user message (last item in committed) + the
+        // assembled assistant response. Prior history was already in
+        // the DB and was just sent back to us by useChat.
+        try {
+          const lastUser = committed[committed.length - 1];
+          if (lastUser?.role === "user") {
+            manager.messageStore.append(effectiveSessionId, {
+              id: lastUser.id,
+              role: "user",
+              parts: lastUser.parts as unknown[],
+            });
+          }
+          manager.messageStore.append(effectiveSessionId, {
+            id: responseMessage.id,
+            role: responseMessage.role as "user" | "assistant",
+            parts: responseMessage.parts as unknown[],
           });
+
+          // Title from the assistant's first text-part if the session
+          // doesn't have one yet.
+          const session = manager.sessionStore.get(effectiveSessionId);
+          if (session && !session.title) {
+            const text = responseMessage.parts
+              .filter(
+                (p): p is { type: "text"; text: string } =>
+                  (p as { type?: unknown }).type === "text"
+              )
+              .map((p) => p.text)
+              .join(" ")
+              .slice(0, 80)
+              .replace(/\n/g, " ");
+            if (text) manager.sessionStore.updateTitle(effectiveSessionId, text);
+          }
+          manager.sessionStore.touch(effectiveSessionId);
+        } catch (e) {
+          console.error(
+            `Failed to persist chat turn: ${
+              e instanceof Error ? e.message : String(e)
+            }`
+          );
         }
-      } catch (error) {
-        // Abort during writeSSE (client disconnected) is expected — the
-        // agent has already received the signal and will yield `stopped` on
-        // its own. Don't surface it as a stream error.
-        if (signal.aborted) return;
-        await stream.writeSSE({
-          event: "error",
-          data: JSON.stringify({
-            type: "error",
-            error: error instanceof Error ? error.message : String(error),
-          }),
-        });
-      }
+      },
     });
+
+    return createUIMessageStreamResponse({ stream });
   });
 
   // ── Models ──
   // Returns each provider augmented with its curated model presets so the
-  // UI can render a model dropdown without a second round-trip.
+  // UI can render a model dropdown without a second round-trip. Each preset
+  // is also enriched with `inputModalities` from the bundled registry so
+  // the client can disable the file picker on text-only models.
   app.get("/api/models", (c) => {
     return c.json(
       listProviders().map((p) => ({
         ...p,
-        models: MODEL_PRESETS[p.id] ?? [],
+        models: (MODEL_PRESETS[p.id] ?? []).map((m) => {
+          const meta = lookupModelMetadata({
+            provider: p.id,
+            model: m.id,
+            auth: "api_key",
+          });
+          return {
+            ...m,
+            inputModalities: meta.inputModalities,
+          };
+        }),
       }))
     );
   });

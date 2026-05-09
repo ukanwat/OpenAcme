@@ -1,11 +1,11 @@
 import { Static, Box } from "ink";
-import type { Message } from "../state.js";
+import type { UIMessage } from "@openacme/agent-core";
 import { MessageBubble } from "./MessageBubble.js";
 import { Banner } from "./Banner.js";
 
 type StaticItem =
   | { kind: "banner"; agentName: string; modelLabel: string }
-  | { kind: "message"; msg: Message };
+  | { kind: "message"; msg: UIMessage };
 
 /**
  * Renders the chat scrollback. <Static> commits past frames once and never
@@ -21,8 +21,8 @@ export function MessageList({
 }: {
   agentName: string;
   modelLabel: string;
-  committed: Message[];
-  inflight: Message | null;
+  committed: UIMessage[];
+  inflight: UIMessage | null;
 }) {
   const items: StaticItem[] = [
     { kind: "banner", agentName, modelLabel },

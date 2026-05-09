@@ -43,7 +43,7 @@ Built-ins are loaded by importing them for side effects in `src/index.ts`. The o
 
 ## Session id via AsyncLocalStorage, not args
 
-`toolCallContext` (`session-context.ts`) is set by `Agent.chat`. Inside a handler:
+`toolCallContext` (`session-context.ts`) is set by `Agent.runStream`. Inside a handler:
 
 ```ts
 const sessionId = toolCallContext.getStore()?.sessionId;

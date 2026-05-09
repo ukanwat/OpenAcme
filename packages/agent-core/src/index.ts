@@ -32,8 +32,20 @@ export type { CompressOpts, CompressResult } from "./compression.js";
 export { classifyError } from "./error-classifier.js";
 export type { ClassifiedError, CompressionReason } from "./error-classifier.js";
 export type {
-  StreamChunk,
   TokenUsage,
   AgentConfig,
   CompressionConfig,
+  OpenAcmeDataParts,
+  OpenAcmeUIMessage,
 } from "./types.js";
+export {
+  inlineFileAttachments,
+  parseAttachmentUrl,
+  uiToModelMessages,
+} from "./messages.js";
+// Re-export the SDK types so consumers have one import path.
+export type {
+  UIMessage,
+  UIMessagePart,
+  ModelMessage,
+} from "ai";

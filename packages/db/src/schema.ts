@@ -37,6 +37,16 @@ export const sessions = sqliteTable(
   ]
 );
 
+/**
+ * One row per UIMessage. `parts` is `UIMessagePart[]` from the AI SDK,
+ * stored as JSON. Tool calls + their results live as `tool-${name}`
+ * parts inside the same assistant message — no per-step rows. File
+ * attachments are `file` parts whose `url` is `/api/attachments/<...>`,
+ * pointing at bytes on disk under `<dataDir>/attachments/<sessionId>/`.
+ *
+ * `content` / `tool_calls` / `tool_call_id` / `tool_name` columns are
+ * gone. The pre-UIMessage shape is dropped, no backfill — see plan.
+ */
 export const messages = sqliteTable(
   "messages",
   {
@@ -44,15 +54,9 @@ export const messages = sqliteTable(
     sessionId: text("session_id")
       .notNull()
       .references(() => sessions.id, { onDelete: "cascade" }),
-    // enum narrows the inferred TS type (`"system" | "user" | "assistant"
-    // | "tool"`) without changing the SQL — no CHECK constraint emitted.
-    role: text("role", {
-      enum: ["system", "user", "assistant", "tool"],
-    }).notNull(),
-    content: text("content"),
-    toolCalls: text("tool_calls"),
-    toolCallId: text("tool_call_id"),
-    toolName: text("tool_name"),
+    role: text("role", { enum: ["user", "assistant"] }).notNull(),
+    parts: text("parts").notNull(),
+    metadata: text("metadata"),
     createdAt: integer("created_at")
       .notNull()
       .default(sql`(unixepoch())`),
@@ -70,10 +74,11 @@ export const userProfiles = sqliteTable("user_profiles", {
 
 // Schema-derived types. `$inferSelect` is what comes out of a query;
 // `$inferInsert` is what callers pass in (defaults / nullables become
-// optional, the rest stay required).
+// optional, the rest stay required). The `parts` column is JSON-stringified
+// `UIMessagePart[]` — the store layer parses on read, stringifies on write.
 export type Session = typeof sessions.$inferSelect;
 export type NewSession = typeof sessions.$inferInsert;
-export type Message = typeof messages.$inferSelect;
-export type NewMessage = typeof messages.$inferInsert;
+export type MessageRow = typeof messages.$inferSelect;
+export type NewMessageRow = typeof messages.$inferInsert;
 export type UserProfile = typeof userProfiles.$inferSelect;
 export type NewUserProfile = typeof userProfiles.$inferInsert;

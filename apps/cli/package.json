@@ -46,6 +46,8 @@
     "cli-highlight": "^2.1.11",
     "commander": "^13.1.0",
     "figlet": "^1.11.0",
+    "fzf": "^0.5.2",
+    "globby": "^16.2.0",
     "gradient-string": "^3.0.0",
     "ink": "^7.0.2",
     "ink-big-text": "^2.0.0",

@@ -1,4 +1,4 @@
-import { Agent, type AgentConfig, type StreamChunk } from "@openacme/agent-core";
+import { Agent, type AgentConfig } from "@openacme/agent-core";
 import {
   createAgentStore,
   loadGlobalMcpServers,
@@ -44,6 +44,7 @@ export class AgentManager {
   private db: ReturnType<typeof createDatabase>;
   readonly sessionStore: SessionStore;
   readonly messageStore: MessageStore;
+  readonly attachmentsRoot: string;
   readonly agentStore: AgentStore;
   private config: Config;
   private mcpClients = new Map<string, MCPClient>();
@@ -52,7 +53,10 @@ export class AgentManager {
   constructor(config: Config) {
     this.config = config;
     this.db = createDatabase(config);
-    this.sessionStore = createSessionStore(this.db);
+    this.attachmentsRoot = path.join(config.dataDir, "attachments");
+    this.sessionStore = createSessionStore(this.db, {
+      attachmentsRoot: this.attachmentsRoot,
+    });
     this.messageStore = createMessageStore(this.db);
 
     // Agents live as folders at <dataDir>/agents/<id>/AGENT.md — the
@@ -316,22 +320,6 @@ export class AgentManager {
     this.agentStore.delete(id);
   }
 
-  /**
-   * Chat with an agent — returns an async iterable for streaming.
-   *
-   * `opts.signal` cancels the in-flight LLM call; the agent yields a
-   * single `{type: "stopped"}` chunk and returns.
-   */
-  async *chat(
-    agentId: string,
-    sessionId: string,
-    message: string,
-    opts?: { signal?: AbortSignal }
-  ): AsyncIterable<StreamChunk> {
-    const agent = this.getAgent(agentId);
-    yield* agent.chat(sessionId, message, opts);
-  }
-
   private createAgentFromDef(def: AgentDefinition): Agent {
     // Collect MCP tool names for this agent. `getStatus` now includes
     // disabled/failed/disconnected entries (their tool list is empty),
@@ -394,6 +382,7 @@ export class AgentManager {
       sessionStore: this.sessionStore,
       messageStore: this.messageStore,
       toolRegistry,
+      attachmentsRoot: this.attachmentsRoot,
     });
   }
 

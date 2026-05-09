@@ -1,10 +1,33 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
-import { ArrowUp, Bot, User, Wrench, Sparkles, MessageSquare, Trash2, Square } from "lucide-react";
+import {
+  useState,
+  useRef,
+  useEffect,
+  useCallback,
+  useMemo,
+} from "react";
+import {
+  ArrowUp,
+  Bot,
+  User,
+  Wrench,
+  Sparkles,
+  MessageSquare,
+  Trash2,
+  Square,
+  Paperclip,
+} from "lucide-react";
 import { toast } from "sonner";
+import { useChat } from "@ai-sdk/react";
+import { DefaultChatTransport, type UIMessage } from "ai";
+// `OpenAcmeUIMessage` carries our typed `data-*` parts (session, status).
+// useChat<OpenAcmeUIMessage>() type-checks the onData callback below and
+// any future `sendMessage` consumers that read message metadata.
+import type { OpenAcmeUIMessage } from "./lib/types";
 import { Sidebar } from "./components/Sidebar";
 import { Markdown } from "./components/Markdown";
+import { AttachmentChip } from "./components/AttachmentChip";
 import { API_BASE } from "./lib/api";
 import { Button } from "@/app/components/ui/button";
 import { Textarea } from "@/app/components/ui/textarea";
@@ -19,6 +42,10 @@ import {
   SelectValue,
 } from "@/app/components/ui/select";
 import type { ProviderInfo } from "./lib/types";
+import {
+  ALLOWED_UPLOAD_MIMES,
+  UPLOAD_LIMITS,
+} from "./lib/types";
 import { cn } from "@/app/lib/utils";
 
 interface Agent {
@@ -37,42 +64,41 @@ interface ModelOption {
   hint?: string;
 }
 
-type MessageRole = "user" | "assistant" | "tool" | "system";
-
-type AssistantPart =
-  | { kind: "text"; text: string }
-  | {
-      kind: "tool";
-      toolCallId: string;
-      toolName: string;
-      args: Record<string, unknown>;
-      result?: string;
-      status: "pending" | "done" | "error";
-    };
-
-interface ChatMessage {
-  id: string;
-  role: MessageRole;
-  // For user messages this is the user input. For assistant messages
-  // ordered streaming/restored content lives in `parts`; `content` is unused.
-  content: string;
-  parts?: AssistantPart[];
-}
-
 interface SessionSummary {
   id: string;
   title: string | null;
   agentId: string;
 }
 
+interface PendingAttachment {
+  /** Local id used to key chips before the upload finishes. */
+  localId: string;
+  status: "uploading" | "ready" | "error";
+  /** Server-assigned pendingId — present only after upload succeeds. */
+  pendingId?: string;
+  /** Pending URL `/api/attachments/__pending__/<id>/<file>` — used as
+   *  FileUIPart.url when sending. The server's chat handler rewrites it
+   *  to the committed `<sessionId>/<attId>/<file>` form. */
+  url?: string;
+  kind?: "image" | "file";
+  mediaType: string;
+  size: number;
+  filename: string;
+  /** Local blob URL for instant image preview while upload is in flight. */
+  previewUrl?: string;
+  error?: string;
+}
+
+type Part = UIMessage["parts"][number];
+
 export default function ChatPage() {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [activeAgentId, setActiveAgentId] = useState<string>("");
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string>("");
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
-  const [isStreaming, setIsStreaming] = useState(false);
+  const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
+  const [isDragging, setIsDragging] = useState(false);
   const [modelCatalog, setModelCatalog] = useState<{
     providers: ProviderInfo[];
     configured: Record<string, boolean>;
@@ -80,19 +106,136 @@ export default function ChatPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const atBottomRef = useRef(true);
   const justSentRef = useRef(false);
-  const streamCtrlRef = useRef<AbortController | null>(null);
-  // When sendMessage finishes a turn into a brand-new session, it sets
-  // activeSessionId — but our in-memory messages already reflect the turn.
-  // This ref tells the messages-loading effect to skip its refetch on that
-  // single transition so we don't clobber the streamed state with the
-  // server's (possibly not-yet-persisted) view.
-  const skipNextHistoryLoadRef = useRef(false);
-
-  // Abort any in-flight stream when the page unmounts (route change, reload).
+  // Refs to keep the transport's `body` callback in sync with current
+  // session/agent state without re-creating the transport on every render.
+  const activeAgentIdRef = useRef("");
+  const activeSessionIdRef = useRef("");
+  // Set when the server pins a new session id mid-stream via `data-session`.
+  // The history-loading effect would otherwise fetch /messages before the
+  // stream's `onFinish` persists anything and wipe the optimistic user bubble.
+  const skipNextHistoryFetchRef = useRef(false);
   useEffect(() => {
-    return () => streamCtrlRef.current?.abort();
+    activeAgentIdRef.current = activeAgentId;
+  }, [activeAgentId]);
+  useEffect(() => {
+    activeSessionIdRef.current = activeSessionId;
+  }, [activeSessionId]);
+
+  // ── Chat state via useChat ────────────────────────────────────────────
+  const transport = useMemo(
+    () =>
+      new DefaultChatTransport({
+        api: `${API_BASE}/api/chat`,
+        prepareSendMessagesRequest: ({ messages }) => ({
+          body: {
+            agentId: activeAgentIdRef.current,
+            sessionId: activeSessionIdRef.current || undefined,
+            messages,
+          },
+        }),
+      }),
+    []
+  );
+
+  // Active server-side status messages, keyed by `data-status.id`. Same id
+  // arriving again replaces the entry — the SDK's `data-${name}` parts
+  // reconciliation pattern (see CLAUDE.md "Custom data parts").
+  const [statusBoard, setStatusBoard] = useState<
+    Record<
+      string,
+      {
+        kind: "info" | "warn" | "error" | "compressing" | "compressed";
+        message: string;
+      }
+    >
+  >({});
+
+  const {
+    messages,
+    sendMessage,
+    setMessages,
+    status,
+    stop,
+    error,
+  } = useChat<OpenAcmeUIMessage>({
+    transport,
+    onData: (part) => {
+      // Typed by OpenAcmeDataParts: `part.type` narrows `part.data`.
+      if (part.type === "data-session") {
+        const newId = part.data.sessionId;
+        if (newId && newId !== activeSessionIdRef.current) {
+          const previousId = activeSessionIdRef.current;
+          skipNextHistoryFetchRef.current = true;
+          setActiveSessionId(newId);
+          setSessions((prev) => {
+            const parent = previousId
+              ? prev.find((s) => s.id === previousId)
+              : undefined;
+            const withoutParent = previousId
+              ? prev.filter((s) => s.id !== previousId)
+              : prev;
+            if (withoutParent.some((s) => s.id === newId)) return withoutParent;
+            return [
+              {
+                id: newId,
+                title: parent?.title ?? null,
+                agentId: activeAgentIdRef.current,
+              },
+              ...withoutParent,
+            ];
+          });
+        }
+        return;
+      }
+      if (part.type === "data-status") {
+        // Reconcile by id — same `id` from the server replaces an existing
+        // entry. Empty `message` clears the entry.
+        const { id, kind, message } = part.data;
+        setStatusBoard((prev) => {
+          if (!message) {
+            const { [id]: _drop, ...rest } = prev;
+            return rest;
+          }
+          return { ...prev, [id]: { kind, message } };
+        });
+      }
+    },
+    onError: (err) => {
+      toast.error("Chat failed", { description: err.message });
+    },
+    onFinish: ({ messages: finalMsgs }) => {
+      // The server's onFinish persists the user message with rewritten
+      // attachment URLs (pending → committed). The optimistic local
+      // user message still carries the dead `__pending__` URLs, so
+      // refetch to replace it with the canonical persisted shape.
+      // Cheap and only fires for turns that actually had attachments;
+      // text-only turns don't need it (URLs are stable).
+      const sid = activeSessionIdRef.current;
+      if (!sid) return;
+      const lastUser = [...finalMsgs].reverse().find((m) => m.role === "user");
+      const hasAttachment = lastUser?.parts.some(
+        (p: { type?: string; url?: string }) =>
+          p.type === "file" && (p.url ?? "").includes("/__pending__/")
+      );
+      if (!hasAttachment) return;
+      fetch(`${API_BASE}/api/sessions/${sid}/messages`)
+        .then((r) => r.json())
+        .then((data: OpenAcmeUIMessage[]) => setMessages(data))
+        .catch(() => {});
+    },
+  });
+
+  const isStreaming = status === "submitted" || status === "streaming";
+
+  // Abort any in-flight stream when the page unmounts.
+  useEffect(() => {
+    return () => {
+      if (status === "streaming") stop();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadAgentsAndSessions = useCallback(
@@ -157,43 +300,35 @@ export default function ChatPage() {
       })
       .catch((e) => {
         if ((e as Error).name === "AbortError") return;
-        // Soft fail: header just shows the current model as plain text.
       });
     return () => ctrl.abort();
   }, []);
 
+  // Load history when session changes.
   useEffect(() => {
     if (!activeSessionId) {
       setMessages([]);
       return;
     }
-    if (skipNextHistoryLoadRef.current) {
-      skipNextHistoryLoadRef.current = false;
+    if (skipNextHistoryFetchRef.current) {
+      // Server-pinned id arrived mid-stream; useChat already holds the
+      // optimistic user msg + the streaming assistant. Fetching now races
+      // with `onFinish`'s persist and would clobber the live state.
+      skipNextHistoryFetchRef.current = false;
       return;
     }
     const ctrl = new AbortController();
     fetch(`${API_BASE}/api/sessions/${activeSessionId}/messages`, { signal: ctrl.signal })
       .then((r) => r.json())
-      .then(
-        (
-          data: {
-            id: string;
-            role: string;
-            content: string | null;
-            toolCalls?: string | null;
-            toolCallId?: string | null;
-            toolName?: string | null;
-          }[]
-        ) => {
-          setMessages(rowsToChatMessages(data));
-        }
-      )
+      .then((data: OpenAcmeUIMessage[]) => {
+        setMessages(data);
+      })
       .catch((e) => {
         if ((e as Error).name === "AbortError") return;
         toast.error("Failed to load messages");
       });
     return () => ctrl.abort();
-  }, [activeSessionId]);
+  }, [activeSessionId, setMessages]);
 
   useEffect(() => {
     if (!atBottomRef.current && !justSentRef.current) return;
@@ -210,207 +345,214 @@ export default function ChatPage() {
 
   const activeAgent = agents.find((a) => a.id === activeAgentId);
 
-  const sendMessage = useCallback(async () => {
-    if (!input.trim() || isStreaming || !activeAgentId) return;
+  // Provider gate from the model catalog.
+  const activeModalities = (() => {
+    if (!activeAgent) return undefined;
+    const provider = modelCatalog.providers.find(
+      (p) => p.id === activeAgent.model.provider
+    );
+    if (!provider) return undefined;
+    return provider.models.find((m) => m.id === activeAgent.model.model)
+      ?.inputModalities;
+  })();
+  const acceptsAttachments =
+    !activeModalities ||
+    activeModalities.includes("image") ||
+    activeModalities.includes("pdf") ||
+    activeModalities.includes("file");
 
-    const userMessage: ChatMessage = {
-      id: crypto.randomUUID(),
-      role: "user",
-      content: input.trim(),
-    };
+  // ── Attachments ───────────────────────────────────────────────────────
+  const removePending = useCallback((localId: string) => {
+    setPendingAttachments((prev) => {
+      const target = prev.find((p) => p.localId === localId);
+      if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl);
+      return prev.filter((p) => p.localId !== localId);
+    });
+  }, []);
 
-    atBottomRef.current = true;
-    justSentRef.current = true;
-    setMessages((prev) => [...prev, userMessage]);
-    setInput("");
-    setIsStreaming(true);
-
-    const assistantId = crypto.randomUUID();
-    const assistantMessage: ChatMessage = {
-      id: assistantId,
-      role: "assistant",
-      content: "",
-      parts: [],
-    };
-    setMessages((prev) => [...prev, assistantMessage]);
-
-    const updateAsstParts = (
-      mutate: (parts: AssistantPart[]) => AssistantPart[]
-    ) => {
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantId ? { ...m, parts: mutate(m.parts ?? []) } : m
-        )
-      );
-    };
-
-    let newSessionId = "";
-    let streamErrored = false;
-    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
-    const ctrl = new AbortController();
-    streamCtrlRef.current = ctrl;
-
-    const handleSSELine = (line: string) => {
-      if (!line.startsWith("data:")) return;
-      let data: { type: string; [k: string]: unknown };
-      try {
-        data = JSON.parse(line.slice(5).trim());
-      } catch {
-        return;
-      }
-      dispatchSSE(data);
-    };
-
-    const dispatchSSE = (data: { type: string; [k: string]: unknown }) => {
-      switch (data.type) {
-        case "session":
-          newSessionId = (data.sessionId as string) || newSessionId;
-          break;
-        case "text-delta": {
-          const delta = data.text as string;
-          updateAsstParts((parts) => {
-            const last = parts[parts.length - 1];
-            if (last && last.kind === "text") {
-              return [
-                ...parts.slice(0, -1),
-                { kind: "text", text: last.text + delta },
-              ];
-            }
-            return [...parts, { kind: "text", text: delta }];
-          });
-          break;
-        }
-        case "tool-call":
-          updateAsstParts((parts) => [
-            ...parts,
-            {
-              kind: "tool",
-              toolCallId: data.toolCallId as string,
-              toolName: data.toolName as string,
-              args: data.args as Record<string, unknown>,
-              status: "pending",
-            },
-          ]);
-          break;
-        case "tool-result":
-          updateAsstParts((parts) =>
-            parts.map((p) =>
-              p.kind === "tool" && p.toolCallId === data.toolCallId
-                ? { ...p, result: data.result as string, status: "done" }
-                : p
-            )
+  const uploadFiles = useCallback(
+    async (files: File[]) => {
+      if (files.length === 0) return;
+      const totalNow = pendingAttachments.reduce((acc, p) => acc + p.size, 0);
+      let totalBytes = totalNow;
+      const accepted: File[] = [];
+      for (const f of files) {
+        if (
+          pendingAttachments.length + accepted.length >=
+          UPLOAD_LIMITS.perRequestFiles
+        ) {
+          toast.error(
+            `Max ${UPLOAD_LIMITS.perRequestFiles} attachments per turn`
           );
           break;
-        case "error":
-          streamErrored = true;
-          toast.error("Stream error", { description: data.error as string });
-          break;
-        case "stopped":
-          // Server-confirmed user cancel. Partial parts already in the
-          // assistant message stay visible; the finally block clears
-          // isStreaming and the send button reappears.
-          break;
-        case "done":
-          break;
-      }
-    };
-
-    try {
-      const response = await fetch(`${API_BASE}/api/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          agentId: activeAgentId,
-          sessionId: activeSessionId || undefined,
-          message: userMessage.content,
-        }),
-        signal: ctrl.signal,
-      });
-
-      if (!response.ok) {
-        let serverMessage = response.statusText;
-        try {
-          const body = (await response.json()) as { error?: string };
-          if (body?.error) serverMessage = body.error;
-        } catch {
-          // body wasn't JSON — keep statusText
         }
-        throw new Error(serverMessage);
+        if (f.size > UPLOAD_LIMITS.perFileBytes) {
+          toast.error(`${f.name}: too large (max 5 MB)`);
+          continue;
+        }
+        totalBytes += f.size;
+        if (totalBytes > UPLOAD_LIMITS.perRequestBytes) {
+          toast.error("Upload would exceed 25 MB total");
+          break;
+        }
+        if (
+          !ALLOWED_UPLOAD_MIMES.includes(
+            f.type as (typeof ALLOWED_UPLOAD_MIMES)[number]
+          )
+        ) {
+          toast.error(`${f.name}: unsupported type (${f.type || "unknown"})`);
+          continue;
+        }
+        accepted.push(f);
       }
+      if (accepted.length === 0) return;
 
-      reader = response.body?.getReader();
-      if (!reader) throw new Error("No response body");
-      const decoder = new TextDecoder();
-      let buffer = "";
+      const records: PendingAttachment[] = accepted.map((f) => ({
+        localId: crypto.randomUUID(),
+        status: "uploading",
+        mediaType: f.type,
+        size: f.size,
+        filename: f.name,
+        previewUrl: f.type.startsWith("image/")
+          ? URL.createObjectURL(f)
+          : undefined,
+      }));
+      setPendingAttachments((prev) => [...prev, ...records]);
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-        for (const line of lines) handleSSELine(line);
+      const form = new FormData();
+      for (let i = 0; i < accepted.length; i++) {
+        form.append(`f${i}`, accepted[i]!, accepted[i]!.name);
       }
-
-      // Flush any final line that didn't end with a newline.
-      const tail = buffer + decoder.decode();
-      if (tail) handleSSELine(tail);
-    } catch (err) {
-      if ((err as Error).name === "AbortError") {
-        // User navigated away or component unmounted; stay silent.
-        streamErrored = true;
-      } else {
-        streamErrored = true;
-        toast.error("Failed to send", {
+      try {
+        const res = await fetch(`${API_BASE}/api/uploads`, {
+          method: "POST",
+          body: form,
+        });
+        if (!res.ok) {
+          const body = (await res.json().catch(() => ({}))) as {
+            error?: string;
+          };
+          throw new Error(body.error || res.statusText);
+        }
+        const data = (await res.json()) as {
+          attachments: Array<{
+            pendingId: string;
+            kind: "image" | "file";
+            mediaType: string;
+            size: number;
+            filename: string;
+            url: string;
+          }>;
+        };
+        setPendingAttachments((prev) =>
+          prev.map((p) => {
+            const matchIdx = records.findIndex(
+              (r) => r.localId === p.localId
+            );
+            if (matchIdx === -1) return p;
+            const srv = data.attachments[matchIdx];
+            if (!srv)
+              return { ...p, status: "error", error: "no server id" };
+            return {
+              ...p,
+              status: "ready",
+              pendingId: srv.pendingId,
+              url: srv.url,
+              kind: srv.kind,
+              mediaType: srv.mediaType,
+            };
+          })
+        );
+      } catch (err) {
+        setPendingAttachments((prev) =>
+          prev.map((p) =>
+            records.some((r) => r.localId === p.localId)
+              ? {
+                  ...p,
+                  status: "error",
+                  error:
+                    err instanceof Error ? err.message : String(err),
+                }
+              : p
+          )
+        );
+        toast.error("Upload failed", {
           description: err instanceof Error ? err.message : String(err),
         });
       }
-    } finally {
-      reader?.cancel().catch(() => {});
-      if (streamCtrlRef.current === ctrl) streamCtrlRef.current = null;
-      setIsStreaming(false);
-      inputRef.current?.focus();
+    },
+    [pendingAttachments]
+  );
 
-      if (streamErrored) {
-        setMessages((prev) =>
-          prev.filter(
-            (m) => m.id !== assistantId || (m.parts?.length ?? 0) > 0
-          )
-        );
-      } else if (newSessionId && newSessionId !== activeSessionId) {
-        // Two cases land here:
-        //  - brand-new session (activeSessionId was empty before this turn);
-        //  - mid-stream compression swap (server emitted `session` with the
-        //    new child id; the parent is now hidden by listActive).
-        // In both cases the in-memory messages are authoritative for this
-        // render — tell the history effect to skip its refetch.
-        skipNextHistoryLoadRef.current = true;
-        const previousId = activeSessionId;
-        setActiveSessionId(newSessionId);
-        setSessions((prev) => {
-          // Drop the parent (now hidden by listActive) and ensure the child
-          // is at the top with the parent's title preserved if available.
-          const parent = previousId
-            ? prev.find((s) => s.id === previousId)
-            : undefined;
-          const withoutParent = previousId
-            ? prev.filter((s) => s.id !== previousId)
-            : prev;
-          if (withoutParent.some((s) => s.id === newSessionId)) return withoutParent;
-          return [
-            { id: newSessionId, title: parent?.title ?? null, agentId: activeAgentId },
-            ...withoutParent,
-          ];
-        });
+  // Drag-and-drop on the textarea container.
+  const onDragOver = useCallback(
+    (e: React.DragEvent) => {
+      if (!Array.from(e.dataTransfer.types).includes("Files")) return;
+      if (!acceptsAttachments) return;
+      e.preventDefault();
+      setIsDragging(true);
+    },
+    [acceptsAttachments]
+  );
+  const onDragLeave = useCallback((e: React.DragEvent) => {
+    if (!Array.from(e.dataTransfer.types).includes("Files")) return;
+    e.preventDefault();
+    setIsDragging(false);
+  }, []);
+  const onDrop = useCallback(
+    (e: React.DragEvent) => {
+      if (!Array.from(e.dataTransfer.types).includes("Files")) return;
+      e.preventDefault();
+      setIsDragging(false);
+      if (!acceptsAttachments) {
+        toast.error("Active model accepts text only");
+        return;
       }
+      const files = Array.from(e.dataTransfer.files);
+      void uploadFiles(files);
+    },
+    [uploadFiles, acceptsAttachments]
+  );
+
+  const send = useCallback(() => {
+    if (!input.trim() && pendingAttachments.length === 0) return;
+    if (isStreaming || !activeAgentId) return;
+    if (pendingAttachments.some((p) => p.status === "uploading")) {
+      toast.error("Wait for uploads to finish");
+      return;
     }
-  }, [input, isStreaming, activeAgentId, activeSessionId]);
+    const ready = pendingAttachments.filter(
+      (p) => p.status === "ready" && p.url
+    );
+    const text = input.trim();
+    atBottomRef.current = true;
+    justSentRef.current = true;
+    setInput("");
+    // Free preview blobs — the chat now renders via /api/attachments URLs.
+    for (const p of pendingAttachments) {
+      if (p.previewUrl) URL.revokeObjectURL(p.previewUrl);
+    }
+    setPendingAttachments([]);
+
+    void sendMessage({
+      role: "user",
+      parts: [
+        ...(text ? [{ type: "text" as const, text }] : []),
+        ...ready.map((p) => ({
+          type: "file" as const,
+          url: p.url!,
+          mediaType: p.mediaType,
+          filename: p.filename,
+        })),
+      ],
+    });
+  }, [input, isStreaming, activeAgentId, pendingAttachments, sendMessage]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.nativeEvent.isComposing) return;
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      sendMessage();
+      send();
     }
   };
 
@@ -423,7 +565,9 @@ export default function ChatPage() {
     async (id: string) => {
       if (!window.confirm("Delete this chat? This cannot be undone.")) return;
       try {
-        const res = await fetch(`${API_BASE}/api/sessions/${id}`, { method: "DELETE" });
+        const res = await fetch(`${API_BASE}/api/sessions/${id}`, {
+          method: "DELETE",
+        });
         if (!res.ok) throw new Error(await res.text());
         setSessions((prev) => prev.filter((s) => s.id !== id));
         if (activeSessionId === id) {
@@ -436,7 +580,7 @@ export default function ChatPage() {
         });
       }
     },
-    [activeSessionId]
+    [activeSessionId, setMessages]
   );
 
   return (
@@ -528,7 +672,6 @@ export default function ChatPage() {
                 catalog={modelCatalog}
                 onChange={async (next) => {
                   const prev = activeAgent;
-                  // Optimistic local update so the trigger label flips immediately.
                   setAgents((list) =>
                     list.map((a) =>
                       a.id === prev.id
@@ -546,7 +689,6 @@ export default function ChatPage() {
                     });
                     if (!res.ok) throw new Error(await res.text());
                     const fresh = await res.json() as { model: { provider: string; model: string } };
-                    // Replace optimistic patch with server truth so auth/baseUrl/headers stay intact.
                     setAgents((list) =>
                       list.map((a) =>
                         a.id === prev.id
@@ -556,7 +698,6 @@ export default function ChatPage() {
                     );
                     toast.success(`Switched to ${next.label}`);
                   } catch (err) {
-                    // Roll back on failure.
                     setAgents((list) => list.map((a) => (a.id === prev.id ? prev : a)));
                     toast.error("Failed to switch model", {
                       description: err instanceof Error ? err.message : String(err),
@@ -586,60 +727,143 @@ export default function ChatPage() {
             className="flex-1 overflow-y-auto"
           >
             <div className="mx-auto max-w-3xl space-y-6 px-6 py-6">
-              {messages.map((msg) => (
+              {messages.map((msg, i) => (
                 <MessageBubble
                   key={msg.id}
                   message={msg}
                   isStreaming={
                     isStreaming &&
                     msg.role === "assistant" &&
-                    msg.id === messages[messages.length - 1]?.id
+                    i === messages.length - 1
                   }
                 />
               ))}
-
+              {error && (
+                <div className="text-xs text-destructive px-1">
+                  {error.message}
+                </div>
+              )}
+              {Object.entries(statusBoard).map(([id, s]) => (
+                <div
+                  key={id}
+                  className={cn(
+                    "text-xs px-2 py-1 rounded-md border",
+                    s.kind === "error" &&
+                      "border-destructive/40 bg-destructive/5 text-destructive",
+                    s.kind === "warn" &&
+                      "border-yellow-500/40 bg-yellow-500/5",
+                    (s.kind === "info" ||
+                      s.kind === "compressing" ||
+                      s.kind === "compressed") &&
+                      "border-border bg-muted/40 text-muted-foreground"
+                  )}
+                >
+                  {s.message}
+                </div>
+              ))}
               <div ref={messagesEndRef} />
             </div>
           </div>
         )}
 
         <div className="shrink-0 border-t bg-background p-4">
-          <div className="mx-auto flex max-w-3xl items-end gap-2 rounded-xl border bg-card p-2 shadow-sm focus-within:border-ring/50 focus-within:ring-2 focus-within:ring-ring/30 transition">
-            <Textarea
-              ref={inputRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={
-                activeAgent ? `Message ${activeAgent.name}...` : "Select an agent..."
-              }
-              disabled={isStreaming || !activeAgentId}
-              rows={1}
-              className="min-h-[44px] max-h-48 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 font-sans"
-            />
-            {isStreaming ? (
-              <Button
-                size="icon"
-                variant="destructive"
-                onClick={() => streamCtrlRef.current?.abort()}
-                className="shrink-0"
-                aria-label="Stop generating"
-              >
-                <Square className="size-4 fill-current" />
-                <span className="sr-only">Stop</span>
-              </Button>
-            ) : (
-              <Button
-                size="icon"
-                onClick={sendMessage}
-                disabled={!input.trim() || !activeAgentId}
-                className="shrink-0"
-                aria-label="Send message"
-              >
-                <ArrowUp className="size-4" />
-                <span className="sr-only">Send</span>
-              </Button>
+          <div
+            className={cn(
+              "mx-auto max-w-3xl rounded-xl border bg-card p-2 shadow-sm focus-within:border-ring/50 focus-within:ring-2 focus-within:ring-ring/30 transition",
+              isDragging && "border-primary/60 bg-primary/5 ring-2 ring-primary/30"
             )}
+            onDragOver={onDragOver}
+            onDragLeave={onDragLeave}
+            onDrop={onDrop}
+          >
+            {pendingAttachments.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 px-1 pb-2">
+                {pendingAttachments.map((p) => (
+                  <AttachmentChip
+                    key={p.localId}
+                    kind={
+                      p.kind ?? (p.mediaType.startsWith("image/") ? "image" : "file")
+                    }
+                    mediaType={p.mediaType}
+                    size={p.size}
+                    name={p.filename}
+                    status={p.status}
+                    error={p.error}
+                    removable
+                    onRemove={() => removePending(p.localId)}
+                  />
+                ))}
+              </div>
+            )}
+            <div className="flex items-end gap-2">
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept={ALLOWED_UPLOAD_MIMES.join(",")}
+                className="hidden"
+                onChange={(e) => {
+                  const files = e.target.files ? Array.from(e.target.files) : [];
+                  void uploadFiles(files);
+                  e.target.value = "";
+                }}
+              />
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isStreaming || !activeAgentId || !acceptsAttachments}
+                className="shrink-0"
+                aria-label="Attach files"
+                title={
+                  acceptsAttachments
+                    ? "Attach files (images, PDFs)"
+                    : "Active model accepts text only — switch with the model picker"
+                }
+              >
+                <Paperclip className="size-4" />
+              </Button>
+              <Textarea
+                ref={inputRef}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder={
+                  activeAgent ? `Message ${activeAgent.name}...` : "Select an agent..."
+                }
+                disabled={isStreaming || !activeAgentId}
+                rows={1}
+                className="min-h-[44px] max-h-48 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 font-sans"
+              />
+              {isStreaming ? (
+                <Button
+                  size="icon"
+                  variant="destructive"
+                  onClick={() => stop()}
+                  className="shrink-0"
+                  aria-label="Stop generating"
+                >
+                  <Square className="size-4 fill-current" />
+                  <span className="sr-only">Stop</span>
+                </Button>
+              ) : (
+                <Button
+                  size="icon"
+                  onClick={send}
+                  disabled={
+                    (!input.trim() && pendingAttachments.length === 0) ||
+                    !activeAgentId ||
+                    pendingAttachments.some((p) => p.status === "uploading")
+                  }
+                  className="shrink-0"
+                  aria-label="Send message"
+                >
+                  <ArrowUp className="size-4" />
+                  <span className="sr-only">Send</span>
+                </Button>
+              )}
+            </div>
           </div>
           <p className="mx-auto mt-2 max-w-3xl px-1 text-[11px] text-muted-foreground">
             Press{" "}
@@ -662,98 +886,6 @@ export default function ChatPage() {
   );
 }
 
-function rowsToChatMessages(
-  rows: {
-    id: string;
-    role: string;
-    content: string | null;
-    toolCalls?: string | null;
-    toolCallId?: string | null;
-    toolName?: string | null;
-  }[]
-): ChatMessage[] {
-  const out: ChatMessage[] = [];
-  let asstId: string | null = null;
-  let asstParts: AssistantPart[] = [];
-
-  const flushAssistant = () => {
-    if (!asstId || asstParts.length === 0) {
-      asstId = null;
-      asstParts = [];
-      return;
-    }
-    out.push({ id: asstId, role: "assistant", content: "", parts: asstParts });
-    asstId = null;
-    asstParts = [];
-  };
-
-  for (const row of rows) {
-    if (row.role === "system") continue;
-
-    if (row.role === "user") {
-      flushAssistant();
-      out.push({
-        id: row.id,
-        role: "user",
-        content: row.content ?? "",
-      });
-      continue;
-    }
-
-    if (row.role === "assistant") {
-      if (asstId === null) asstId = row.id;
-      if (row.content) {
-        asstParts.push({ kind: "text", text: row.content });
-      }
-      if (row.toolCalls) {
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(row.toolCalls);
-        } catch {
-          parsed = null;
-        }
-        if (Array.isArray(parsed)) {
-          for (const c of parsed) {
-            if (!c || typeof c !== "object") continue;
-            const e = c as {
-              toolCallId?: string;
-              id?: string;
-              toolName?: string;
-              name?: string;
-              args?: unknown;
-            };
-            const toolCallId = e.toolCallId ?? e.id ?? "";
-            const toolName = e.toolName ?? e.name ?? "";
-            if (!toolCallId || !toolName) continue;
-            asstParts.push({
-              kind: "tool",
-              toolCallId,
-              toolName,
-              args: (e.args as Record<string, unknown>) ?? {},
-              status: "pending",
-            });
-          }
-        }
-      }
-      continue;
-    }
-
-    if (row.role === "tool") {
-      if (!row.toolCallId) continue;
-      const target = asstParts.find(
-        (p): p is Extract<AssistantPart, { kind: "tool" }> =>
-          p.kind === "tool" && p.toolCallId === row.toolCallId
-      );
-      if (!target) continue;
-      target.result = row.content ?? "";
-      target.status = "done";
-    }
-  }
-
-  flushAssistant();
-  return out;
-}
-
 function Avatar({ role }: { role: "user" | "assistant" }) {
   return (
     <div
@@ -769,16 +901,40 @@ function Avatar({ role }: { role: "user" | "assistant" }) {
   );
 }
 
+function isToolPart(p: Part): boolean {
+  return (
+    typeof (p as { type?: unknown }).type === "string" &&
+    (p as { type: string }).type.startsWith("tool-")
+  );
+}
+
 function MessageBubble({
   message,
   isStreaming,
 }: {
-  message: ChatMessage;
+  message: UIMessage;
   isStreaming: boolean;
 }) {
-  if (message.role !== "user" && message.role !== "assistant") return null;
+  if (message.role === "system") return null;
 
   if (message.role === "user") {
+    const text = message.parts
+      .filter(
+        (p): p is Extract<Part, { type: "text" }> =>
+          (p as { type?: unknown }).type === "text"
+      )
+      .map((p) => (p as { text: string }).text)
+      .join("\n");
+    const files = message.parts.filter(
+      (p): p is Extract<Part, { type: "file" }> =>
+        (p as { type?: unknown }).type === "file"
+    );
+    const images = files.filter(
+      (f) => (f as { mediaType: string }).mediaType.startsWith("image/")
+    );
+    const others = files.filter(
+      (f) => !(f as { mediaType: string }).mediaType.startsWith("image/")
+    );
     return (
       <div className="flex gap-3">
         <Avatar role="user" />
@@ -786,18 +942,68 @@ function MessageBubble({
           <div className="text-xs font-medium text-muted-foreground capitalize">
             user
           </div>
-          <div className="text-sm break-words whitespace-pre-wrap">
-            {message.content}
-          </div>
+          {text && (
+            <div className="text-sm break-words whitespace-pre-wrap">
+              {text}
+            </div>
+          )}
+          {images.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {images.map((f, i) => {
+                const part = f as unknown as {
+                  url: string;
+                  filename?: string;
+                };
+                return (
+                  <a
+                    key={i}
+                    href={`${API_BASE}${part.url}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="block overflow-hidden rounded-lg border bg-muted"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={`${API_BASE}${part.url}`}
+                      alt={part.filename ?? "attachment"}
+                      className="max-h-64 max-w-sm object-contain"
+                    />
+                  </a>
+                );
+              })}
+            </div>
+          )}
+          {others.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {others.map((f, i) => {
+                const part = f as unknown as {
+                  url: string;
+                  mediaType: string;
+                  filename?: string;
+                };
+                return (
+                  <AttachmentChip
+                    key={i}
+                    kind="file"
+                    mediaType={part.mediaType}
+                    size={0}
+                    name={part.filename ?? "file"}
+                    href={`${API_BASE}${part.url}`}
+                  />
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
     );
   }
 
-  const parts = message.parts ?? [];
+  // assistant — render parts in order
+  const parts = message.parts;
   const lastTextIdx = (() => {
     for (let i = parts.length - 1; i >= 0; i--) {
-      if (parts[i]?.kind === "text") return i;
+      if ((parts[i] as { type?: unknown }).type === "text") return i;
     }
     return -1;
   })();
@@ -809,7 +1015,6 @@ function MessageBubble({
         <div className="text-xs font-medium text-muted-foreground capitalize">
           assistant
         </div>
-
         {parts.length === 0 && isStreaming && (
           <div className="flex items-center gap-1.5 pt-2 text-muted-foreground">
             <span className="size-1.5 animate-pulse rounded-full bg-current [animation-delay:0ms]" />
@@ -817,37 +1022,64 @@ function MessageBubble({
             <span className="size-1.5 animate-pulse rounded-full bg-current [animation-delay:320ms]" />
           </div>
         )}
-
-        {parts.map((part, i) =>
-          part.kind === "tool" ? (
-            <div
-              key={i}
-              className="rounded-lg border border-border bg-muted/60 overflow-hidden"
-            >
-              <div className="flex items-center gap-2 border-b border-border/80 bg-muted px-3 py-2 text-xs">
-                <Wrench className="size-3 text-primary" />
-                <span className="font-mono font-medium">{part.toolName}</span>
-              </div>
-              <pre className="overflow-x-auto px-3 py-2 font-mono text-[11px] text-muted-foreground">
-                {JSON.stringify(part.args, null, 2)}
-              </pre>
-              {part.result && (
-                <div className="border-t border-border/80 bg-background/40 px-3 py-2 font-mono text-[11px]">
-                  {part.result.length > 600
-                    ? part.result.slice(0, 600) + "…"
-                    : part.result}
+        {parts.map((part, i) => {
+          if (isToolPart(part)) {
+            const tp = part as unknown as {
+              type: string;
+              toolCallId: string;
+              state: string;
+              input?: unknown;
+              output?: unknown;
+              errorText?: string;
+            };
+            const toolName = tp.type.slice("tool-".length);
+            return (
+              <div
+                key={i}
+                className="rounded-lg border border-border bg-muted/60 overflow-hidden"
+              >
+                <div className="flex items-center gap-2 border-b border-border/80 bg-muted px-3 py-2 text-xs">
+                  <Wrench className="size-3 text-primary" />
+                  <span className="font-mono font-medium">{toolName}</span>
+                  <span className="text-muted-foreground">{tp.state}</span>
                 </div>
-              )}
-            </div>
-          ) : part.text ? (
-            <div key={i} className="text-sm break-words">
-              <Markdown>{part.text}</Markdown>
-              {isStreaming && i === lastTextIdx && (
-                <span className="ml-0.5 inline-block h-4 w-[2px] translate-y-[3px] bg-primary animate-pulse" />
-              )}
-            </div>
-          ) : null
-        )}
+                {tp.input !== undefined && (
+                  <pre className="overflow-x-auto px-3 py-2 font-mono text-[11px] text-muted-foreground">
+                    {JSON.stringify(tp.input, null, 2)}
+                  </pre>
+                )}
+                {(tp.output !== undefined || tp.errorText !== undefined) && (
+                  <div className="border-t border-border/80 bg-background/40 px-3 py-2 font-mono text-[11px]">
+                    {(() => {
+                      const result =
+                        tp.errorText ??
+                        (typeof tp.output === "string"
+                          ? tp.output
+                          : JSON.stringify(tp.output, null, 2));
+                      return result.length > 600
+                        ? result.slice(0, 600) + "…"
+                        : result;
+                    })()}
+                  </div>
+                )}
+              </div>
+            );
+          }
+          if ((part as { type?: unknown }).type === "text") {
+            const text = (part as { text: string }).text;
+            if (!text) return null;
+            return (
+              <div key={i} className="text-sm break-words">
+                <Markdown>{text}</Markdown>
+                {isStreaming && i === lastTextIdx && (
+                  <span className="ml-0.5 inline-block h-4 w-[2px] translate-y-[3px] bg-primary animate-pulse" />
+                )}
+              </div>
+            );
+          }
+          // reasoning, file, source, data-* — silently ignore in v1.
+          return null;
+        })}
       </div>
     </div>
   );
@@ -863,9 +1095,6 @@ function ModelQuickSwitch({
   onChange: (next: ModelOption) => void;
 }) {
   const value = `${agent.model.provider}/${agent.model.model}`;
-  // Show a provider's models if it has credentials OR it's the agent's current
-  // provider (so a user who explicitly set up an Ollama/Custom agent can still
-  // switch between models within that provider).
   const options: ModelOption[] = [];
   for (const p of catalog.providers) {
     if (!catalog.configured[p.id] && p.id !== agent.model.provider) continue;
@@ -883,8 +1112,6 @@ function ModelQuickSwitch({
     (acc[opt.providerName] ??= []).push(opt);
     return acc;
   }, {});
-  // If the current agent's model isn't in the curated presets, surface it as
-  // a sticky "Current" group so the trigger has something to show.
   const isKnown = options.some(
     (o) => o.provider === agent.model.provider && o.id === agent.model.model
   );

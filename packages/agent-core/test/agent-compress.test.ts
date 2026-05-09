@@ -1,54 +1,32 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import Database from "better-sqlite3";
-import {
-  applySchema,
-  createSessionStore,
-  createMessageStore,
-  type Message,
-} from "@openacme/db";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { applySchema, createSessionStore, createMessageStore } from "@openacme/db";
 import type { ToolRegistry } from "@openacme/tools";
+import type { UIMessage } from "ai";
 import { Agent } from "../src/agent.js";
-import type { AgentConfig, StreamChunk } from "../src/types.js";
+import type { AgentConfig } from "../src/types.js";
 
-// Hoisted vi.fn() instances so we can rewrite their behavior per-test
-// without re-importing modules. `streamText` and `generateText` from `ai`
-// are mocked; `getModel` from llm-provider is stubbed to a sentinel — the
-// SDK calls never reach a real provider.
-const { streamTextMock, generateTextMock, getModelMock, APICallErrorMock } =
-  vi.hoisted(() => {
-    class APICallErrorMock extends Error {
-      statusCode?: number;
-      responseBody?: string;
-      url = "";
-      requestBodyValues = {};
-      isRetryable = false;
-      constructor(msg: string, status?: number, responseBody?: string) {
-        super(msg);
-        this.statusCode = status;
-        this.responseBody = responseBody;
-      }
-      static isInstance(e: unknown): e is APICallErrorMock {
-        return e instanceof APICallErrorMock;
-      }
-    }
-    return {
-      streamTextMock: vi.fn(),
-      generateTextMock: vi.fn(),
-      getModelMock: vi.fn(() => ({})),
-      APICallErrorMock,
-    };
-  });
-
-vi.mock("ai", () => ({
-  streamText: streamTextMock,
-  generateText: generateTextMock,
-  // v5+ stop-condition factory; agent.ts imports it but the mocked streamText
-  // ignores the value, so any sentinel works.
-  stepCountIs: (n: number) => ({ kind: "step-count", count: n }),
-  // The classifier imports APICallError statically — provide a stand-in
-  // that satisfies `APICallError.isInstance(err)`.
-  APICallError: APICallErrorMock,
+// `streamText` and `generateText` from `ai` are mocked. The agent's
+// `runStream` returns whatever `streamText` returns; for our tests that's
+// a stub object with a `usage` Promise — we don't drive the fullStream
+// loop here, that's the host's job.
+const { streamTextMock, generateTextMock, getModelMock } = vi.hoisted(() => ({
+  streamTextMock: vi.fn(),
+  generateTextMock: vi.fn(),
+  getModelMock: vi.fn(() => ({})),
 }));
+
+vi.mock("ai", async () => {
+  const actual = await vi.importActual<typeof import("ai")>("ai");
+  return {
+    ...actual,
+    streamText: streamTextMock,
+    generateText: generateTextMock,
+  };
+});
 
 vi.mock("@openacme/llm-provider", () => ({
   getModel: getModelMock,
@@ -66,59 +44,19 @@ const stubToolRegistry = {
   getVercelTools: () => ({}),
 } as unknown as ToolRegistry;
 
-interface StreamResultOpts {
-  inputTokens?: number;
-  text?: string;
-}
-
-function mockStreamResult(opts: StreamResultOpts = {}) {
-  return {
-    fullStream: (async function* () {
-      // Empty — text-delta path isn't under test here.
-    })(),
-    usage: Promise.resolve({
-      inputTokens: opts.inputTokens ?? 100,
-      outputTokens: 10,
-      totalTokens: (opts.inputTokens ?? 100) + 10,
-    }),
-    steps: Promise.resolve([
-      { text: opts.text ?? "ok", toolCalls: [], toolResults: [] },
-    ]),
-  };
-}
-
-function failingStreamResult(error: unknown) {
-  // Throw inside the for-await loop so the same code path that handles
-  // network errors is exercised. Attach `.catch(() => {})` to the unawaited
-  // promises so vitest doesn't flag them as unhandled rejections — the
-  // agent code never reaches the `await result.usage` after fullStream
-  // throws, but the rejected promises still exist.
-  const usage = Promise.reject(error);
-  const steps = Promise.reject(error);
-  usage.catch(() => {});
-  steps.catch(() => {});
-  return {
-    fullStream: (async function* () {
-      throw error;
-    })(),
-    usage,
-    steps,
-  };
-}
-
 function makeAgent(opts: {
   db: Database.Database;
   thresholdTokens: number | null;
   protectFirstN?: number;
   tailTokenBudget?: number;
-  summarizerModel?: AgentConfig["model"];
+  attachmentsRoot?: string;
 }): Agent {
   const sessionStore = createSessionStore(opts.db);
   const messageStore = createMessageStore(opts.db);
   const config: AgentConfig = {
     id: "a1",
     name: "Agent A1",
-    model: { provider: "openai", model: "gpt-test", apiKey: "x" },
+    model: { provider: "openai", model: "gpt-test", apiKey: "x", auth: "api_key" },
     persona: "test",
     tools: [],
     maxSteps: 1,
@@ -130,51 +68,33 @@ function makeAgent(opts: {
       tailTokenBudget: opts.tailTokenBudget ?? 200,
       summaryTargetRatio: 0.2,
       summarizerInputCharBudget: 80_000,
-      summarizerModel: opts.summarizerModel,
     },
   };
   return new Agent(config, {
     sessionStore,
     messageStore,
     toolRegistry: stubToolRegistry,
+    attachmentsRoot: opts.attachmentsRoot ?? "/tmp/openacme-test-attachments",
   });
 }
 
-async function drain(stream: AsyncIterable<StreamChunk>): Promise<StreamChunk[]> {
-  const out: StreamChunk[] = [];
-  for await (const c of stream) out.push(c);
-  return out;
+function userUI(text: string): UIMessage {
+  return {
+    id: `u-${text}`,
+    role: "user",
+    parts: [{ type: "text", text }],
+  } as UIMessage;
 }
 
-function seedHistory(
-  db: Database.Database,
-  sessionId: string,
-  pairs: Array<{ user: string; assistant: string }>
-): void {
-  const messages = createMessageStore(db);
-  const rows: Array<Omit<Message, "id" | "createdAt">> = [];
-  for (const p of pairs) {
-    rows.push({
-      sessionId,
-      role: "user",
-      content: p.user,
-      toolCalls: null,
-      toolCallId: null,
-      toolName: null,
-    });
-    rows.push({
-      sessionId,
-      role: "assistant",
-      content: p.assistant,
-      toolCalls: null,
-      toolCallId: null,
-      toolName: null,
-    });
-  }
-  messages.appendMany(sessionId, rows);
+function assistantUI(text: string): UIMessage {
+  return {
+    id: `a-${text}`,
+    role: "assistant",
+    parts: [{ type: "text", text }],
+  } as UIMessage;
 }
 
-describe("Agent — proactive compression at end-of-turn", () => {
+describe("Agent — compress() over UIMessage[]", () => {
   beforeEach(() => {
     streamTextMock.mockReset();
     generateTextMock.mockReset();
@@ -183,18 +103,39 @@ describe("Agent — proactive compression at end-of-turn", () => {
     generateTextMock.mockResolvedValue({ text: "## Active Task\nNone." });
   });
 
-  it("forks at end of turn when usage > threshold; emits session before done", async () => {
+  it("noOp on short history (below protectFirstN + minTail threshold)", async () => {
+    const db = freshDb();
+    const sessions = createSessionStore(db);
+    sessions.create("a1", { id: "s1" });
+    const agent = makeAgent({
+      db,
+      thresholdTokens: 1000,
+      protectFirstN: 1,
+      tailTokenBudget: 100,
+    });
+    // Seed an empty history so compress sees nothing to summarize.
+    const childId = await agent.compress("s1", "proactive");
+    // No-op → caller sees parent id back.
+    expect(childId).toBe("s1");
+    expect(sessions.findChildOf("s1")).toBeNull();
+  });
+
+  it("forks the session when there's enough history to summarize", async () => {
     const db = freshDb();
     const sessions = createSessionStore(db);
     const messages = createMessageStore(db);
-
     const parent = sessions.create("a1", { id: "parent" });
-    seedHistory(db, parent.id, [
-      { user: "u1", assistant: "a1" },
-      { user: "u2", assistant: "a2" },
-      { user: "u3", assistant: "a3" },
-    ]);
-    streamTextMock.mockReturnValue(mockStreamResult({ inputTokens: 5000 }));
+
+    // Seed a long-enough conversation.
+    const seed: UIMessage[] = [];
+    for (let i = 0; i < 6; i++) {
+      seed.push(userUI(`u${i}`));
+      seed.push(assistantUI(`a${i}`.repeat(40)));
+    }
+    messages.appendMany(
+      parent.id,
+      seed.map((m) => ({ id: m.id, role: m.role as "user" | "assistant", parts: m.parts }))
+    );
 
     const agent = makeAgent({
       db,
@@ -202,194 +143,79 @@ describe("Agent — proactive compression at end-of-turn", () => {
       protectFirstN: 1,
       tailTokenBudget: 100,
     });
-    const chunks = await drain(agent.chat(parent.id, "next"));
-
-    const sessionChunks = chunks.filter((c) => c.type === "session");
-    const doneChunks = chunks.filter((c) => c.type === "done");
-    expect(sessionChunks.length).toBe(1);
-    expect(doneChunks.length).toBe(1);
-
-    // session chunk must come before done.
-    const sessionIdx = chunks.findIndex((c) => c.type === "session");
-    const doneIdx = chunks.findIndex((c) => c.type === "done");
-    expect(sessionIdx).toBeLessThan(doneIdx);
-
-    const childId = (sessionChunks[0] as { sessionId: string }).sessionId;
+    const childId = await agent.compress(parent.id, "proactive");
     expect(childId).not.toBe(parent.id);
     const child = sessions.get(childId);
     expect(child?.parentSessionId).toBe(parent.id);
 
-    // Child has [head (protectFirstN=1 → first user msg), summary,
-    // ...pre-pruned tail, user_new, assistant_response]. Summary lives
-    // somewhere in the middle; locate it by scanning.
     const childHistory = messages.getHistory(childId);
-    const summaryRow = childHistory.find((m) =>
-      m.content?.includes("[CONTEXT COMPACTION")
-    );
+    expect(childHistory.length).toBeGreaterThan(0);
+    // The synthetic summary shows up as a user message whose first text-part
+    // begins with the SUMMARY_PREFIX sentinel.
+    const summaryRow = childHistory.find((m) => {
+      if (m.role !== "user") return false;
+      const first = m.parts[0] as { type?: string; text?: string };
+      return first.type === "text" && (first.text ?? "").includes("[CONTEXT COMPACTION");
+    });
     expect(summaryRow).toBeDefined();
-    expect(generateTextMock).toHaveBeenCalledTimes(1);
   });
 
-  it("does not fork below threshold", async () => {
+  it("returns the existing child when one already exists for the parent", async () => {
     const db = freshDb();
     const sessions = createSessionStore(db);
-    sessions.create("a1", { id: "s1" });
-    streamTextMock.mockReturnValue(mockStreamResult({ inputTokens: 50 }));
+    const parent = sessions.create("a1", { id: "p" });
+    const existingChild = sessions.createChildIfNoSibling("a1", parent.id);
+    expect(existingChild).not.toBeNull();
 
     const agent = makeAgent({ db, thresholdTokens: 1000 });
-    const chunks = await drain(agent.chat("s1", "hi"));
-
-    expect(chunks.filter((c) => c.type === "session").length).toBe(0);
-    expect(generateTextMock).not.toHaveBeenCalled();
-    expect(sessions.findChildOf("s1")).toBeNull();
+    const childId = await agent.compress(parent.id, "proactive");
+    expect(childId).toBe(existingChild!.id);
   });
 
-  it("does not fork when threshold is null", async () => {
+  it("preserves user FileUIParts across the fork; rewrites URL to child + copies bytes", async () => {
     const db = freshDb();
     const sessions = createSessionStore(db);
-    sessions.create("a1", { id: "s1" });
-    streamTextMock.mockReturnValue(mockStreamResult({ inputTokens: 999_999 }));
+    const messages = createMessageStore(db);
 
-    const agent = makeAgent({ db, thresholdTokens: null });
-    const chunks = await drain(agent.chat("s1", "hi"));
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "openacme-att-"));
+    const root = path.join(tmp, "attachments");
+    const parent = sessions.create("a1", { id: "parent" });
 
-    expect(chunks.filter((c) => c.type === "session").length).toBe(0);
-    expect(sessions.findChildOf("s1")).toBeNull();
-  });
+    // Stage one image under the parent's session dir.
+    const rel = `${parent.id}/att-seed/shot.png`;
+    fs.mkdirSync(path.join(root, `${parent.id}/att-seed`), { recursive: true });
+    fs.writeFileSync(
+      path.join(root, rel),
+      Buffer.from([0x89, 0x50, 0x4e, 0x47])
+    );
 
-  it("iterative summary: second compression includes the first summary in prompt", async () => {
-    const db = freshDb();
-    const sessions = createSessionStore(db);
-    sessions.create("a1", { id: "p1" });
-    seedHistory(db, "p1", [
-      { user: "u1", assistant: "a1" },
-      { user: "u2", assistant: "a2" },
-      { user: "u3", assistant: "a3" },
-    ]);
+    const userWithFile: UIMessage = {
+      id: "u-file",
+      role: "user",
+      parts: [
+        { type: "text", text: "what's in this?" },
+        {
+          type: "file",
+          url: `/api/attachments/${rel}`,
+          mediaType: "image/png",
+          filename: "shot.png",
+        },
+      ],
+    } as UIMessage;
 
-    streamTextMock.mockReturnValue(mockStreamResult({ inputTokens: 5000 }));
-    generateTextMock.mockResolvedValueOnce({
-      text: "## Active Task\nFIRST_SUMMARY_BODY",
-    });
-
-    const agent = makeAgent({
-      db,
-      thresholdTokens: 1000,
-      protectFirstN: 1,
-      tailTokenBudget: 100,
-    });
-    const chunks1 = await drain(agent.chat("p1", "msg1"));
-    const childId = (
-      chunks1.find((c) => c.type === "session") as { sessionId: string }
-    ).sessionId;
-
-    // Seed extra history on the child to have something compressible.
-    seedHistory(db, childId, [
-      { user: "u4", assistant: "a4" },
-      { user: "u5", assistant: "a5" },
-    ]);
-
-    streamTextMock.mockReturnValue(mockStreamResult({ inputTokens: 8000 }));
-    generateTextMock.mockResolvedValueOnce({
-      text: "## Active Task\nSECOND_SUMMARY_BODY",
-    });
-
-    await drain(agent.chat(childId, "msg2"));
-
-    // Second summarizer call (the one for the child's compression) should
-    // see "PREVIOUS SUMMARY:" in its prompt.
-    const secondCall = generateTextMock.mock.calls[1];
-    expect(secondCall).toBeDefined();
-    const secondPrompt = secondCall![0].prompt as string;
-    expect(secondPrompt).toContain("PREVIOUS SUMMARY:");
-    expect(secondPrompt).toContain("FIRST_SUMMARY_BODY");
-  });
-});
-
-describe("Agent — reactive compression on provider errors", () => {
-  beforeEach(() => {
-    streamTextMock.mockReset();
-    generateTextMock.mockReset();
-    getModelMock.mockReset();
-    getModelMock.mockReturnValue({});
-    generateTextMock.mockResolvedValue({ text: "## Active Task\nNone." });
-  });
-
-  it("recovers from 413 by compressing and retrying once", async () => {
-    const db = freshDb();
-    const sessions = createSessionStore(db);
-    sessions.create("a1", { id: "p1" });
-    seedHistory(db, "p1", [
-      { user: "u1", assistant: "a1" },
-      { user: "u2", assistant: "a2" },
-      { user: "u3", assistant: "a3" },
-    ]);
-
-    streamTextMock
-      .mockReturnValueOnce(failingStreamResult(new APICallErrorMock("413", 413)))
-      .mockReturnValueOnce(mockStreamResult({ inputTokens: 200 }));
-
-    const agent = makeAgent({
-      db,
-      thresholdTokens: 1000,
-      protectFirstN: 1,
-      tailTokenBudget: 100,
-    });
-    const chunks = await drain(agent.chat("p1", "msg"));
-
-    const sessionChunks = chunks.filter((c) => c.type === "session");
-    expect(sessionChunks.length).toBe(1);
-    const doneChunks = chunks.filter((c) => c.type === "done");
-    expect(doneChunks.length).toBe(1);
-    expect(streamTextMock).toHaveBeenCalledTimes(2);
-  });
-
-  it("recovers from context_overflow via responseBody pattern", async () => {
-    const db = freshDb();
-    const sessions = createSessionStore(db);
-    sessions.create("a1", { id: "p1" });
-    seedHistory(db, "p1", [
-      { user: "u1", assistant: "a1" },
-      { user: "u2", assistant: "a2" },
-      { user: "u3", assistant: "a3" },
-    ]);
-
-    streamTextMock
-      .mockReturnValueOnce(
-        failingStreamResult(
-          new APICallErrorMock(
-            "bad request",
-            400,
-            JSON.stringify({ error: "this prompt is too long for the model" })
-          )
-        )
-      )
-      .mockReturnValueOnce(mockStreamResult({ inputTokens: 200 }));
-
-    const agent = makeAgent({
-      db,
-      thresholdTokens: 1000,
-      protectFirstN: 1,
-      tailTokenBudget: 100,
-    });
-    const chunks = await drain(agent.chat("p1", "msg"));
-
-    expect(chunks.filter((c) => c.type === "session").length).toBe(1);
-    expect(chunks.filter((c) => c.type === "done").length).toBe(1);
-  });
-
-  it("two consecutive 413s surface as a final error chunk (no third attempt)", async () => {
-    const db = freshDb();
-    const sessions = createSessionStore(db);
-    sessions.create("a1", { id: "p1" });
-    seedHistory(db, "p1", [
-      { user: "u1", assistant: "a1" },
-      { user: "u2", assistant: "a2" },
-      { user: "u3", assistant: "a3" },
-    ]);
-
-    streamTextMock.mockReturnValue(
-      failingStreamResult(new APICallErrorMock("413", 413))
+    // Seed enough turns to trigger compression.
+    const seed: UIMessage[] = [userWithFile];
+    for (let i = 0; i < 6; i++) {
+      seed.push(assistantUI(`a${i}`.repeat(40)));
+      seed.push(userUI(`u${i}`));
+    }
+    messages.appendMany(
+      parent.id,
+      seed.map((m) => ({
+        id: m.id,
+        role: m.role as "user" | "assistant",
+        parts: m.parts,
+      }))
     );
 
     const agent = makeAgent({
@@ -397,167 +223,142 @@ describe("Agent — reactive compression on provider errors", () => {
       thresholdTokens: 1000,
       protectFirstN: 1,
       tailTokenBudget: 100,
+      attachmentsRoot: root,
     });
-    const chunks = await drain(agent.chat("p1", "msg"));
+    const childId = await agent.compress(parent.id, "proactive");
+    expect(childId).not.toBe(parent.id);
 
-    expect(chunks.filter((c) => c.type === "done").length).toBe(0);
-    expect(chunks.filter((c) => c.type === "error").length).toBe(1);
-    // Two attempts, no more.
-    expect(streamTextMock).toHaveBeenCalledTimes(2);
+    // Find the head copy of the user-with-file in the child. It should
+    // carry a FileUIPart whose URL is now under the CHILD session dir,
+    // and the file should exist at the new path on disk.
+    const childHistory = messages.getHistory(childId);
+    const childUserParts = childHistory
+      .filter((m) => m.role === "user")
+      .flatMap((m) => m.parts as Array<{ type?: string; url?: string }>);
+    const fileParts = childUserParts.filter((p) => p.type === "file");
+    expect(fileParts.length).toBeGreaterThan(0);
+    for (const fp of fileParts) {
+      expect(fp.url).toBeDefined();
+      expect(fp.url!.startsWith(`/api/attachments/${childId}/`)).toBe(true);
+      const childRel = fp.url!.slice("/api/attachments/".length);
+      expect(fs.existsSync(path.join(root, childRel))).toBe(true);
+    }
+
+    fs.rmSync(tmp, { recursive: true, force: true });
   });
 
-  it("non-recoverable error (auth 401) surfaces without compression", async () => {
+  it("counts FileUIParts at IMAGE_CHAR_EQUIVALENT in the boundary walker", async () => {
+    // Without originalParts the budget would only see the `[file: ...]` text
+    // marker (~30 chars) and let the message stay in the tail. With
+    // originalParts the file-part contributes ~6400 chars and a long-enough
+    // history actually triggers compression on multi-image turns.
     const db = freshDb();
     const sessions = createSessionStore(db);
-    sessions.create("a1", { id: "p1" });
+    const messages = createMessageStore(db);
+    const parent = sessions.create("a1", { id: "p-img" });
 
-    streamTextMock.mockReturnValue(
-      failingStreamResult(new APICallErrorMock("Unauthorized", 401))
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "openacme-img-"));
+    const root = path.join(tmp, "attachments");
+
+    // 12 turns, each user with 2 images. With proper budget weighting the
+    // walker will pull the boundary inward; without it, almost everything
+    // fits in the tail.
+    const seed: UIMessage[] = [];
+    for (let i = 0; i < 12; i++) {
+      seed.push({
+        id: `u-${i}`,
+        role: "user",
+        parts: [
+          { type: "text", text: `q${i}` },
+          {
+            type: "file",
+            url: `/api/attachments/external/_/img${i}.png`,
+            mediaType: "image/png",
+            filename: `img${i}.png`,
+          },
+          {
+            type: "file",
+            url: `/api/attachments/external/_/img${i}b.png`,
+            mediaType: "image/png",
+            filename: `img${i}b.png`,
+          },
+        ],
+      } as UIMessage);
+      seed.push(assistantUI(`a${i}`));
+    }
+    messages.appendMany(
+      parent.id,
+      seed.map((m) => ({
+        id: m.id,
+        role: m.role as "user" | "assistant",
+        parts: m.parts,
+      }))
     );
 
-    const agent = makeAgent({ db, thresholdTokens: 1000 });
-    const chunks = await drain(agent.chat("p1", "msg"));
-
-    expect(chunks.filter((c) => c.type === "error").length).toBe(1);
-    expect(generateTextMock).not.toHaveBeenCalled();
-    expect(streamTextMock).toHaveBeenCalledTimes(1);
+    const agent = makeAgent({
+      db,
+      thresholdTokens: 1000,
+      protectFirstN: 1,
+      tailTokenBudget: 200,
+      attachmentsRoot: root,
+    });
+    const childId = await agent.compress(parent.id, "proactive");
+    // Compression actually fires (no-op would return parent id).
+    expect(childId).not.toBe(parent.id);
+    fs.rmSync(tmp, { recursive: true, force: true });
   });
 });
 
-describe("Agent — anti-thrashing & cooldown", () => {
-  beforeEach(() => {
-    streamTextMock.mockReset();
-    generateTextMock.mockReset();
-    getModelMock.mockReset();
-    getModelMock.mockReturnValue({});
-  });
-
-  it("anti-thrash: skips compression after 2 consecutive low-savings forks", async () => {
+describe("Agent — runStream + attachments inlining", () => {
+  it("reads attachment bytes off disk for FileUIPart URLs", async () => {
     const db = freshDb();
     const sessions = createSessionStore(db);
-    sessions.create("a1", { id: "p1" });
-    seedHistory(db, "p1", [
-      { user: "u1", assistant: "a1" },
-      { user: "u2", assistant: "a2" },
-      { user: "u3", assistant: "a3" },
-    ]);
+    const session = sessions.create("a1", { id: "s1" });
 
-    // generateText returns a HUGE summary so child won't be smaller than parent.
-    const huge = "X".repeat(1_000_000);
-    generateTextMock.mockResolvedValue({ text: huge });
-    streamTextMock.mockReturnValue(mockStreamResult({ inputTokens: 5000 }));
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "openacme-att-"));
+    const root = path.join(tmp, "attachments");
+    const rel = `${session.id}/att-1/shot.png`;
+    fs.mkdirSync(path.join(root, `${session.id}/att-1`), { recursive: true });
+    fs.writeFileSync(path.join(root, rel), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+
+    streamTextMock.mockReturnValue({
+      fullStream: (async function* () {})(),
+      usage: Promise.resolve({}),
+      response: Promise.resolve({ messages: [] }),
+    });
 
     const agent = makeAgent({
       db,
-      thresholdTokens: 1000,
-      protectFirstN: 1,
-      tailTokenBudget: 100,
+      thresholdTokens: null,
+      attachmentsRoot: root,
     });
+    const userMsg: UIMessage = {
+      id: "u1",
+      role: "user",
+      parts: [
+        { type: "text", text: "what's in this?" } as UIMessage["parts"][number],
+        {
+          type: "file",
+          url: `/api/attachments/${rel}`,
+          mediaType: "image/png",
+          filename: "shot.png",
+        } as unknown as UIMessage["parts"][number],
+      ],
+    } as UIMessage;
+    await agent.runStream({ sessionId: session.id, history: [userMsg] });
+    // streamText should have been called with messages containing the
+    // image bytes inlined as a data: URL (not the local /api path).
+    const arg = streamTextMock.mock.calls[0]![0]!;
+    const messages = arg.messages as Array<{
+      role: string;
+      content: unknown;
+    }>;
+    const userModelMsg = messages.find((m) => m.role === "user");
+    const partsOrText = userModelMsg!.content;
+    const serialized = JSON.stringify(partsOrText);
+    expect(serialized).toContain("data:image/png;base64,");
+    expect(serialized).not.toContain("/api/attachments/");
 
-    // Turn 1: compresses (savings ratio low, ~0).
-    const c1 = await drain(agent.chat("p1", "m1"));
-    const child1Id =
-      (c1.find((c) => c.type === "session") as { sessionId: string }).sessionId;
-
-    // Seed the child with more history so it's compressible again.
-    seedHistory(db, child1Id, [
-      { user: "u4", assistant: "a4" },
-      { user: "u5", assistant: "a5" },
-    ]);
-
-    // Turn 2: compresses again (still low savings).
-    const c2 = await drain(agent.chat(child1Id, "m2"));
-    const child2Id =
-      (c2.find((c) => c.type === "session") as { sessionId: string }).sessionId;
-
-    // Seed AGAIN.
-    seedHistory(db, child2Id, [
-      { user: "u6", assistant: "a6" },
-      { user: "u7", assistant: "a7" },
-    ]);
-
-    // Turn 3: should NOT compress (anti-thrash kicks in after 2 consecutive
-    // <10% savings). Verify by counting generateText calls.
-    const callsBefore = generateTextMock.mock.calls.length;
-    const c3 = await drain(agent.chat(child2Id, "m3"));
-    const callsAfter = generateTextMock.mock.calls.length;
-
-    expect(callsAfter).toBe(callsBefore); // No new summarizer call.
-    expect(c3.filter((c) => c.type === "session").length).toBe(0);
-  });
-
-  it("cooldown: first summarizer failure sets a cooldown that blocks immediate retry", async () => {
-    const db = freshDb();
-    const sessions = createSessionStore(db);
-    sessions.create("a1", { id: "p1" });
-    seedHistory(db, "p1", [
-      { user: "u1", assistant: "a1" },
-      { user: "u2", assistant: "a2" },
-      { user: "u3", assistant: "a3" },
-    ]);
-
-    streamTextMock.mockReturnValue(mockStreamResult({ inputTokens: 5000 }));
-    generateTextMock.mockRejectedValue(new Error("500 internal error"));
-
-    const agent = makeAgent({
-      db,
-      thresholdTokens: 1000,
-      protectFirstN: 1,
-      tailTokenBudget: 100,
-    });
-
-    // Turn 1: summarizer fails → no fork, parent stays.
-    const c1 = await drain(agent.chat("p1", "m1"));
-    expect(c1.filter((c) => c.type === "session").length).toBe(0);
-    expect(sessions.findChildOf("p1")).toBeNull();
-    const callsAfter1 = generateTextMock.mock.calls.length;
-
-    // Turn 2 immediately: cooldown should block summarizer call.
-    const c2 = await drain(agent.chat("p1", "m2"));
-    expect(c2.filter((c) => c.type === "session").length).toBe(0);
-    expect(generateTextMock.mock.calls.length).toBe(callsAfter1); // No new call.
-  });
-});
-
-describe("Agent — aux model fallback", () => {
-  beforeEach(() => {
-    streamTextMock.mockReset();
-    generateTextMock.mockReset();
-    getModelMock.mockReset();
-    getModelMock.mockReturnValue({});
-  });
-
-  it("falls back from configured summarizerModel to main model on aux failure", async () => {
-    const db = freshDb();
-    const sessions = createSessionStore(db);
-    sessions.create("a1", { id: "p1" });
-    seedHistory(db, "p1", [
-      { user: "u1", assistant: "a1" },
-      { user: "u2", assistant: "a2" },
-      { user: "u3", assistant: "a3" },
-    ]);
-
-    streamTextMock.mockReturnValue(mockStreamResult({ inputTokens: 5000 }));
-    // First call (aux model) fails; second call (main fallback) succeeds.
-    generateTextMock
-      .mockRejectedValueOnce(new Error("model not found"))
-      .mockResolvedValueOnce({ text: "## Active Task\nNone." });
-
-    const agent = makeAgent({
-      db,
-      thresholdTokens: 1000,
-      protectFirstN: 1,
-      tailTokenBudget: 100,
-      summarizerModel: {
-        provider: "openai",
-        model: "missing-model",
-        apiKey: "x",
-      },
-    });
-
-    const chunks = await drain(agent.chat("p1", "msg"));
-    expect(chunks.filter((c) => c.type === "session").length).toBe(1);
-    expect(chunks.filter((c) => c.type === "done").length).toBe(1);
-    expect(generateTextMock).toHaveBeenCalledTimes(2);
+    fs.rmSync(tmp, { recursive: true, force: true });
   });
 });

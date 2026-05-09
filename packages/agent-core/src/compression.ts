@@ -1,9 +1,40 @@
-import { generateText } from "ai";
-import { createHash } from "node:crypto";
+import { generateText, type UIMessage, type UIMessagePart } from "ai";
+import { createHash, randomUUID } from "node:crypto";
 import { getModel } from "@openacme/llm-provider";
-import type { Message } from "@openacme/db";
 import type { ModelConfig } from "@openacme/config";
 import type { CompressionConfig } from "./types.js";
+
+/**
+ * Internal "step view" of a UIMessage. Each user UIMessage flattens to
+ * one Step. Each assistant UIMessage flattens to one or more Steps:
+ * an assistant Step (with all tool-X parts collected into `toolCalls`)
+ * followed by one tool Step per tool-X part that has an output. This
+ * lets the algorithm — which was originally written against per-step
+ * DB rows — operate unchanged. The Compressor flattens at entry,
+ * coalesces back to UIMessages at exit.
+ */
+type Step = {
+  /** Same id as the source UIMessage for assistant/user steps; synthetic
+   *  for split-out tool result steps so they round-trip cleanly. */
+  id: string;
+  role: "user" | "assistant" | "tool";
+  content: string | null;
+  toolCalls: string | null;
+  toolCallId: string | null;
+  toolName: string | null;
+  /** Pristine source UIMessage parts, captured at flatten time. Used by
+   *  the coalesce step to reconstitute non-text parts (FileUIPart, etc.)
+   *  the algorithm doesn't otherwise round-trip — and by
+   *  `messageBudgetLength` to count multimodal parts at their real budget
+   *  weight. The algorithm itself never reads or mutates this field. */
+  originalParts?: UIMessage["parts"];
+};
+
+interface ToolCallEntry {
+  toolCallId: string;
+  toolName: string;
+  args: unknown;
+}
 
 /**
  * Runtime context compression — produces a smaller in-memory message list
@@ -220,10 +251,18 @@ export function contentLengthForBudget(content: unknown): number {
 }
 
 /**
- * Length used by the boundary walker for our DB Message rows. Adds
- * `MESSAGE_OVERHEAD_CHARS` per message to approximate role/metadata tokens.
+ * Length used by the boundary walker for one Step. Adds
+ * `MESSAGE_OVERHEAD_CHARS` per step to approximate role/metadata tokens.
+ *
+ * When `originalParts` is set (user steps flattened from a UIMessage),
+ * defer to `contentLengthForBudget` so multimodal parts (image / file /
+ * reasoning) get charged their real per-part budget rather than the
+ * ~30-char text marker the flatten leaves in `content`.
  */
-export function messageBudgetLength(m: Message): number {
+export function messageBudgetLength(m: Step): number {
+  if (m.originalParts) {
+    return contentLengthForBudget(m.originalParts) + MESSAGE_OVERHEAD_CHARS;
+  }
   return (
     (m.content?.length ?? 0) +
     (m.toolCalls?.length ?? 0) +
@@ -410,8 +449,8 @@ function hashContent(s: string): string {
  * back-reference placeholder. Saves token budget when the model reads the
  * same file or runs the same command repeatedly within a session.
  */
-export function dedupeToolResults(messages: Message[]): {
-  messages: Message[];
+export function dedupeToolResults(messages: Step[]): {
+  messages: Step[];
   deduped: number;
 } {
   if (messages.length === 0) return { messages, deduped: 0 };
@@ -443,7 +482,7 @@ export function dedupeToolResults(messages: Message[]): {
  * call's name/args when summarizing a tool result.
  */
 function buildCallIdIndex(
-  messages: Message[]
+  messages: Step[]
 ): Map<string, { toolName: string; args: unknown }> {
   const idx = new Map<string, { toolName: string; args: unknown }>();
   for (const m of messages) {
@@ -473,9 +512,9 @@ function buildCallIdIndex(
  * are skipped (no point summarizing a back-reference).
  */
 export function pruneOldToolResults(
-  messages: Message[],
+  messages: Step[],
   opts: { pruneBoundary: number }
-): { messages: Message[]; pruned: number } {
+): { messages: Step[]; pruned: number } {
   if (messages.length === 0 || opts.pruneBoundary <= 0) {
     return { messages, pruned: 0 };
   }
@@ -527,7 +566,7 @@ export function pruneOldToolResults(
  * If `idx` lands on a tool result, slide forward past consecutive tool
  * results so the summarized region doesn't start mid-group.
  */
-export function alignBoundaryForward(messages: Message[], idx: number): number {
+export function alignBoundaryForward(messages: Step[], idx: number): number {
   let i = idx;
   while (i < messages.length && messages[i]!.role === "tool") i++;
   return i;
@@ -539,7 +578,7 @@ export function alignBoundaryForward(messages: Message[], idx: number): number {
  * back before the assistant so the whole group is summarized together.
  * Without this we'd produce orphaned tool results in the tail.
  */
-export function alignBoundaryBackward(messages: Message[], idx: number): number {
+export function alignBoundaryBackward(messages: Step[], idx: number): number {
   if (idx <= 0 || idx >= messages.length) return idx;
   let check = idx - 1;
   while (check >= 0 && messages[check]!.role === "tool") check--;
@@ -554,7 +593,7 @@ export function alignBoundaryBackward(messages: Message[], idx: number): number 
 }
 
 export function findLastUserMessageIdx(
-  messages: Message[],
+  messages: Step[],
   headEnd: number
 ): number {
   for (let i = messages.length - 1; i >= headEnd; i--) {
@@ -573,7 +612,7 @@ export function findLastUserMessageIdx(
  * active context. Hermes hit this in production (issue #10896).
  */
 export function ensureLastUserMessageInTail(
-  messages: Message[],
+  messages: Step[],
   cutIdx: number,
   headEnd: number
 ): number {
@@ -605,7 +644,7 @@ export function ensureLastUserMessageInTail(
  * region.
  */
 export function findTailCutByTokens(
-  messages: Message[],
+  messages: Step[],
   opts: { headEnd: number; tailTokenBudget: number }
 ): number {
   const n = messages.length;
@@ -663,7 +702,7 @@ export function findTailCutByTokens(
  * Called once on the final `[head, summary, tail]` list before persisting
  * to the child session.
  */
-export function sanitizeToolPairs(messages: Message[]): Message[] {
+export function sanitizeToolPairs(messages: Step[]): Step[] {
   const surviving = new Set<string>();
   const callIdToToolName = new Map<string, string>();
   for (const m of messages) {
@@ -704,7 +743,7 @@ export function sanitizeToolPairs(messages: Message[]): Message[] {
   }
   if (missing.size === 0) return filtered;
 
-  const out: Message[] = [];
+  const out: Step[] = [];
   for (const m of filtered) {
     out.push(m);
     if (m.role !== "assistant" || !m.toolCalls) continue;
@@ -720,16 +759,12 @@ export function sanitizeToolPairs(messages: Message[]): Message[] {
       const e = c as { toolCallId?: string; toolName?: string };
       if (e.toolCallId && missing.has(e.toolCallId)) {
         out.push({
-          // Synthetic stub — id doesn't matter, never referenced again.
-          // The downstream `appendMany` assigns a real UUID.
-          id: "",
-          sessionId: m.sessionId,
+          id: `stub-${randomUUID()}`,
           role: "tool",
           content: ORPHAN_TOOL_RESULT_STUB,
           toolCalls: null,
           toolCallId: e.toolCallId,
           toolName: callIdToToolName.get(e.toolCallId) ?? e.toolName ?? "unknown",
-          createdAt: 0,
         });
         missing.delete(e.toolCallId);
       }
@@ -754,7 +789,7 @@ function truncateForSummarizer(content: string): string {
  * names + truncated args so the summarizer can surface specific details
  * (file paths, commands, error messages, line numbers).
  */
-export function serializeForSummary(messages: Message[]): string {
+export function serializeForSummary(messages: Step[]): string {
   const parts: string[] = [];
   for (const m of messages) {
     const content = m.content ? truncateForSummarizer(m.content) : "";
@@ -805,7 +840,7 @@ export function serializeForSummary(messages: Message[]): string {
  * provided (iterative compaction); FRESH template otherwise.
  */
 export function buildSummaryPrompt(opts: {
-  turns: Message[];
+  turns: Step[];
   previousSummary?: string;
   summaryBudget: number;
 }): string {
@@ -878,7 +913,7 @@ export function resolveThreshold(c: CompressionConfig): number | null {
   return null;
 }
 
-function totalCharLen(messages: Message[]): number {
+function totalCharLen(messages: Step[]): number {
   let total = 0;
   for (const m of messages) total += messageBudgetLength(m);
   return total;
@@ -890,7 +925,7 @@ function totalCharLen(messages: Message[]): number {
  * own context window, and the summarizable region of the parent could
  * be larger than that.
  */
-function trimToCharBudget(messages: Message[], charBudget: number): Message[] {
+function trimToCharBudget(messages: Step[], charBudget: number): Step[] {
   let total = totalCharLen(messages);
   if (total <= charBudget) return messages;
   const out = [...messages];
@@ -902,7 +937,7 @@ function trimToCharBudget(messages: Message[], charBudget: number): Message[] {
 }
 
 function computeSummaryBudget(
-  compressedTurns: Message[],
+  compressedTurns: Step[],
   contextWindow: number | null,
   ratio: number
 ): number {
@@ -953,8 +988,8 @@ function errorMessage(e: unknown): string {
 export interface CompressOpts {
   /** The session whose history we're summarizing. */
   parentSessionId: string;
-  /** Full message history of the parent session (DB rows). */
-  parentMessages: Message[];
+  /** Full conversation history of the parent session as persisted UIMessages. */
+  parentMessages: UIMessage[];
   /** Compression knobs from agent config. */
   config: CompressionConfig;
   /** Main agent model — used for tail/threshold sizing AND as the
@@ -965,8 +1000,10 @@ export interface CompressOpts {
 }
 
 export interface CompressResult {
-  /** The new child's ordered message rows, ready for `appendMany`. */
-  childMessages: Array<Omit<Message, "id" | "createdAt" | "sessionId">>;
+  /** The new child's ordered UIMessages, ready for `MessageStore.appendMany`.
+   *  The Compressor flattens parent UIMessages into Steps internally, runs
+   *  the boundary walk + summarization, then coalesces back to UIMessages. */
+  childMessages: UIMessage[];
   /** Generated summary content (without `SUMMARY_PREFIX`). null when the
    *  summarizer failed and we fell back to a placeholder, or when the
    *  history was too short to compress. */
@@ -1073,8 +1110,12 @@ export class Compressor {
     const { parentMessages, config, mainModel, parentSessionId } = opts;
     const state = this.getOrCreate(parentSessionId);
 
+    // Flatten parent UIMessages into the per-step shape the algorithm
+    // operates on. Coalesce back to UIMessages right before returning.
+    const parentSteps = flattenUIMessages(parentMessages);
+
     const minForCompress = config.protectFirstN + 3 + 1;
-    if (parentMessages.length <= minForCompress) {
+    if (parentSteps.length <= minForCompress) {
       return {
         childMessages: [],
         summary: null,
@@ -1093,8 +1134,8 @@ export class Compressor {
     // away wastes CPU on every turn that triggers compression.
     const tailTokenBudget = config.tailTokenBudget;
     {
-      const rawHeadEnd = alignBoundaryForward(parentMessages, config.protectFirstN);
-      const rawCut = findTailCutByTokens(parentMessages, {
+      const rawHeadEnd = alignBoundaryForward(parentSteps, config.protectFirstN);
+      const rawCut = findTailCutByTokens(parentSteps, {
         headEnd: rawHeadEnd,
         tailTokenBudget,
       });
@@ -1111,7 +1152,7 @@ export class Compressor {
     }
 
     // Phase 1: Pre-prune (dedup → 1-liners + JSON-safe arg trim).
-    const { messages: dedupedMessages } = dedupeToolResults(parentMessages);
+    const { messages: dedupedMessages } = dedupeToolResults(parentSteps);
     const provisionalCut = findTailCutByTokens(dedupedMessages, {
       headEnd: config.protectFirstN,
       tailTokenBudget,
@@ -1167,14 +1208,15 @@ export class Compressor {
     });
 
     // Phase 4: Build child message list.
-    let summaryRow: Omit<Message, "id" | "createdAt" | "sessionId"> | null = null;
+    let summaryStep: Step | null = null;
     let summaryText: string | null = null;
     let usedFallback = false;
 
     if (summaryOutcome.kind === "ok") {
       summaryText = summaryOutcome.summary;
       usedFallback = summaryOutcome.usedFallback;
-      summaryRow = {
+      summaryStep = {
+        id: `summary-${randomUUID()}`,
         role: "user",
         content: withSummaryPrefix(summaryOutcome.summary),
         toolCalls: null,
@@ -1185,7 +1227,8 @@ export class Compressor {
       // Reactive failure — must compress to recover from 4xx; insert a
       // placeholder so the model knows context was truncated even though
       // we couldn't generate a real summary.
-      summaryRow = {
+      summaryStep = {
+        id: `summary-${randomUUID()}`,
         role: "user",
         content:
           `${SUMMARY_PREFIX}\n[Earlier conversation summary unavailable: ${summaryOutcome.error}. Continue with caution; refer to recent turns and ask if unsure.]`,
@@ -1206,32 +1249,17 @@ export class Compressor {
       };
     }
 
-    // Both reaching branches above set summaryRow non-null (the proactive
-    // failure branch returned early). Stamp the synthetic row id/sessionId
-    // — they're stripped in the final `childMessages.map` below.
-    const summaryMessage = {
-      ...summaryRow,
-      id: "",
-      sessionId: "",
-      createdAt: 0,
-    } as Message;
-    let combined: Message[] = [...head, summaryMessage, ...tail];
+    let combined: Step[] = [...head, summaryStep, ...tail];
 
     // Phase 5: Sanitize orphan tool pairs introduced by summarization.
     combined = sanitizeToolPairs(combined);
 
-    const parentTotal = totalCharLen(parentMessages);
+    const parentTotal = totalCharLen(parentSteps);
     const childTotal = totalCharLen(combined);
     const savingsRatio =
       parentTotal === 0 ? 0 : 1 - childTotal / parentTotal;
 
-    const childMessages = combined.map((m) => ({
-      role: m.role,
-      content: m.content,
-      toolCalls: m.toolCalls,
-      toolCallId: m.toolCallId,
-      toolName: m.toolName,
-    }));
+    const childMessages = stepsToUIMessages(combined);
 
     return {
       childMessages,
@@ -1249,7 +1277,7 @@ export class Compressor {
    */
   private async summarizeMessages(opts: {
     sessionId: string;
-    turns: Message[];
+    turns: Step[];
     previousSummary?: string;
     summaryBudget: number;
     primaryModel: ModelConfig;
@@ -1325,5 +1353,191 @@ export class Compressor {
 
 // ── Re-exports for `Agent.compress()` ────────────────────────────────────
 
-export type { Message } from "@openacme/db";
 export type { ModelConfig } from "@openacme/config";
+
+// ── Flatten / coalesce between UIMessage[] and Step[] ─────────────────────
+
+/**
+ * Walk one UIMessage's parts, accumulating text into the current step
+ * and split out a new assistant Step + tool result Steps for each
+ * tool-${name} part with output. Multiple consecutive text parts in
+ * the same UIMessage join with newlines.
+ */
+function flattenUIMessage(m: UIMessage): Step[] {
+  if (m.role === "user") {
+    // Concatenate text-parts into `content` so the algorithm's
+    // hash/dedup/serialize-for-summary paths see the user's prose. Stash
+    // the pristine parts in `originalParts` so coalesce can restore
+    // non-text parts (FileUIPart in particular). The algorithm itself
+    // never reads this field; only the boundary walker (via
+    // messageBudgetLength) and the coalesce do.
+    let text = "";
+    for (const p of m.parts) {
+      if ((p as { type?: string }).type === "text") {
+        const t = (p as { text?: string }).text ?? "";
+        text += text ? `\n${t}` : t;
+      }
+    }
+    return [
+      {
+        id: m.id,
+        role: "user",
+        content: text,
+        toolCalls: null,
+        toolCallId: null,
+        toolName: null,
+        originalParts: m.parts,
+      },
+    ];
+  }
+
+  // assistant: collect text spans + tool parts in order. We emit one
+  // assistant Step carrying ALL tool-call entries, then one tool Step
+  // per tool-${name} part that has an output. Order within the assistant
+  // step follows the source UIMessage ordering of tool calls.
+  let text = "";
+  const calls: ToolCallEntry[] = [];
+  const toolSteps: Step[] = [];
+  for (const p of m.parts) {
+    const tp = p as { type?: string };
+    if (tp.type === "text") {
+      const t = (p as { text?: string }).text ?? "";
+      text += text ? `\n${t}` : t;
+      continue;
+    }
+    if (typeof tp.type === "string" && tp.type.startsWith("tool-")) {
+      const tool = p as {
+        type: string;
+        toolCallId?: string;
+        state?: string;
+        input?: unknown;
+        output?: unknown;
+        errorText?: string;
+      };
+      const toolName = tool.type.slice("tool-".length);
+      const toolCallId = tool.toolCallId ?? `c-${randomUUID()}`;
+      calls.push({ toolCallId, toolName, args: tool.input });
+      // Only output-available / output-error produce a tool Step (input-
+      // streaming and input-available mean the call hasn't completed).
+      const out =
+        tool.state === "output-available"
+          ? tool.output
+          : tool.state === "output-error"
+            ? tool.errorText
+            : undefined;
+      if (out !== undefined) {
+        toolSteps.push({
+          id: `tool-${toolCallId}`,
+          role: "tool",
+          content: typeof out === "string" ? out : JSON.stringify(out),
+          toolCalls: null,
+          toolCallId,
+          toolName,
+        });
+      }
+    }
+  }
+  const out: Step[] = [
+    {
+      id: m.id,
+      role: "assistant",
+      content: text || null,
+      toolCalls: calls.length > 0 ? JSON.stringify(calls) : null,
+      toolCallId: null,
+      toolName: null,
+    },
+    ...toolSteps,
+  ];
+  return out;
+}
+
+export function flattenUIMessages(messages: UIMessage[]): Step[] {
+  const out: Step[] = [];
+  for (const m of messages) out.push(...flattenUIMessage(m));
+  return out;
+}
+
+/**
+ * Coalesce Steps back into UIMessages. assistant + following tool steps
+ * fold into one UIMessage with parts `[text-part, tool-X(output-available),
+ * tool-Y(output-available), ...]`. user steps map 1:1.
+ *
+ * For user steps with `originalParts` (verbatim head/tail copies), we
+ * restore the pristine parts — this preserves FileUIParts and any other
+ * non-text content the algorithm doesn't touch. Synthetic user steps
+ * (the summary insert, etc.) have no `originalParts` and fall back to
+ * a single text part built from the current `content` field.
+ */
+export function stepsToUIMessages(steps: Step[]): UIMessage[] {
+  const out: UIMessage[] = [];
+  let i = 0;
+  while (i < steps.length) {
+    const s = steps[i]!;
+    if (s.role === "user") {
+      const parts: UIMessage["parts"] = s.originalParts
+        ? (s.originalParts as UIMessage["parts"])
+        : s.content
+          ? [{ type: "text", text: s.content } as UIMessage["parts"][number]]
+          : [];
+      out.push({ id: s.id, role: "user", parts } as UIMessage);
+      i++;
+      continue;
+    }
+    if (s.role === "assistant") {
+      const parts: UIMessage["parts"] = [];
+      if (s.content) parts.push({ type: "text", text: s.content } as UIMessage["parts"][number]);
+      // Index calls by id so we can pair with the tool steps that follow.
+      const calls = parseCalls(s.toolCalls);
+      const callsById = new Map<string, ToolCallEntry>();
+      for (const c of calls) callsById.set(c.toolCallId, c);
+      // Walk forward consuming tool steps until the next non-tool.
+      let j = i + 1;
+      const toolOutputs = new Map<string, string>();
+      while (j < steps.length && steps[j]!.role === "tool") {
+        const ts = steps[j]!;
+        if (ts.toolCallId) toolOutputs.set(ts.toolCallId, ts.content ?? "");
+        j++;
+      }
+      for (const c of calls) {
+        const output = toolOutputs.get(c.toolCallId);
+        parts.push({
+          type: `tool-${c.toolName}`,
+          toolCallId: c.toolCallId,
+          state: output !== undefined ? "output-available" : "input-available",
+          input: c.args,
+          output,
+        } as unknown as UIMessage["parts"][number]);
+      }
+      out.push({ id: s.id, role: "assistant", parts } as UIMessage);
+      i = j;
+      continue;
+    }
+    // A standalone tool step with no preceding assistant — drop it
+    // (sanitizeToolPairs removes orphans, but in case any survived).
+    i++;
+  }
+  return out;
+}
+
+function parseCalls(json: string | null): ToolCallEntry[] {
+  if (!json) return [];
+  try {
+    const parsed = JSON.parse(json);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter(
+        (e): e is ToolCallEntry =>
+          !!e &&
+          typeof e === "object" &&
+          typeof (e as { toolCallId?: unknown }).toolCallId === "string" &&
+          typeof (e as { toolName?: unknown }).toolName === "string"
+      )
+      .map((e) => ({
+        toolCallId: e.toolCallId,
+        toolName: e.toolName,
+        args: (e as { args?: unknown }).args,
+      }));
+  } catch {
+    return [];
+  }
+}

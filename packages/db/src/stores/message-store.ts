@@ -2,9 +2,19 @@ import type Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { asc, eq, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
-import { messages, type Message, type NewMessage } from "../schema.js";
+import { messages, type NewMessageRow } from "../schema.js";
 
-export type { Message, NewMessage };
+/**
+ * Persisted UIMessage shape. The store is type-agnostic about what's
+ * inside `parts` — agent-core casts to `UIMessagePart[]` from `ai`.
+ * Keeps the db package free of the SDK dep.
+ */
+export interface StoredUIMessage {
+  id: string;
+  role: "user" | "assistant";
+  parts: unknown[];
+  metadata?: unknown;
+}
 
 export interface SearchResult {
   content: string;
@@ -14,99 +24,112 @@ export interface SearchResult {
 }
 
 /**
- * Message store — drizzle ORM operations on `messages`, plus a raw FTS5
- * search statement (drizzle can't model virtual tables).
+ * Message store — drizzle ops on `messages`. One row per UIMessage;
+ * `parts` is JSON-stringified on write, parsed on read.
+ *
+ * The pre-UIMessage shape (per-step rows with content + tool_calls JSON
+ * + tool_call_id + tool_name) is gone. Tool calls + their results live
+ * inside an assistant UIMessage's `parts` as `tool-${name}` parts —
+ * structural pairing, no orphan-row problem.
  */
 export function createMessageStore(db: Database.Database) {
   const orm = drizzle(db);
 
-  // FTS5 virtual tables aren't representable in drizzle's schema. The
-  // search hot path stays on a cached better-sqlite3 prepared statement.
   const ftsSearchStmt = db.prepare(
     `SELECT content, session_id as sessionId, role, rank
      FROM fts_messages WHERE fts_messages MATCH ?
      ORDER BY rank LIMIT ?`
   );
 
-  type Insertable = Omit<NewMessage, "id" | "createdAt">;
+  function rowToMessage(row: {
+    id: string;
+    role: string;
+    parts: string;
+    metadata: string | null;
+  }): StoredUIMessage {
+    return {
+      id: row.id,
+      role: row.role as "user" | "assistant",
+      parts: JSON.parse(row.parts) as unknown[],
+      metadata:
+        row.metadata !== null && row.metadata !== ""
+          ? (JSON.parse(row.metadata) as unknown)
+          : undefined,
+    };
+  }
 
-  function appendOne(sessionId: string, message: Insertable): Message {
-    const id = randomUUID();
-    return orm
-      .insert(messages)
-      .values({
-        id,
-        sessionId,
-        role: message.role,
-        content: message.content ?? null,
-        toolCalls: message.toolCalls ?? null,
-        toolCallId: message.toolCallId ?? null,
-        toolName: message.toolName ?? null,
-      })
-      .returning()
-      .get();
+  function toInsert(
+    sessionId: string,
+    m: StoredUIMessage
+  ): NewMessageRow {
+    return {
+      id: m.id || randomUUID(),
+      sessionId,
+      role: m.role,
+      parts: JSON.stringify(m.parts),
+      metadata:
+        m.metadata !== undefined ? JSON.stringify(m.metadata) : null,
+    };
   }
 
   return {
-    append(sessionId: string, message: Insertable): Message {
-      return appendOne(sessionId, message);
+    /** Persist one UIMessage. Caller MUST pass the id the SDK emitted. */
+    append(sessionId: string, message: StoredUIMessage): StoredUIMessage {
+      const row = orm
+        .insert(messages)
+        .values(toInsert(sessionId, message))
+        .returning()
+        .get();
+      return rowToMessage(row);
     },
 
     /**
-     * Bulk insert in a single transaction. Used by the compression fork
-     * to copy the verbatim tail of an old session into the new child.
-     * Drizzle's `transaction` wraps better-sqlite3's; a throw mid-batch
-     * rolls back every row.
+     * Bulk insert in one transaction. Used by the compression child
+     * write so all-or-nothing failure is preserved.
      */
-    appendMany(sessionId: string, msgs: Insertable[]): Message[] {
+    appendMany(
+      sessionId: string,
+      msgs: StoredUIMessage[]
+    ): StoredUIMessage[] {
       return orm.transaction((tx) => {
-        const out: Message[] = [];
+        const out: StoredUIMessage[] = [];
         for (const m of msgs) {
-          const id = randomUUID();
           const row = tx
             .insert(messages)
-            .values({
-              id,
-              sessionId,
-              role: m.role,
-              content: m.content ?? null,
-              toolCalls: m.toolCalls ?? null,
-              toolCallId: m.toolCallId ?? null,
-              toolName: m.toolName ?? null,
-            })
+            .values(toInsert(sessionId, m))
             .returning()
             .get();
-          out.push(row);
+          out.push(rowToMessage(row));
         }
         return out;
       });
     },
 
     /**
-     * Tie-break on rowid: created_at is unixepoch (second resolution), so
-     * a tight bulk insert (e.g. compression fork copying tail messages)
-     * can land rows with the same timestamp. Without an explicit rowid
-     * tie-break, SQLite's row order for equal keys is undefined — and the
-     * agent's history loader does an i+1 lookahead for tool-call /
-     * tool-result pairing that breaks badly under reorder.
+     * Tie-break on rowid alongside created_at: same-second bulk inserts
+     * (the compression fork copies messages in one tight loop) need a
+     * stable secondary sort. Loss of the rowid tie-break would leave
+     * SQLite free to return rows in arbitrary order for equal keys.
      */
-    getHistory(sessionId: string): Message[] {
+    getHistory(sessionId: string): StoredUIMessage[] {
       return orm
         .select()
         .from(messages)
         .where(eq(messages.sessionId, sessionId))
         .orderBy(asc(messages.createdAt), asc(sql`rowid`))
-        .all();
+        .all()
+        .map(rowToMessage);
     },
 
     /**
      * Full-text search across all messages using FTS5 with BM25 ranking.
+     * The triggers on `messages` extract text from `parts` JSON, so search
+     * hits the semantic content of every UIMessage's text-parts.
      */
     search(query: string, limit = 20): SearchResult[] {
       try {
         return ftsSearchStmt.all(query, limit) as SearchResult[];
       } catch {
-        // FTS5 query syntax errors — return empty results.
         return [];
       }
     },

@@ -1,30 +1,43 @@
-import { streamText, stepCountIs, type ModelMessage } from "ai";
+import {
+  streamText,
+  stepCountIs,
+  type ToolSet,
+  type UIMessage,
+  type StreamTextResult,
+} from "ai";
+import { randomUUID } from "node:crypto";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { getModel } from "@openacme/llm-provider";
 import { toolCallContext, type ToolRegistry } from "@openacme/tools";
-import type { SessionStore, MessageStore, Message } from "@openacme/db";
+import type { SessionStore, MessageStore, StoredUIMessage } from "@openacme/db";
 import { buildSystemPrompt } from "./prompt.js";
-import { Compressor, resolveThreshold } from "./compression.js";
-import { classifyError } from "./error-classifier.js";
-import type { AgentConfig, StreamChunk } from "./types.js";
-import { randomUUID } from "node:crypto";
+import { Compressor } from "./compression.js";
+import { uiToModelMessages, parseAttachmentUrl } from "./messages.js";
+import type { AgentConfig } from "./types.js";
 
 /**
- * Agent — the core conversational AI engine.
+ * Agent — thin wrapper around `streamText` that owns prompt assembly,
+ * tool resolution, and the per-session system-prompt cache.
  *
- * Uses Vercel AI SDK for LLM calls + tool dispatch. Compression follows
- * Hermes's runtime ContextCompressor: synchronous-at-end-of-turn for
- * proactive triggers, plus a reactive retry loop in `chat()` that catches
- * provider 413 / context_overflow errors, runs compression, and retries
- * the same turn against the new (compressed) child session.
+ * The host (HTTP route or CLI) drives the actual stream:
+ * - Server wraps `runStream` inside a `createUIMessageStream` writer
+ *   and merges `result.toUIMessageStream()`.
+ * - CLI consumes `result.fullStream` directly and assembles a
+ *   UIMessage from `result.response.messages`.
  *
- * State machine: Idle → PromptAssembly → LLMCall → ToolExecution ↔ LLMCall → Response → Idle
+ * Persistence happens at the host: only the new user message + the
+ * assistant response are written per turn (the prior history was
+ * already in the DB and was just sent back to us). Reactive
+ * compression (413 retry) is deferred — see plan.
  */
 export class Agent {
   readonly config: AgentConfig;
-  private readonly sessionStore: SessionStore;
-  private readonly messageStore: MessageStore;
-  private readonly toolRegistry: ToolRegistry;
-  private readonly compressor = new Compressor();
+  readonly sessionStore: SessionStore;
+  readonly messageStore: MessageStore;
+  readonly toolRegistry: ToolRegistry;
+  readonly attachmentsRoot: string;
+  readonly compressor = new Compressor();
   private cachedSystemPrompts = new Map<string, string>();
 
   constructor(
@@ -33,246 +46,63 @@ export class Agent {
       sessionStore: SessionStore;
       messageStore: MessageStore;
       toolRegistry: ToolRegistry;
+      attachmentsRoot: string;
     }
   ) {
     this.config = config;
     this.sessionStore = deps.sessionStore;
     this.messageStore = deps.messageStore;
     this.toolRegistry = deps.toolRegistry;
+    this.attachmentsRoot = deps.attachmentsRoot;
   }
 
   /**
-   * Main conversation method — sends a message and returns an async iterable
-   * of StreamChunks for real-time streaming.
+   * Kick off one streamText call against the supplied UIMessage history.
+   * Returns the streamText result; the caller drives the stream.
    *
-   * Two-attempt loop. Attempt 1: append user message, stream, persist.
-   * If a stream-stopping error matches the classifier (413 / context_overflow),
-   * run reactive compression, swap to the child session, retry once. On
-   * success, run proactive compression check before yielding `done`.
+   * `history` MUST already include the user's new turn — the SDK runs
+   * one round of model + tool dispatch starting from this list.
    */
-  async *chat(
-    sessionId: string,
-    userMessage: string,
-    opts?: { signal?: AbortSignal }
-  ): AsyncIterable<StreamChunk> {
-    // Pre-flight cancel: caller already aborted (e.g. user double-clicked
-    // stop, or fetch was cancelled before reaching the route). Skip
-    // persisting the user message — they didn't actually commit to it.
-    if (opts?.signal?.aborted) {
-      yield { type: "stopped" };
-      return;
-    }
+  async runStream(opts: {
+    sessionId: string;
+    history: UIMessage[];
+    signal?: AbortSignal;
+  }): Promise<StreamTextResult<ToolSet, never>> {
+    const tools = this.toolRegistry.getVercelTools(
+      new Set(this.config.tools)
+    );
 
-    // Ensure session exists. Honor caller-supplied id so the SSE `session`
-    // event the server pre-emitted matches the row we persist against.
-    let session = this.sessionStore.get(sessionId);
-    if (!session) {
-      session = this.sessionStore.create(this.config.id, { id: sessionId });
-    }
+    // Make the active session id visible to tool handlers via
+    // AsyncLocalStorage. `enterWith` is the right primitive here: it
+    // sets the store for the rest of this async path without needing
+    // a callback wrapper.
+    toolCallContext.enterWith({ sessionId: opts.sessionId });
 
-    // Persist user message ONCE — reactive retry doesn't re-append because
-    // a fork copies the latest user message into the child's tail.
-    try {
-      this.messageStore.append(sessionId, {
-        sessionId,
-        role: "user",
-        content: userMessage,
-        toolCalls: null,
-        toolCallId: null,
-        toolName: null,
-      });
-    } catch (e) {
-      console.error(
-        `Failed to save user message: ${e instanceof Error ? e.message : String(e)}`
-      );
-      yield { type: "error", error: "Failed to save message to database" };
-      return;
-    }
+    const messages = await uiToModelMessages(opts.history, {
+      attachmentsRoot: this.attachmentsRoot,
+      tools: tools as ToolSet,
+    });
 
-    const systemPrompt = this.getSystemPrompt(sessionId);
-    const tools = this.toolRegistry.getVercelTools(new Set(this.config.tools));
-
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      const dbMessages = this.messageStore.getHistory(sessionId);
-      const messages = this.buildCoreMessages(dbMessages);
-
-      let fullContent = "";
-      let recoverableError: unknown = null;
-
-      // Make the active session id visible to tool handlers via
-      // AsyncLocalStorage. `enterWith` is the right primitive for an async
-      // generator: it sets the store for the rest of this async path
-      // without requiring a callback wrapper that would conflict with
-      // `yield`. Reactive retry on attempt 2 re-enters with the swapped
-      // (child) sessionId, which is what `session_search` should see.
-      toolCallContext.enterWith({ sessionId });
-
-      try {
-        const result = streamText({
-          model: getModel(this.config.model),
-          system: systemPrompt,
-          messages,
-          tools: tools as Parameters<typeof streamText>[0]["tools"],
-          stopWhen: stepCountIs(this.config.maxSteps),
-          abortSignal: opts?.signal,
-          experimental_telemetry: {
-            isEnabled: true,
-            functionId: this.config.id,
-            metadata: { sessionId, attempt },
-          },
-        });
-
-        for await (const part of result.fullStream) {
-          // `tool-result` IS in TextStreamPart's union but the typed branch
-          // collapses to `never` because we widen tools. Match by string.
-          if ((part as { type: string }).type === "tool-result") {
-            const tr = part as unknown as {
-              toolCallId: string;
-              toolName: string;
-              output: unknown;
-            };
-            yield {
-              type: "tool-result",
-              toolName: tr.toolName,
-              toolCallId: tr.toolCallId,
-              result:
-                typeof tr.output === "string"
-                  ? tr.output
-                  : JSON.stringify(tr.output),
-            };
-            continue;
-          }
-
-          switch (part.type) {
-            case "text-delta":
-              fullContent += part.text;
-              yield { type: "text-delta", text: part.text };
-              break;
-            case "tool-call": {
-              const toolCallId = part.toolCallId ?? randomUUID();
-              yield {
-                type: "tool-call",
-                toolName: part.toolName,
-                args: part.input as Record<string, unknown>,
-                toolCallId,
-              };
-              break;
-            }
-            case "error":
-              // Stream-emitted error part. Re-throw so the same classifier
-              // path handles both this and stream-stopping errors uniformly.
-              throw part.error;
-            default:
-              // start, start-step, finish-step, finish, tool-input-start/delta/end,
-              // tool-error, reasoning-*, source, file, raw — all ignored.
-              break;
-          }
-        }
-
-        // Awaiting these AFTER a clean fullStream loop is safe; if the
-        // stream errored, we never reach here.
-        const usage = await result.usage;
-        const steps = await result.steps;
-
-        this.persistAssistantTurn(sessionId, steps);
-
-        // Title from first response.
-        try {
-          if (!session.title && fullContent) {
-            const title = fullContent.slice(0, 80).replace(/\n/g, " ");
-            this.sessionStore.updateTitle(sessionId, title);
-          }
-          this.sessionStore.touch(sessionId);
-        } catch (e) {
-          console.error(
-            `Failed to update session: ${e instanceof Error ? e.message : String(e)}`
-          );
-        }
-
-        // Proactive compression: synchronous, end-of-turn.
-        const threshold = this.config.compression
-          ? resolveThreshold(this.config.compression)
-          : null;
-        if (
-          threshold !== null &&
-          usage &&
-          typeof usage.inputTokens === "number" &&
-          this.compressor.shouldCompress(sessionId, usage.inputTokens, threshold)
-        ) {
-          const childId = await this.compress(sessionId, "proactive");
-          if (childId !== sessionId) {
-            yield { type: "session", sessionId: childId };
-            sessionId = childId;
-          }
-        }
-
-        yield {
-          type: "done",
-          usage: usage
-            ? {
-                inputTokens: usage.inputTokens,
-                outputTokens: usage.outputTokens,
-                totalTokens: usage.totalTokens,
-              }
-            : undefined,
-        };
-        return;
-      } catch (err) {
-        recoverableError = err;
-      }
-
-      // User cancel — exit cleanly without classifying or compressing.
-      // Partial assistant output (text/tool calls already streamed to the
-      // client) is intentionally not persisted on cancel: `result.steps`
-      // isn't reliably finalized after an aborted stream, and the user
-      // message stays in history so a retry just works.
-      if (
-        opts?.signal?.aborted ||
-        (recoverableError instanceof Error &&
-          recoverableError.name === "AbortError")
-      ) {
-        yield { type: "stopped" };
-        return;
-      }
-
-      // Reactive recovery path — only attempts 1 may compress + retry.
-      if (attempt === 1) {
-        const classified = classifyError(recoverableError);
-        if (classified.compressionReason) {
-          try {
-            const childId = await this.compress(sessionId, classified.compressionReason);
-            if (childId !== sessionId) {
-              yield { type: "session", sessionId: childId };
-              sessionId = childId;
-              const refreshed = this.sessionStore.get(childId);
-              if (refreshed) session = refreshed;
-              continue; // retry attempt 2 against child history
-            }
-          } catch (compressErr) {
-            console.error(
-              `Reactive compression failed for ${sessionId}: ${compressErr instanceof Error ? compressErr.message : String(compressErr)}`
-            );
-          }
-        }
-      }
-
-      // Fall through: surface the error and stop.
-      yield {
-        type: "error",
-        error:
-          recoverableError instanceof Error
-            ? recoverableError.message
-            : String(recoverableError),
-      };
-      return;
-    }
+    return streamText({
+      model: getModel(this.config.model),
+      system: this.getSystemPrompt(opts.sessionId),
+      messages,
+      tools: tools as Parameters<typeof streamText>[0]["tools"],
+      stopWhen: stepCountIs(this.config.maxSteps),
+      abortSignal: opts.signal,
+      experimental_telemetry: {
+        isEnabled: true,
+        functionId: this.config.id,
+        metadata: { sessionId: opts.sessionId },
+      },
+    });
   }
 
   /**
    * Compress a session synchronously. Loads parent history, runs the
-   * Compressor pipeline (pre-prune → boundary → summarize → sanitize),
-   * creates a child session, and persists the new message list. Returns
-   * the new child id, or the parent id if compression was a no-op.
+   * Compressor pipeline, creates a child session, and persists the new
+   * UIMessage list. Returns the new child id, or the parent id if
+   * compression was a no-op.
    */
   async compress(
     parentSessionId: string,
@@ -281,8 +111,6 @@ export class Agent {
     const parent = this.sessionStore.get(parentSessionId);
     if (!parent) return parentSessionId;
 
-    // Cross-process race: another writer may have forked this parent
-    // already (separate AgentManager on the same db).
     const existingChild = this.sessionStore.findChildOf(parentSessionId);
     if (existingChild) {
       this.compressor.inheritState(parentSessionId, existingChild.id);
@@ -291,7 +119,9 @@ export class Agent {
 
     if (!this.config.compression) return parentSessionId;
 
-    const parentMessages = this.messageStore.getHistory(parentSessionId);
+    const parentMessages = this.messageStore.getHistory(
+      parentSessionId
+    ) as unknown as UIMessage[];
     const result = await this.compressor.compress({
       parentSessionId,
       parentMessages,
@@ -310,7 +140,6 @@ export class Agent {
       { title: parent.title ?? undefined }
     );
     if (!child) {
-      // Race-loser: another writer beat us. Use the winning child.
       const won = this.sessionStore.findChildOf(parentSessionId);
       if (won) {
         this.compressor.inheritState(parentSessionId, won.id);
@@ -320,170 +149,85 @@ export class Agent {
     }
 
     try {
-      const rows: Array<Omit<Message, "id" | "createdAt">> =
-        result.childMessages.map((m) => ({
-          sessionId: child.id,
-          role: m.role,
-          content: m.content,
-          toolCalls: m.toolCalls,
-          toolCallId: m.toolCallId,
-          toolName: m.toolName,
-        }));
+      // Verbatim head/tail copies of user UIMessages may carry
+      // FileUIParts whose URL points at the PARENT session's attachments
+      // dir. The parent session is hidden post-fork; if it ever gets
+      // deleted, those files would disappear and the child's bubbles
+      // would 404. Copy the bytes under the child's session dir and
+      // rewrite the URL before persisting.
+      const rebound = result.childMessages.map((m) =>
+        this.rebindAttachmentsForChild(m, parentSessionId, child.id)
+      );
+      // Each child row needs a fresh primary key — the parent session's
+      // rows live in the same `messages` table and the original ids are
+      // already taken. We rewrite ids here rather than inside the
+      // Compressor so the algorithm stays free to use parent ids for
+      // its head/tail bookkeeping.
+      const rows: StoredUIMessage[] = rebound.map((m) => ({
+        id: randomUUID(),
+        role: m.role as "user" | "assistant",
+        parts: m.parts as unknown[],
+        metadata: m.metadata,
+      }));
       this.messageStore.appendMany(child.id, rows);
     } catch (e) {
       console.error(
         `Failed to persist compressed messages for ${child.id}: ${e instanceof Error ? e.message : String(e)}`
       );
-      // Child row exists but its messages failed to persist. Caller will
-      // see an empty child and likely fail subsequent turns; surface the
-      // problem rather than silently swap.
       throw e;
     }
 
     this.compressor.inheritState(parentSessionId, child.id);
     this.compressor.recordResult(child.id, result.savingsRatio, result.summary);
-    // The parent's system-prompt cache entry is dead now (parent is hidden
-    // by `listActive`). Drop it so the Map doesn't accumulate one entry
-    // per compression on long-lived agents.
     this.cachedSystemPrompts.delete(parentSessionId);
     return child.id;
   }
 
   /**
-   * Build CoreMessages from DB rows. Reconstructs Vercel AI SDK shape:
-   * assistant messages with tool calls become content-parts arrays;
-   * tool messages become role:"tool" with a tool-result part. Drops
-   * orphan tool calls (legacy DBs) by checking the next row.
+   * Walk a single child UIMessage's parts; for any FileUIPart whose URL
+   * resolves to a path under the parent's session dir, copy the file
+   * to a fresh `<childSessionId>/<newAttId>/<filename>` location and
+   * rewrite the URL to match. Other URL shapes (`data:`, external
+   * https, or already-rebound child URLs) pass through unchanged.
    */
-  private buildCoreMessages(dbMessages: Message[]): ModelMessage[] {
-    const out: ModelMessage[] = [];
-    for (let i = 0; i < dbMessages.length; i++) {
-      const m = dbMessages[i]!;
-
-      if (m.role === "tool" && m.toolCallId && m.toolName) {
-        out.push({
-          role: "tool",
-          content: [
-            {
-              type: "tool-result",
-              toolCallId: m.toolCallId,
-              toolName: m.toolName,
-              output: { type: "text", value: m.content ?? "" },
-            },
-          ],
-        } as unknown as ModelMessage);
-        continue;
+  private rebindAttachmentsForChild(
+    m: UIMessage,
+    parentSessionId: string,
+    childSessionId: string
+  ): UIMessage {
+    if (m.role !== "user") return m;
+    let mutated = false;
+    const parts = m.parts.map((p) => {
+      if ((p as { type?: unknown }).type !== "file") return p;
+      const fp = p as { url?: string };
+      if (typeof fp.url !== "string") return p;
+      const rel = parseAttachmentUrl(fp.url);
+      // Only rewrite when the URL is rooted in the PARENT session.
+      // Already-child / data: / external URLs pass through.
+      if (!rel || !rel.startsWith(`${parentSessionId}/`)) return p;
+      const filename = rel.split("/").pop() ?? "file";
+      const newAttId = `att_${randomUUID()}`;
+      const newRel = `${childSessionId}/${newAttId}/${filename}`;
+      const srcAbs = path.join(this.attachmentsRoot, rel);
+      const dstAbs = path.join(this.attachmentsRoot, newRel);
+      try {
+        fs.mkdirSync(path.dirname(dstAbs), { recursive: true });
+        fs.copyFileSync(srcAbs, dstAbs);
+      } catch (e) {
+        console.error(
+          `Compression: failed to copy ${srcAbs} → ${dstAbs}: ${
+            e instanceof Error ? e.message : String(e)
+          }`
+        );
+        // File didn't copy — leave the URL alone; the next render will
+        // 404 against this attachment but the rest of the message
+        // survives. Better than aborting the whole compression.
+        return p;
       }
-
-      if (m.role === "assistant" && m.toolCalls) {
-        let parsed: Array<{
-          id?: string;
-          name?: string;
-          toolCallId?: string;
-          toolName?: string;
-          args: unknown;
-        }> = [];
-        try {
-          parsed = JSON.parse(m.toolCalls);
-        } catch (e) {
-          console.warn(
-            `Failed to parse toolCalls: ${e instanceof Error ? e.message : String(e)}`
-          );
-        }
-        const normalized = parsed
-          .map((tc) => ({
-            toolCallId: tc.toolCallId ?? tc.id ?? "",
-            toolName: tc.toolName ?? tc.name ?? "",
-            args: tc.args,
-          }))
-          .filter((tc) => tc.toolCallId && tc.toolName);
-
-        const next = dbMessages[i + 1];
-        const hasFollowingToolMessage =
-          next?.role === "tool" && next.toolCallId !== null;
-        const callsToInclude = hasFollowingToolMessage ? normalized : [];
-
-        const parts: unknown[] = [];
-        if (m.content) parts.push({ type: "text", text: m.content });
-        for (const tc of callsToInclude) {
-          parts.push({
-            type: "tool-call",
-            toolCallId: tc.toolCallId,
-            toolName: tc.toolName,
-            input: tc.args,
-          });
-        }
-
-        if (parts.length > 0) {
-          out.push({
-            role: "assistant",
-            content: parts,
-          } as unknown as ModelMessage);
-        }
-        continue;
-      }
-
-      out.push({
-        role: m.role as "user" | "assistant" | "system",
-        content: m.content ?? "",
-      });
-    }
-    return out;
-  }
-
-  private persistAssistantTurn(
-    sessionId: string,
-    steps: ReadonlyArray<{
-      readonly text?: string;
-      readonly toolCalls?: ReadonlyArray<{ toolCallId: string; toolName: string; input?: unknown }>;
-      readonly toolResults?: unknown;
-    }>
-  ): void {
-    try {
-      for (const step of steps) {
-        const stepCalls = (step.toolCalls ?? []).map((tc) => ({
-          toolCallId: tc.toolCallId,
-          toolName: tc.toolName,
-          args: tc.input,
-        }));
-        const stepText = step.text ?? "";
-        const hasContent = stepText.length > 0 || stepCalls.length > 0;
-        if (hasContent) {
-          this.messageStore.append(sessionId, {
-            sessionId,
-            role: "assistant",
-            content: stepText || null,
-            toolCalls:
-              stepCalls.length > 0 ? JSON.stringify(stepCalls) : null,
-            toolCallId: null,
-            toolName: null,
-          });
-        }
-        const toolResults = (step.toolResults ?? []) as Array<{
-          toolCallId: string;
-          toolName: string;
-          result: unknown;
-        }>;
-        for (const tr of toolResults) {
-          const resultText =
-            typeof tr.result === "string"
-              ? tr.result
-              : JSON.stringify(tr.result);
-          this.messageStore.append(sessionId, {
-            sessionId,
-            role: "tool",
-            content: resultText,
-            toolCalls: null,
-            toolCallId: tr.toolCallId,
-            toolName: tr.toolName,
-          });
-        }
-      }
-    } catch (e) {
-      console.error(
-        `Failed to persist assistant turn: ${e instanceof Error ? e.message : String(e)}`
-      );
-    }
+      mutated = true;
+      return { ...(p as object), url: `/api/attachments/${newRel}` } as typeof p;
+    });
+    return mutated ? ({ ...m, parts } as UIMessage) : m;
   }
 
   private getSystemPrompt(sessionId: string): string {
@@ -523,8 +267,8 @@ export class Agent {
     return prompt;
   }
 
-  /** Get conversation history for a session. */
-  getHistory(sessionId: string) {
+  /** Get conversation history for a session as persisted UIMessages. */
+  getHistory(sessionId: string): StoredUIMessage[] {
     return this.messageStore.getHistory(sessionId);
   }
 

@@ -126,6 +126,22 @@ describe("MessageStore — appendMany and ordering", () => {
   let sessions: ReturnType<typeof createSessionStore>;
   let messages: ReturnType<typeof createMessageStore>;
 
+  function uiMessage(role: "user" | "assistant", text: string) {
+    return {
+      id: `m-${role}-${text}`,
+      role,
+      parts: [{ type: "text", text }],
+    };
+  }
+
+  function getText(m: { parts: unknown[] }): string {
+    const p = m.parts.find(
+      (x): x is { type: "text"; text: string } =>
+        !!x && typeof x === "object" && (x as { type?: unknown }).type === "text"
+    );
+    return p?.text ?? "";
+  }
+
   beforeEach(() => {
     db = freshDb();
     sessions = createSessionStore(db);
@@ -135,47 +151,48 @@ describe("MessageStore — appendMany and ordering", () => {
 
   it("appendMany inserts all messages and returns them in order", () => {
     const out = messages.appendMany("s1", [
-      { sessionId: "s1", role: "user", content: "a", toolCalls: null, toolCallId: null, toolName: null },
-      { sessionId: "s1", role: "assistant", content: "b", toolCalls: null, toolCallId: null, toolName: null },
-      { sessionId: "s1", role: "user", content: "c", toolCalls: null, toolCallId: null, toolName: null },
+      uiMessage("user", "a"),
+      uiMessage("assistant", "b"),
+      uiMessage("user", "c"),
     ]);
     expect(out.length).toBe(3);
-    expect(out.map((m) => m.content)).toEqual(["a", "b", "c"]);
+    expect(out.map(getText)).toEqual(["a", "b", "c"]);
   });
 
   it("getHistory returns messages in insertion order even when created_at ties", () => {
     // unixepoch() is second-resolution; a tight bulk insert lands inside
     // a single second. The ORDER BY rowid tie-break must keep insertion
-    // order; otherwise the agent's tool-call/tool-result pairing breaks.
-    const inputs: Array<{ role: "user" | "assistant"; content: string }> = [];
+    // order so consumers see deterministic ordering.
+    const inputs: Array<{ role: "user" | "assistant"; text: string }> = [];
     for (let i = 0; i < 50; i++) {
-      inputs.push({ role: i % 2 === 0 ? "user" : "assistant", content: `m${i}` });
+      inputs.push({ role: i % 2 === 0 ? "user" : "assistant", text: `m${i}` });
     }
     messages.appendMany(
       "s1",
-      inputs.map((m) => ({
-        sessionId: "s1",
+      inputs.map((m, i) => ({
+        id: `m-${i}`,
         role: m.role,
-        content: m.content,
-        toolCalls: null,
-        toolCallId: null,
-        toolName: null,
+        parts: [{ type: "text", text: m.text }],
       }))
     );
 
     const loaded = messages.getHistory("s1");
     expect(loaded.length).toBe(50);
-    expect(loaded.map((m) => m.content)).toEqual(inputs.map((i) => i.content));
+    expect(loaded.map(getText)).toEqual(inputs.map((i) => i.text));
   });
 
   it("appendMany is atomic — partial failure rolls back", () => {
     // Force a NOT NULL violation on the second row to trigger rollback.
     expect(() =>
       messages.appendMany("s1", [
-        { sessionId: "s1", role: "user", content: "ok", toolCalls: null, toolCallId: null, toolName: null },
+        uiMessage("user", "ok"),
         // Invalid: role is NOT NULL — passing null reaches the bind layer
         // and SQLite rejects the row.
-        { sessionId: "s1", role: null as unknown as "user", content: "bad", toolCalls: null, toolCallId: null, toolName: null },
+        {
+          id: "bad",
+          role: null as unknown as "user",
+          parts: [{ type: "text", text: "bad" }],
+        },
       ])
     ).toThrow();
 
@@ -184,13 +201,38 @@ describe("MessageStore — appendMany and ordering", () => {
     expect(history.length).toBe(0);
   });
 
-  it("FTS5 search still finds rows inserted via appendMany", () => {
+  it("FTS5 search finds text from text-parts after appendMany", () => {
     messages.appendMany("s1", [
-      { sessionId: "s1", role: "user", content: "the quick brown fox", toolCalls: null, toolCallId: null, toolName: null },
-      { sessionId: "s1", role: "assistant", content: "lazy dog", toolCalls: null, toolCallId: null, toolName: null },
+      uiMessage("user", "the quick brown fox"),
+      uiMessage("assistant", "lazy dog"),
     ]);
     const hits = messages.search("brown");
     expect(hits.length).toBeGreaterThan(0);
     expect(hits[0]!.content).toContain("brown");
+  });
+
+  it("FTS5 indexes only text parts, not tool-${name} or file parts", () => {
+    messages.appendMany("s1", [
+      uiMessage("user", "the quick brown fox"),
+      {
+        id: "m-tool",
+        role: "assistant",
+        parts: [
+          { type: "text", text: "calling shell" },
+          {
+            type: "tool-shell",
+            toolCallId: "c1",
+            state: "output-available",
+            input: { command: "secret-keyword-xyz" },
+            output: { stdout: "result-keyword-abc" },
+          },
+        ],
+      },
+    ]);
+    // Tool input/output JSON shouldn't appear in FTS hits.
+    expect(messages.search("secret-keyword-xyz").length).toBe(0);
+    expect(messages.search("result-keyword-abc").length).toBe(0);
+    // Text parts still hit.
+    expect(messages.search("calling").length).toBeGreaterThan(0);
   });
 });

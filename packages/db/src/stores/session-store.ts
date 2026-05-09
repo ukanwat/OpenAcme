@@ -2,9 +2,18 @@ import type Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { sessions, type Session } from "../schema.js";
 
 export type { Session } from "../schema.js";
+
+export interface SessionStoreOptions {
+  /** Absolute path to <dataDir>/attachments. Used by `delete` to fan out
+   *  filesystem cleanup after the cascading SQL delete. Optional only for
+   *  tests/in-memory dbs where no files were ever written. */
+  attachmentsRoot?: string;
+}
 
 /**
  * Session store — drizzle ORM operations on `sessions`.
@@ -15,8 +24,12 @@ export type { Session } from "../schema.js";
  * constraint on `parent_session_id` (which would mean another migration).
  * The race-safety story is documented inline.
  */
-export function createSessionStore(db: Database.Database) {
+export function createSessionStore(
+  db: Database.Database,
+  options: SessionStoreOptions = {}
+) {
   const orm = drizzle(db);
+  const attachmentsRoot = options.attachmentsRoot;
 
   return {
     create(
@@ -178,7 +191,24 @@ export function createSessionStore(db: Database.Database) {
     },
 
     delete(id: string): void {
+      // FK cascade clears messages and message_attachments; the on-disk
+      // attachment files don't have a trigger, so we rm them explicitly.
+      // Order is "SQL first, FS second" because if SQL fails the files
+      // are still referenced; if FS fails the rows are already gone and
+      // the orphan files are harmless until the next sweep.
       orm.delete(sessions).where(eq(sessions.id, id)).run();
+      if (attachmentsRoot) {
+        const dir = path.join(attachmentsRoot, id);
+        try {
+          fs.rmSync(dir, { recursive: true, force: true });
+        } catch (e) {
+          console.error(
+            `Failed to remove attachment dir ${dir}: ${
+              e instanceof Error ? e.message : String(e)
+            }`
+          );
+        }
+      }
     },
   };
 }

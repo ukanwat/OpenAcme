@@ -38,23 +38,38 @@ Default server: `127.0.0.1:3210`. Default model: `openrouter` + `anthropic/claud
 
 ## The agent loop — request path
 
-User message → response, end-to-end. File:line refs are anchors to jump to.
+User message → response, end-to-end. We use AI SDK v6's `UIMessage` shape end-to-end and the SDK's UIMessageStream protocol on the wire.
 
-1. **Web** `apps/web/app/page.tsx` posts `{ agentId, sessionId?, message }` to `POST /api/chat` and parses SSE lines.
-2. **Server route** `packages/server/src/app.ts` (`/api/chat`, ~line 120) generates `sessionId` if missing, emits `session` SSE event first, then iterates `manager.chat()` and writes one SSE event per chunk.
-3. **AgentManager** `packages/server/src/agent-manager.ts` looks up / lazily instantiates the `Agent`, then yields straight from `agent.chat()`.
-4. **Agent.chat** `packages/agent-core/src/agent.ts:45` (async generator):
-   - Ensures session row exists with the **caller-supplied id** (`agent.ts:54`) — critical: server already announced that id over SSE; mismatched ids break history loading on the next turn.
-   - Loads history via `MessageStore.getHistory`, normalizes legacy `{id,name,args}` tool-calls, drops assistant tool-calls with no matching tool-result row (ordering rule: tool-result must be the next message).
-   - Builds `CoreMessage[]` v3 shape (assistant content-parts include `tool-call` parts; tool messages carry `tool-result` parts).
-   - Builds + caches the system prompt per `sessionId` (`prompt.ts`); cache is in-memory on the Agent instance and also persisted via `sessionStore.updateSystemPrompt`. **Manual** invalidation via `invalidateSystemPromptCache()` — no auto-invalidation when tools/skills change.
-   - `getModel(config.model)` from `llm-provider`, `toolRegistry.getVercelTools(toolNames)` for the Zod-described tool set.
-   - `streamText({ model, system, messages, tools, maxSteps })` — Vercel AI SDK auto-dispatches tool handlers inside the maxSteps loop.
-   - Yields `text-delta` | `tool-call` | `tool-result` | `error` | `done` (`types.ts`).
-   - On finish: persists each step (assistant text + tool_calls JSON, then one tool message per result), sets a session title from the first response (≤80 chars), touches `updated_at`.
-5. **Web** updates message state per chunk, renders text via react-markdown + remark-gfm, tool calls as collapsible blocks.
+1. **Web** `apps/web/app/page.tsx` uses `useChat` (`@ai-sdk/react`) + `DefaultChatTransport` with `prepareSendMessagesRequest` to POST `{ agentId, sessionId?, messages: UIMessage[] }` to `/api/chat`.
+2. **Server route** `packages/server/src/app.ts` (`/api/chat`):
+   - Validates pending FileUIPart URLs, then `commit()`s them (moves bytes from `<dataDir>/attachments/__pending__/` under `<sessionId>/<attId>/<filename>`) and rewrites each part's URL.
+   - Provider-gates non-text parts via `lookupModelMetadata(...).inputModalities`.
+   - Wraps `Agent.runStream` inside `createUIMessageStream({ execute, originalMessages, generateId, onFinish })`.
+   - Writes a transient `data-session` part **before** the model produces tokens so the client can pin the resolved sessionId.
+   - `merge`s `result.toUIMessageStream({ sendStart: false })`.
+   - In `onFinish({ responseMessage })`: persists the **new** user message + the assembled assistant UIMessage (prior history was already in the DB; the client just sent it back), sets a session title from the first text-part, touches `updated_at`.
+3. **AgentManager** `packages/server/src/agent-manager.ts` lazy-creates the `Agent` from the agent definition.
+4. **Agent.runStream** (`packages/agent-core/src/agent.ts`):
+   - `uiToModelMessages(history, { attachmentsRoot, tools })` — `inlineFileAttachments` rewrites `/api/attachments/...` URLs to `data:` URLs (providers can't reach 127.0.0.1), then defers to SDK's `convertToModelMessages`.
+   - Builds + caches the system prompt per `sessionId` (`prompt.ts`); persisted via `sessionStore.updateSystemPrompt`. **Manual** invalidation via `invalidateSystemPromptCache()`.
+   - `streamText({ model, system, messages, tools, stopWhen: stepCountIs(maxSteps), abortSignal })`.
+   - Returns the `StreamTextResult`; the caller (server route or CLI) drives the stream.
+5. **Web** consumes the UIMessageStream automatically via `useChat`. Renders parts (text via react-markdown, tool-${name} as collapsible blocks, file as image preview or chip).
 
-`StreamChunk` is the contract that crosses agent ↔ server ↔ web. Don't change its shape without updating all three.
+`UIMessage` (from `ai`) is the canonical shape across **DB rows, persistence layer, agent input, server response, web render**. We don't define our own message types — re-exported from `@openacme/agent-core` for convenience.
+
+### Custom data parts
+
+`OpenAcmeDataParts` (in `@openacme/agent-core/src/types.ts`) maps named data-part types to their payload shapes. `OpenAcmeUIMessage = UIMessage<…, OpenAcmeDataParts>` is the type-narrowed variant — both server (`createUIMessageStream<OpenAcmeUIMessage>`) and web (`useChat<OpenAcmeUIMessage>`) use it so `writer.write({type: "data-X", data})` and the matching `onData` callback are end-to-end type-checked.
+
+The web's mirror in `apps/web/app/lib/types.ts` must be kept in sync (web can't import server packages — `// mirrored (not imported)` is the existing pattern).
+
+Two parts today:
+
+- `data-session` — resolved session id; emitted **transient** before any tokens stream so `useChat`'s `onData` can pin `activeSessionId`. Never persisted.
+- `data-status` — mid-stream reconciliation hook. **Same `id` from the server replaces the previous part** in `useChat`'s view; useful for "compressing context…" → "done" preludes. Empty `message` clears the entry on the client. Today the type is wired but no path emits it; it's the expansion seat for proactive-compression and tool-prelude UI when those return.
+
+Adding a new data part: extend `OpenAcmeDataParts` in agent-core, mirror in web's `lib/types.ts`, handle it in `useChat({onData})`. Persisted (non-transient) data parts also need a renderer in `MessageBubble`.
 
 ---
 
@@ -82,11 +97,13 @@ Shadowing rule (`registry.ts:18`): a register call is **rejected** if a differen
 
 ## Persistence
 
-`packages/db/src/connection.ts` — better-sqlite3, WAL on, FK on. Tables: `agents`, `sessions`, `messages`, `user_profiles`. `fts_messages` is a content-less FTS5 virtual table kept in sync via insert/update/delete triggers — used by `MessageStore.search()` and the `session_search` tool.
+`packages/db/src/connection.ts` — better-sqlite3, WAL on, FK on. Tables: `sessions`, `messages`, `user_profiles`. `fts_messages` is a self-contained FTS5 virtual table kept in sync via triggers that extract text from each message's `parts` JSON. Used by `MessageStore.search()` and the `session_search` tool. Agents are filesystem-backed, not in the DB.
 
-`messages` shape: `id, session_id, role, content, tool_calls (JSON string), tool_call_id, tool_name, created_at`. Assistant turns may set `content` AND `tool_calls`; tool turns set `tool_call_id` + `tool_name`. The agent's history loader expects this exact shape.
+`messages` shape: `id, session_id, role ("user" | "assistant"), parts (JSON UIMessagePart[]), metadata (JSON, optional), created_at`. One row per UIMessage — tool calls + their results live as `tool-${name}` parts inside an assistant message's parts array. File attachments are `file` parts whose `url` is `/api/attachments/<sessionId>/<attId>/<filename>` — the URL alone resolves to disk under `<dataDir>/attachments/`, no sidecar table.
 
-Stores (`packages/db/src/stores/*`) are thin: `SessionStore`, `MessageStore`, `AgentStore`. UUIDs are auto-generated when `id` isn't supplied. Don't bypass the stores from app code.
+Stores (`packages/db/src/stores/*`) are thin: `SessionStore`, `MessageStore`. `MessageStore.append/getHistory` JSON-stringifies/parses parts at the boundary; consumers see `StoredUIMessage` (id, role, parts: unknown[], metadata?). UUIDs auto-generated when `id` isn't supplied. Don't bypass the stores from app code.
+
+`SessionStore.delete` cascades messages via FK and removes `<attachmentsRoot>/<sessionId>/` from disk. Pass `attachmentsRoot` via `createSessionStore(db, { attachmentsRoot })` to enable the FS hook.
 
 ---
 
@@ -129,10 +146,10 @@ Subcommands (`apps/cli/src/commands/`):
 
 - `setup` — Clack-based wizard; writes `~/.openacme/config.yaml` and the first agent.
 - `start` — boots the Hono server + opens the web UI.
-- `chat` — terminal chat. **In-process**: instantiates `AgentManager` directly and iterates `agent.chat()`; does not hit the HTTP server.
+- `chat` — terminal chat. **In-process**: instantiates `AgentManager` directly, calls `agent.runStream()`, and consumes `result.fullStream` — no HTTP, no SSE wire format.
 - `login [--provider]`, `logout` — OAuth flows in `@openacme/auth`.
 
-TUI (`apps/cli/src/tui/`) is React-on-Ink. `render.tsx` mounts the app; `state.ts` is a small dispatch reducer; `commands.ts` is the slash-command table (`/new`, `/clear`, `/help`, `/exit`, `/model`, `/agent`). Components: `MessageList`, `MessageBubble`, `ToolBlock`, `MultilineInput`, `ModelPicker`, `AgentPicker`, `StatusLine`, `Banner`, `CommandPalette`. Markdown in terminal via `marked` + `marked-terminal` (`markdown.ts`). Non-TTY input falls through to `headless.ts`.
+TUI (`apps/cli/src/tui/`) is React-on-Ink. `render.tsx` mounts the app; `state.ts` reducer carries `committed: UIMessage[]` and an in-flight assistant UIMessage assembled from `result.fullStream` events. `commands.ts` is the slash-command table (`/new`, `/clear`, `/help`, `/exit`, `/model`, `/agent`). Components: `MessageList`, `MessageBubble` (renders UIMessagePart[]), `ToolBlock` (renders ToolUIPart by `state`), `MultilineInput`, `PendingAttachmentsBar`, pickers, `StatusLine`, `Banner`, `CommandPalette`. Markdown via `marked` + `marked-terminal`. Non-TTY → `headless.ts`. Attachments via terminal drag-drop or `@<path>` resolved at submit (`attachments.ts`).
 
 ---
 
@@ -142,9 +159,11 @@ TUI (`apps/cli/src/tui/`) is React-on-Ink. `render.tsx` mounts the app; `state.t
 
 Build → `out/` → copied to `packages/server/web/` and served as static by Hono. `next.config.js` and `apps/web/app/lib/api.ts` carry the API base URL (defaults to `http://localhost:3210`).
 
+The chat page uses `@ai-sdk/react`'s `useChat` with a `DefaultChatTransport` configured via `prepareSendMessagesRequest` to inject `agentId` + `sessionId` into the body each send. Streaming is the SDK's UIMessageStream protocol — the SDK handles parsing; we don't write our own. Custom data parts (`data-session`) arrive via the `onData` callback; `useChat`'s `messages` is the canonical render source.
+
 There is **no auth on the web ↔ server channel** today — assumes a trusted local environment. Don't add UI features that imply otherwise without first introducing a session/token layer.
 
-SSE parsing lives in `apps/web/app/page.tsx` (~line 234). Event names `session | text-delta | tool-call | tool-result | error | done` must stay in lock-step with the server route and `StreamChunk`.
+Attachments: file picker / drag-drop POSTs to `/api/uploads` first → server returns `{pendingId, url: "/api/attachments/__pending__/<id>/<file>"}`. Web stages chips with the pending URL, then `sendMessage({ role:"user", parts: [{type:"text",text}, {type:"file", url, mediaType, filename}] })`. Server's `/api/chat` resolves pending URLs to committed ones at persist time.
 
 ---
 
@@ -190,10 +209,10 @@ Per-agent `skills` array filters which skills are exposed; empty/missing means a
 ## Conventions
 
 - **TypeScript** strict, ES modules, `.js` import suffix on relative paths (NodeNext). Target Node ≥18.
-- **Zod first**: tool params, config schema, agent definitions. Don't hand-roll JSON Schema — use `zodToJsonSchema` (already imported in `tools/registry.ts`).
-- **Streams over arrays**: agent code yields `StreamChunk`s; never accumulate the whole response before returning.
-- **Stores are the boundary** to SQLite. App code uses `SessionStore` / `MessageStore` / `AgentStore`, not raw `db.prepare`.
-- **Errors**: throw `Error` with a clear message; let the agent loop surface it as a `StreamChunk` of type `error`. Don't swallow.
+- **Zod first**: tool params, config schema, agent definitions. Don't hand-roll JSON Schema — use `z.toJSONSchema` (registry uses it).
+- **AI SDK types end-to-end**: persist + render `UIMessage` / `UIMessagePart`. Don't define parallel message types in app code; re-export from `@openacme/agent-core` (which re-exports from `ai`).
+- **Stores are the boundary** to SQLite. App code uses `SessionStore` / `MessageStore`, not raw `db.prepare`. Agents are filesystem-backed via `AgentStore` (YAML), not in the DB.
+- **Errors**: throw `Error` with a clear message. The server's `createUIMessageStream` surfaces it as a stream error; the CLI's `result.fullStream` `error` event handles the same. Don't swallow.
 - **No emojis** in code or commit messages unless the user asks.
 - **No new docs** unless asked. Working notes belong in PRs / commits, not in `docs/`.
 - **Comments**: keep short or don't write them. See the **Comments** section below — this is enforced.
@@ -215,13 +234,16 @@ Long *why* belongs in the commit message. On code review, the default action aga
 
 ## Non-obvious gotchas
 
-- **Session id pinning** — `app.ts` emits the `session` SSE event before `agent.chat` runs; `agent.ts:54` honors that id when creating the row. Breaking this alignment silently corrupts history.
-- **Tool-call filtering by message order** — history loader drops an assistant tool-call if the next message isn't its tool-result. Schema doesn't enforce ordering; the persistence path in `agent.ts` does, and you must preserve it.
-- **System-prompt cache invalidation is manual.** Changing an agent's tools / skills mid-process won't take effect until you call `invalidateSystemPromptCache()` or restart.
-- **OAuth body/response transforms are required for correctness**, not optional polish. Skipping them produces 400s on Anthropic OAuth and tool-id mismatches on streamed responses. Mirror existing transforms when adding a new OAuth-aware provider.
-- **Web build → server static**: web changes only land in the served bundle after `apps/web` builds and copies into `packages/server/web/`. Plain `pnpm dev` doesn't do this; it runs Next.js dev and the Hono server side by side.
+- **Session id pinning via transient data part** — server emits `data-session` (transient) inside `createUIMessageStream` BEFORE merging `result.toUIMessageStream()`. useChat's `onData` reads it and pins `activeSessionId` for subsequent sends. The session row is created up-front in the route so the FK in the message persist on `onFinish` doesn't fail. Don't move the row creation; don't drop the transient `data-session`.
+- **Reactive 413 retry is currently disabled.** The pre-migration shape had a two-attempt loop that compressed-and-retried on context-overflow. With `createUIMessageStream` that requires aborting a partly-merged writer; we deferred it. 413s surface as stream errors today. Re-add as a follow-up.
+- **System-prompt cache invalidation is manual.** Changing an agent's tools / skills mid-process won't take effect until you call `invalidateSystemPromptCache()` or restart. AgentManager evicts the cached `Agent` on agent-definition mutation.
+- **Attachment URLs round-trip to disk paths** — `/api/attachments/<sessionId>/<attId>/<filename>` serves directly from `<dataDir>/attachments/<sessionId>/<attId>/<filename>`. No DB sidecar lookup. Pre-chat uploads land under `__pending__/<pendingId>/...` and `commit()` (in `routes/uploads.ts`) moves them under the real session at `/api/chat` time.
+- **`inlineFileAttachments` is required at chat time.** Providers can't fetch our local URLs; the agent reads the bytes off disk and rewrites to a `data:` URL before `convertToModelMessages`. If you add a new local-URL scheme, extend `parseAttachmentUrl` in `messages.ts`.
+- **Compression preserves FileUIParts via `originalParts` + `rebindAttachmentsForChild`.** The internal Step shape would otherwise drop file parts on user messages; flatten stashes the pristine parts, coalesce restores them, and `Agent.compress` copies the bytes under the child session dir + rewrites URLs. Don't strip `originalParts` from `Step`; don't skip the rebind.
+- **OAuth body/response transforms are required for correctness**, not optional polish. Skipping them produces 400s on Anthropic OAuth and tool-id mismatches. Mirror existing transforms when adding a new OAuth-aware provider.
+- **Web build → server static**: web changes only land in the Hono-served bundle after `apps/web` builds and copies into `packages/server/web/`. Plain `pnpm dev` doesn't do this; it runs Next dev (port 3000) + Hono (3210) side by side.
 - **MCP env injection is filtered**. `buildSafeEnv` drops anything that smells like a credential. Pass explicit `env` in `MCPServerConfig` for tokens you actually need.
-- **`apps/cli` chat does not call the server** — agent runs in-process. Server-only changes (e.g., HTTP middleware) won't affect terminal chat behavior.
+- **`apps/cli` chat does not call the server** — agent runs in-process via `agent.runStream`. Server-only changes (HTTP middleware, /api/chat handler) won't affect terminal chat behavior.
 
 ---
 
@@ -264,11 +286,13 @@ Manual via Changesets — see `CONTRIBUTING.md`. Workflow `.github/workflows/rel
 |---|---|
 | Add a tool | `packages/tools/src/builtins/` + register in `index.ts` |
 | Add an LLM provider | `packages/llm-provider/src/registry.ts` + `ProviderSchema` |
-| Change agent loop / streaming chunks | `packages/agent-core/src/{agent,types,prompt}.ts` |
+| Change agent loop | `packages/agent-core/src/{agent,messages,prompt}.ts` |
+| Change compression | `packages/agent-core/src/compression.ts` (operates on `Step[]` flattened from `UIMessage[]`) |
 | Add an HTTP route | `packages/server/src/app.ts` |
 | Add a slash command | `apps/cli/src/tui/commands.ts` + a reducer action in `state.ts` |
 | Touch chat UI | `apps/web/app/page.tsx` (+ `app/components/`) |
+| Add a custom UIMessage data part | server: `writer.write({type:"data-X", data, transient?})`; web: read in `useChat({ onData })` |
 | Wire a new MCP server | per-agent `mcpServers` in config; nothing code-side if transport is stdio/SSE |
 | Add an OAuth provider | `packages/auth/src/oauth-<name>.ts` + `transforms-<name>.ts` + plug into `llm-provider` factory |
-| Persist a new field | `packages/db/src/connection.ts` (schema + migration) + the relevant store |
+| Persist a new field | `packages/db/src/schema.ts` + `pnpm db:generate` + the relevant store |
 | Add config | `packages/config/src/schema.ts` |

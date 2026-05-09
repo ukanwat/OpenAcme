@@ -1,36 +1,14 @@
-import type { StreamChunk, TokenUsage } from "@openacme/agent-core";
-import { renderMarkdown } from "./markdown.js";
+import type { UIMessage } from "@openacme/agent-core";
+import type { TokenUsage } from "@openacme/agent-core";
 
-export type Role = "user" | "assistant";
-
-export type AssistantPart =
-  | { kind: "text"; text: string; rendered?: string }
-  | {
-      kind: "tool";
-      toolCallId: string;
-      name: string;
-      args: unknown;
-      result?: string;
-      status: "pending" | "done" | "error";
-    };
-
-// Kept for ToolBlock's prop shape; mapped from `tool` parts at render time.
-export interface ToolEvent {
-  toolCallId: string;
-  name: string;
-  args: unknown;
-  result?: string;
-  status: "pending" | "done" | "error";
-}
-
-export interface Message {
-  id: string;
-  role: Role;
-  text: string;
-  parts: AssistantPart[];
-  finalized: boolean;
-  usage?: TokenUsage;
-  error?: string;
+/** Pending attachment staged in the input bar before the next send. */
+export interface PendingAttachment {
+  /** Absolute path on disk (the CLI runs in-process — no upload). */
+  sourcePath: string;
+  filename: string;
+  mediaType: string;
+  size: number;
+  kind: "image" | "file";
 }
 
 export interface AppState {
@@ -38,8 +16,10 @@ export interface AppState {
   agentName: string;
   modelLabel: string;
   sessionId: string;
-  committed: Message[];
-  inflight: Message | null;
+  /** Persisted UIMessages for this session (loaded from DB or appended live). */
+  committed: UIMessage[];
+  /** The assistant UIMessage being assembled by the live stream. */
+  inflight: UIMessage | null;
   status: "idle" | "streaming" | "error";
   totalTokens: number;
   showHelp: boolean;
@@ -49,12 +29,34 @@ export interface AppState {
   sessionPickerOpen: boolean;
   skillsOverlayOpen: boolean;
   mcpOverlayOpen: boolean;
+  pendingAttachments: PendingAttachment[];
+  /** Transient one-shot notice — path-not-found, etc. */
+  attachNotice?: string;
+  lastError?: string;
 }
 
 export type Action =
-  | { type: "user-submit"; text: string }
-  | { type: "chunk"; chunk: StreamChunk }
+  | { type: "user-submit"; message: UIMessage }
+  | { type: "stream-start"; assistantId: string }
+  | { type: "stream-text-delta"; text: string }
+  | { type: "stream-tool-input-start"; toolCallId: string; toolName: string }
+  | {
+      type: "stream-tool-call";
+      toolCallId: string;
+      toolName: string;
+      input: unknown;
+    }
+  | {
+      type: "stream-tool-result";
+      toolCallId: string;
+      output: unknown;
+    }
   | { type: "stream-error"; error: string }
+  | {
+      type: "stream-done";
+      responseMessage: UIMessage | null;
+      usage?: TokenUsage;
+    }
   | { type: "new-session" }
   | { type: "clear" }
   | { type: "show-help" }
@@ -65,6 +67,10 @@ export type Action =
   | { type: "open-skills-overlay" }
   | { type: "open-mcp-overlay" }
   | { type: "open-palette" }
+  | { type: "attach-add"; attachment: PendingAttachment }
+  | { type: "attach-remove"; sourcePath: string }
+  | { type: "attach-clear" }
+  | { type: "attach-notice"; message: string }
   | { type: "set-agent"; agentId: string; agentName: string; modelLabel: string }
   | {
       type: "set-session";
@@ -72,158 +78,170 @@ export type Action =
       agentId: string;
       agentName: string;
       modelLabel: string;
-      committed: Message[];
+      committed: UIMessage[];
     }
   | { type: "set-model-label"; modelLabel: string };
 
-export function makeMessage(role: Role): Message {
-  return {
-    id: cryptoId(),
-    role,
-    text: "",
-    parts: [],
-    finalized: false,
-  };
+function makeAssistant(id: string): UIMessage {
+  return { id, role: "assistant", parts: [] } as UIMessage;
 }
 
-function appendTextDelta(parts: AssistantPart[], delta: string): AssistantPart[] {
-  const last = parts[parts.length - 1];
-  if (last && last.kind === "text") {
-    const merged: AssistantPart = { kind: "text", text: last.text + delta };
+function appendTextDelta(parts: UIMessage["parts"], delta: string): UIMessage["parts"] {
+  if (parts.length === 0)
+    return [{ type: "text", text: delta } as UIMessage["parts"][number]];
+  const last = parts[parts.length - 1]!;
+  if ((last as { type?: string }).type === "text") {
+    const merged = {
+      ...(last as object),
+      text: ((last as { text?: string }).text ?? "") + delta,
+    } as UIMessage["parts"][number];
     return [...parts.slice(0, -1), merged];
   }
-  return [...parts, { kind: "text", text: delta }];
+  return [...parts, { type: "text", text: delta } as UIMessage["parts"][number]];
 }
 
-function pushToolCall(
-  parts: AssistantPart[],
+function pushToolPart(
+  parts: UIMessage["parts"],
   toolCallId: string,
-  name: string,
-  args: unknown
-): AssistantPart[] {
-  return [
-    ...parts,
-    { kind: "tool", toolCallId, name, args, status: "pending" },
-  ];
+  toolName: string,
+  input: unknown,
+  state: "input-streaming" | "input-available"
+): UIMessage["parts"] {
+  // If this toolCallId already has a part (from input-start), upgrade it.
+  const idx = parts.findIndex(
+    (p) =>
+      typeof (p as { type?: unknown }).type === "string" &&
+      (p as { type: string }).type.startsWith("tool-") &&
+      (p as { toolCallId?: string }).toolCallId === toolCallId
+  );
+  const newPart = {
+    type: `tool-${toolName}`,
+    toolCallId,
+    state,
+    input,
+  } as unknown as UIMessage["parts"][number];
+  if (idx === -1) return [...parts, newPart];
+  const next = [...parts];
+  next[idx] = newPart;
+  return next;
 }
 
 function fillToolResult(
-  parts: AssistantPart[],
+  parts: UIMessage["parts"],
   toolCallId: string,
-  result: string
-): AssistantPart[] {
-  return parts.map((p) =>
-    p.kind === "tool" && p.toolCallId === toolCallId
-      ? { ...p, result, status: "done" as const }
-      : p
-  );
+  output: unknown
+): UIMessage["parts"] {
+  return parts.map((p) => {
+    const tp = p as {
+      type?: string;
+      toolCallId?: string;
+    };
+    if (
+      typeof tp.type === "string" &&
+      tp.type.startsWith("tool-") &&
+      tp.toolCallId === toolCallId
+    ) {
+      return {
+        ...(p as object),
+        state: "output-available",
+        output,
+      } as UIMessage["parts"][number];
+    }
+    return p;
+  });
 }
 
 export function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case "user-submit": {
-      const userMsg: Message = {
-        ...makeMessage("user"),
-        text: action.text,
-        finalized: true,
-      };
-      const inflight = makeMessage("assistant");
       return {
         ...state,
-        committed: [...state.committed, userMsg],
-        inflight,
+        committed: [...state.committed, action.message],
+        inflight: null,
         status: "streaming",
         paletteOpen: false,
+        pendingAttachments: [],
+        attachNotice: undefined,
+        lastError: undefined,
       };
     }
-    case "chunk": {
-      const { chunk } = action;
+    case "stream-start":
+      return { ...state, inflight: makeAssistant(action.assistantId) };
+    case "stream-text-delta": {
       if (!state.inflight) return state;
-      const inflight = state.inflight;
-      switch (chunk.type) {
-        case "session":
-          return { ...state, sessionId: chunk.sessionId };
-        case "text-delta": {
-          const parts = appendTextDelta(inflight.parts, chunk.text);
-          return {
-            ...state,
-            inflight: { ...inflight, parts, text: inflight.text + chunk.text },
-          };
-        }
-        case "tool-call": {
-          const parts = pushToolCall(
-            inflight.parts,
-            chunk.toolCallId,
-            chunk.toolName,
-            chunk.args
-          );
-          return { ...state, inflight: { ...inflight, parts } };
-        }
-        case "tool-result": {
-          const parts = fillToolResult(
-            inflight.parts,
-            chunk.toolCallId,
-            chunk.result
-          );
-          return { ...state, inflight: { ...inflight, parts } };
-        }
-        case "error":
-          return {
-            ...state,
-            status: "error",
-            inflight: { ...inflight, error: chunk.error },
-          };
-        case "stopped": {
-          // User-cancelled: finalize whatever streamed so far and drop back
-          // to idle. Mirrors `done` minus usage; no error styling.
-          const parts = inflight.parts.map<AssistantPart>((p) =>
-            p.kind === "text"
-              ? { ...p, rendered: p.text ? renderMarkdown(p.text) : "" }
-              : p
-          );
-          const finalized: Message = { ...inflight, parts, finalized: true };
-          return {
-            ...state,
-            committed: [...state.committed, finalized],
-            inflight: null,
-            status: "idle",
-          };
-        }
-        case "done": {
-          // Pre-render markdown per text-part so the static frame doesn't
-          // re-parse on every paint. (Each text part is a contiguous run of
-          // deltas between tool calls, so it parses cleanly on its own.)
-          const parts = inflight.parts.map<AssistantPart>((p) =>
-            p.kind === "text"
-              ? { ...p, rendered: p.text ? renderMarkdown(p.text) : "" }
-              : p
-          );
-          const finalized: Message = {
-            ...inflight,
-            parts,
-            usage: chunk.usage,
-            finalized: true,
-          };
-          return {
-            ...state,
-            committed: [...state.committed, finalized],
-            inflight: null,
-            status: state.status === "error" ? "error" : "idle",
-            totalTokens:
-              state.totalTokens + (chunk.usage?.totalTokens ?? 0),
-          };
-        }
-      }
-      return state;
+      return {
+        ...state,
+        inflight: {
+          ...state.inflight,
+          parts: appendTextDelta(state.inflight.parts, action.text),
+        } as UIMessage,
+      };
     }
+    case "stream-tool-input-start":
+      if (!state.inflight) return state;
+      return {
+        ...state,
+        inflight: {
+          ...state.inflight,
+          parts: pushToolPart(
+            state.inflight.parts,
+            action.toolCallId,
+            action.toolName,
+            undefined,
+            "input-streaming"
+          ),
+        } as UIMessage,
+      };
+    case "stream-tool-call":
+      if (!state.inflight) return state;
+      return {
+        ...state,
+        inflight: {
+          ...state.inflight,
+          parts: pushToolPart(
+            state.inflight.parts,
+            action.toolCallId,
+            action.toolName,
+            action.input,
+            "input-available"
+          ),
+        } as UIMessage,
+      };
+    case "stream-tool-result":
+      if (!state.inflight) return state;
+      return {
+        ...state,
+        inflight: {
+          ...state.inflight,
+          parts: fillToolResult(
+            state.inflight.parts,
+            action.toolCallId,
+            action.output
+          ),
+        } as UIMessage,
+      };
     case "stream-error":
       return {
         ...state,
         status: "error",
-        inflight: state.inflight
-          ? { ...state.inflight, error: action.error, finalized: true }
-          : null,
+        lastError: action.error,
       };
+    case "stream-done": {
+      // Prefer the SDK-assembled responseMessage when available — it has
+      // canonical part state ordering. Fall back to whatever we
+      // accumulated in `inflight`.
+      const finalized = action.responseMessage ?? state.inflight;
+      return {
+        ...state,
+        committed: finalized
+          ? [...state.committed, finalized]
+          : state.committed,
+        inflight: null,
+        status: state.status === "error" ? "error" : "idle",
+        totalTokens:
+          state.totalTokens + (action.usage?.totalTokens ?? 0),
+      };
+    }
     case "new-session":
       return {
         ...state,
@@ -234,6 +252,9 @@ export function reducer(state: AppState, action: Action): AppState {
         totalTokens: 0,
         showHelp: false,
         paletteOpen: false,
+        pendingAttachments: [],
+        attachNotice: undefined,
+        lastError: undefined,
       };
     case "clear":
       return { ...state, committed: [], inflight: null };
@@ -262,6 +283,30 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, mcpOverlayOpen: true, paletteOpen: false };
     case "open-palette":
       return { ...state, paletteOpen: true };
+    case "attach-add":
+      if (
+        state.pendingAttachments.some(
+          (p) => p.sourcePath === action.attachment.sourcePath
+        )
+      ) {
+        return state;
+      }
+      return {
+        ...state,
+        pendingAttachments: [...state.pendingAttachments, action.attachment],
+        attachNotice: undefined,
+      };
+    case "attach-remove":
+      return {
+        ...state,
+        pendingAttachments: state.pendingAttachments.filter(
+          (p) => p.sourcePath !== action.sourcePath
+        ),
+      };
+    case "attach-clear":
+      return { ...state, pendingAttachments: [] };
+    case "attach-notice":
+      return { ...state, attachNotice: action.message };
     case "set-agent":
       return {
         ...state,
@@ -273,6 +318,8 @@ export function reducer(state: AppState, action: Action): AppState {
         sessionId: cryptoId(),
         totalTokens: 0,
         agentPickerOpen: false,
+        pendingAttachments: [],
+        attachNotice: undefined,
       };
     case "set-session":
       return {
@@ -286,6 +333,8 @@ export function reducer(state: AppState, action: Action): AppState {
         status: "idle",
         totalTokens: 0,
         sessionPickerOpen: false,
+        pendingAttachments: [],
+        attachNotice: undefined,
       };
     case "set-model-label":
       return {
@@ -320,6 +369,7 @@ export function initState(opts: {
     sessionPickerOpen: false,
     skillsOverlayOpen: false,
     mcpOverlayOpen: false,
+    pendingAttachments: [],
   };
 }
 

@@ -1,7 +1,12 @@
 import { Box, Text } from "ink";
-import type { ToolEvent } from "../state.js";
+import type { UIMessage } from "@openacme/agent-core";
 
 const MAX_RESULT_PREVIEW = 240;
+
+type ToolUIPart = Extract<
+  UIMessage["parts"][number],
+  { type: `tool-${string}` }
+>;
 
 function summarizeArgs(args: unknown): string {
   try {
@@ -13,8 +18,10 @@ function summarizeArgs(args: unknown): string {
   }
 }
 
-function summarizeResult(result: string): string {
-  const trimmed = result.trim();
+function summarizeResult(output: unknown): string {
+  const text =
+    typeof output === "string" ? output : JSON.stringify(output ?? "");
+  const trimmed = text.trim();
   if (!trimmed) return "(empty)";
   if (trimmed.length <= MAX_RESULT_PREVIEW) return trimmed;
   const lines = trimmed.split("\n");
@@ -24,27 +31,33 @@ function summarizeResult(result: string): string {
   return trimmed.slice(0, MAX_RESULT_PREVIEW) + "…";
 }
 
-export function ToolBlock({ tool }: { tool: ToolEvent }) {
-  const argsSummary = summarizeArgs(tool.args);
-  const statusGlyph =
-    tool.status === "pending" ? "·" : tool.status === "error" ? "✗" : "✓";
-  const statusColor =
-    tool.status === "pending"
-      ? "yellow"
-      : tool.status === "error"
-        ? "red"
-        : "green";
+export function ToolBlock({ part }: { part: ToolUIPart }) {
+  const tp = part as unknown as {
+    type: string;
+    state: string;
+    input?: unknown;
+    output?: unknown;
+    errorText?: string;
+  };
+  const toolName = tp.type.slice("tool-".length);
+  const argsSummary = summarizeArgs(tp.input);
+  const isPending =
+    tp.state === "input-streaming" || tp.state === "input-available";
+  const isError = tp.state === "output-error";
+  const statusGlyph = isPending ? "·" : isError ? "✗" : "✓";
+  const statusColor = isPending ? "yellow" : isError ? "red" : "green";
+  const result = isError ? tp.errorText : tp.output;
 
   return (
     <Box flexDirection="column" marginLeft={2} marginTop={0}>
       <Box>
         <Text color={statusColor}>{statusGlyph} </Text>
-        <Text color="cyan">{tool.name}</Text>
+        <Text color="cyan">{toolName}</Text>
         {argsSummary && <Text dimColor>({argsSummary})</Text>}
       </Box>
-      {tool.result !== undefined && (
+      {result !== undefined && (
         <Box marginLeft={2}>
-          <Text dimColor>{summarizeResult(tool.result)}</Text>
+          <Text dimColor>{summarizeResult(result)}</Text>
         </Box>
       )}
     </Box>

@@ -1,9 +1,11 @@
 import { Box, Text, useApp, useInput } from "ink";
-import { useReducer, useState, useMemo, useCallback, useRef } from "react";
+import { useReducer, useState, useMemo, useCallback, useRef, useEffect } from "react";
+import { randomUUID } from "node:crypto";
 import type { AgentManager } from "@openacme/server";
 import type { AgentDefinition } from "@openacme/config";
 import { detectProviderCredentials } from "@openacme/llm-provider";
-import { reducer, initState } from "./state.js";
+import type { UIMessage } from "@openacme/agent-core";
+import { reducer, initState, type PendingAttachment } from "./state.js";
 import { COMMANDS, findCommand, filterCommands, type CommandCtx } from "./commands.js";
 import { MessageList } from "./components/MessageList.js";
 import { StatusLine } from "./components/StatusLine.js";
@@ -14,7 +16,22 @@ import { AgentPicker } from "./components/AgentPicker.js";
 import { SessionPicker, type SessionRow } from "./components/SessionPicker.js";
 import { SkillsOverlay } from "./components/SkillsOverlay.js";
 import { MCPOverlay } from "./components/MCPOverlay.js";
+import { PendingAttachmentsBar } from "./components/PendingAttachmentsBar.js";
+import { FilePathPicker } from "./components/FilePathPicker.js";
+import {
+  detectAtQuery,
+  listProjectFiles,
+  makeRanker,
+  replaceAtToken,
+  stripAtToken,
+} from "./file-search.js";
 import { dbMessagesToTuiMessages } from "./restore.js";
+import {
+  commitAttachmentForCli,
+  extractAtPaths,
+  loadAttachment,
+  looksLikeDroppedPath,
+} from "./attachments.js";
 
 interface Props {
   manager: AgentManager;
@@ -58,41 +75,207 @@ export function App({ manager, agent, dataDir }: Props) {
 
   // ── Send a turn ────────────────────────────────────────────────────────
   const sendTurn = useCallback(
-    async (text: string) => {
+    async (text: string, attachments: PendingAttachment[]) => {
       if (sendingRef.current) return;
       sendingRef.current = true;
       const ctrl = new AbortController();
       abortRef.current = ctrl;
-      dispatch({ type: "user-submit", text });
+
+      // Commit each pending attachment to disk and build a UIMessage with
+      // text + file parts. The CLI runs in-process and writes straight
+      // under the session's attachments dir — no upload route involved.
+      const fileParts = attachments.map((p) =>
+        commitAttachmentForCli(manager.attachmentsRoot, state.sessionId, p)
+      );
+      const userMsg: UIMessage = {
+        id: randomUUID(),
+        role: "user",
+        parts: [
+          ...(text ? [{ type: "text", text } as UIMessage["parts"][number]] : []),
+          ...(fileParts as UIMessage["parts"]),
+        ],
+      } as UIMessage;
+      dispatch({ type: "user-submit", message: userMsg });
+      const assistantId = randomUUID();
+      dispatch({ type: "stream-start", assistantId });
 
       try {
-        for await (const chunk of manager.chat(
-          state.agentId,
-          state.sessionId,
-          text,
-          { signal: ctrl.signal }
-        )) {
-          dispatch({ type: "chunk", chunk });
+        // Ensure the session row exists before runStream — `getSystemPrompt`
+        // updates it, and the message-append at the end has an FK to it.
+        if (!manager.sessionStore.get(state.sessionId)) {
+          manager.sessionStore.create(state.agentId, { id: state.sessionId });
         }
-      } catch (err) {
-        dispatch({
-          type: "stream-error",
-          error: err instanceof Error ? err.message : String(err),
+        const agent = manager.getAgent(state.agentId);
+        const history: UIMessage[] = [...state.committed, userMsg];
+        const result = await agent.runStream({
+          sessionId: state.sessionId,
+          history,
+          signal: ctrl.signal,
         });
+
+        // Assemble the canonical assistant UIMessage from fullStream as we
+        // also dispatch incremental updates to the reducer for live render.
+        const assistantParts: UIMessage["parts"] = [];
+        let textBuf = "";
+        const flushText = () => {
+          if (!textBuf) return;
+          assistantParts.push({
+            type: "text",
+            text: textBuf,
+          } as UIMessage["parts"][number]);
+          textBuf = "";
+        };
+
+        for await (const part of result.fullStream) {
+          const tp = part as { type?: string };
+          switch (tp.type) {
+            case "text-delta": {
+              const text = (part as { text?: string }).text ?? "";
+              if (text) {
+                textBuf += text;
+                dispatch({ type: "stream-text-delta", text });
+              }
+              break;
+            }
+            case "tool-input-start": {
+              flushText();
+              const tc = part as {
+                id?: string;
+                toolCallId?: string;
+                toolName: string;
+              };
+              dispatch({
+                type: "stream-tool-input-start",
+                toolCallId: tc.toolCallId ?? tc.id ?? randomUUID(),
+                toolName: tc.toolName,
+              });
+              break;
+            }
+            case "tool-call": {
+              flushText();
+              const tc = part as {
+                toolCallId: string;
+                toolName: string;
+                input: unknown;
+              };
+              dispatch({
+                type: "stream-tool-call",
+                toolCallId: tc.toolCallId,
+                toolName: tc.toolName,
+                input: tc.input,
+              });
+              assistantParts.push({
+                type: `tool-${tc.toolName}`,
+                toolCallId: tc.toolCallId,
+                state: "input-available",
+                input: tc.input,
+              } as unknown as UIMessage["parts"][number]);
+              break;
+            }
+            case "tool-result": {
+              const tr = part as { toolCallId: string; output: unknown };
+              dispatch({
+                type: "stream-tool-result",
+                toolCallId: tr.toolCallId,
+                output: tr.output,
+              });
+              const idx = assistantParts.findIndex(
+                (p) =>
+                  (p as { toolCallId?: string }).toolCallId === tr.toolCallId
+              );
+              if (idx !== -1) {
+                assistantParts[idx] = {
+                  ...(assistantParts[idx] as object),
+                  state: "output-available",
+                  output: tr.output,
+                } as UIMessage["parts"][number];
+              }
+              break;
+            }
+            case "error": {
+              flushText();
+              const err = (part as { error?: unknown }).error;
+              dispatch({
+                type: "stream-error",
+                error: err instanceof Error ? err.message : String(err),
+              });
+              break;
+            }
+            default:
+              break;
+          }
+        }
+        flushText();
+
+        const usage = await result.usage;
+        const responseMessage: UIMessage | null =
+          assistantParts.length > 0
+            ? ({
+                id: assistantId,
+                role: "assistant",
+                parts: assistantParts,
+              } as UIMessage)
+            : null;
+
+        // Persist the user msg + assembled response to the session.
+        manager.messageStore.append(state.sessionId, {
+          id: userMsg.id,
+          role: "user",
+          parts: userMsg.parts as unknown[],
+        });
+        if (responseMessage) {
+          manager.messageStore.append(state.sessionId, {
+            id: assistantId,
+            role: "assistant",
+            parts: responseMessage.parts as unknown[],
+          });
+        }
+
+        dispatch({
+          type: "stream-done",
+          responseMessage,
+          usage: usage ?? undefined,
+        });
+      } catch (err) {
+        if ((err as Error)?.name === "AbortError") {
+          dispatch({ type: "stream-done", responseMessage: null });
+        } else {
+          dispatch({
+            type: "stream-error",
+            error: err instanceof Error ? err.message : String(err),
+          });
+          dispatch({ type: "stream-done", responseMessage: null });
+        }
       } finally {
         if (abortRef.current === ctrl) abortRef.current = null;
         sendingRef.current = false;
       }
     },
-    [manager, state.agentId, state.sessionId]
+    [manager, state.agentId, state.sessionId, state.committed]
   );
+
+  // Resolve a raw path (drag-drop or @<path>) to an attachment and stage
+  // it in pendingAttachments. Surfaces a one-shot notice on failure.
+  const tryAttachPath = useCallback((rawPath: string) => {
+    const result = loadAttachment(rawPath);
+    if (typeof result === "string") {
+      dispatch({ type: "attach-notice", message: result });
+      return false;
+    }
+    dispatch({ type: "attach-add", attachment: result });
+    return true;
+  }, []);
 
   // Esc-to-stop while streaming. Lives at the App level rather than inside
   // MultilineInput because that input is `disabled` mid-stream, which gates
   // its own useInput. Multiple Ink useInput hooks coexist fine.
-  useInput((_input, key) => {
+  useInput((input, key) => {
     if (key.escape && state.status === "streaming") {
       abortRef.current?.abort();
+    }
+    // Ctrl+X clears the pending attachment list.
+    if (key.ctrl && input === "x" && state.pendingAttachments.length > 0) {
+      dispatch({ type: "attach-clear" });
     }
   });
 
@@ -101,16 +284,10 @@ export function App({ manager, agent, dataDir }: Props) {
     async (raw: string) => {
       const cmd = findCommand(raw);
       if (!cmd) {
-        // Unknown command; surface as a synthetic assistant error message.
-        dispatch({ type: "user-submit", text: raw });
+        // Unknown command; surface as an inline error notice.
         dispatch({
           type: "stream-error",
           error: `Unknown command: ${raw.split(/\s+/)[0]}. Type /help.`,
-        });
-        // Finalize the empty inflight bubble.
-        dispatch({
-          type: "chunk",
-          chunk: { type: "done", usage: undefined },
         });
         return;
       }
@@ -129,6 +306,60 @@ export function App({ manager, agent, dataDir }: Props) {
     !state.skillsOverlayOpen &&
     !state.mcpOverlayOpen;
   const matches = paletteOpen ? filterCommands(input) : [];
+
+  // ── @-fuzzy file picker state ──────────────────────────────────────────
+  // File index is built once at mount via globby (respects .gitignore).
+  // The fzf matcher is rebuilt only when the index changes — fzf itself
+  // does limit-bounded scoring per query so re-running it on every
+  // keystroke is cheap.
+  const [ranker, setRanker] = useState<((q: string) => string[]) | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void listProjectFiles(process.cwd()).then((files) => {
+      if (cancelled) return;
+      setRanker(() => makeRanker(files, process.cwd(), 10));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const atQuery = useMemo(() => detectAtQuery(input), [input]);
+  const atPickerOpen =
+    atQuery !== null &&
+    !paletteOpen &&
+    !state.modelPickerOpen &&
+    !state.agentPickerOpen &&
+    !state.sessionPickerOpen &&
+    !state.skillsOverlayOpen &&
+    !state.mcpOverlayOpen;
+  const atMatches = useMemo(
+    () => (atPickerOpen && ranker ? ranker(atQuery!) : []),
+    [atPickerOpen, ranker, atQuery]
+  );
+  const [atIndex, setAtIndex] = useState(0);
+  // Reset selection whenever the query changes.
+  useEffect(() => {
+    setAtIndex(0);
+  }, [atQuery]);
+
+  // Accept the highlighted match. For attachment-eligible files (PNG /
+  // JPEG / WebP / GIF / PDF, under MAX_FILE_BYTES) we commit straight to
+  // the pending list and strip the @-token from input — the user wanted
+  // to attach, not paste a path. For everything else we insert the path
+  // text so the model can read or reference the file via tools.
+  const acceptAtMatch = useCallback(() => {
+    if (!atPickerOpen || atMatches.length === 0) return false;
+    const chosen = atMatches[Math.min(atIndex, atMatches.length - 1)];
+    if (!chosen) return false;
+    const result = loadAttachment(chosen);
+    if (typeof result !== "string") {
+      dispatch({ type: "attach-add", attachment: result });
+      setInput((prev) => stripAtToken(prev));
+      return true;
+    }
+    setInput((prev) => replaceAtToken(prev, chosen));
+    return true;
+  }, [atPickerOpen, atMatches, atIndex]);
 
   // ── Submit ─────────────────────────────────────────────────────────────
   const handleSubmit = useCallback(
@@ -151,16 +382,69 @@ export function App({ manager, agent, dataDir }: Props) {
         }
       }
 
+      // @-picker pick: Enter while the popup is open inserts the
+      // highlighted match instead of submitting the buffer.
+      if (atPickerOpen && atMatches.length > 0) {
+        if (acceptAtMatch()) return;
+      }
+
       setInput("");
       setPaletteIndex(0);
+
+      // Drag-drop fallback. Some terminals deliver the dropped path in
+      // multiple stdin reads; MultilineInput's one-shot detector requires
+      // the whole path in a single useInput call. If the entire buffer
+      // is just a path to a real file, treat it as drag-drop regardless
+      // of how it arrived. Must precede the slash-command branch — an
+      // absolute path also starts with "/". tryAttachPath surfaces its
+      // own notice on unsupported-MIME / too-large; we bail either way
+      // so the path doesn't get sent to the model as a chat message.
+      if (looksLikeDroppedPath(text)) {
+        tryAttachPath(text);
+        return;
+      }
 
       if (text.startsWith("/")) {
         void runSlashCommand(text);
         return;
       }
-      void sendTurn(text);
+
+      // Extract `@<path>` tokens from the message text. Each resolved
+      // path becomes an attachment; the cleaned text drops the tokens.
+      // Unresolved paths surface as a one-shot notice and stay in the
+      // text so the user can fix them and re-send.
+      const { cleaned, paths } = extractAtPaths(text);
+      const inlineAttachments: PendingAttachment[] = [];
+      const failed: string[] = [];
+      for (const p of paths) {
+        const result = loadAttachment(p);
+        if (typeof result === "string") failed.push(p);
+        else inlineAttachments.push(result);
+      }
+      const attachments = [...state.pendingAttachments, ...inlineAttachments];
+      const finalText = inlineAttachments.length > 0 ? cleaned : text;
+
+      if (failed.length > 0) {
+        dispatch({
+          type: "attach-notice",
+          message: `Could not attach: ${failed.join(", ")}`,
+        });
+      }
+
+      void sendTurn(finalText, attachments);
     },
-    [paletteOpen, matches, paletteIndex, runSlashCommand, sendTurn]
+    [
+      paletteOpen,
+      matches,
+      paletteIndex,
+      runSlashCommand,
+      sendTurn,
+      state.pendingAttachments,
+      tryAttachPath,
+      atPickerOpen,
+      atMatches,
+      acceptAtMatch,
+    ]
   );
 
   const handleSpecialKey = useCallback(
@@ -192,9 +476,37 @@ export function App({ manager, agent, dataDir }: Props) {
           return true;
         }
       }
+      if (atPickerOpen && atMatches.length > 0) {
+        if (key.name === "up") {
+          setAtIndex((i) => (i === 0 ? atMatches.length - 1 : i - 1));
+          return true;
+        }
+        if (key.name === "down") {
+          setAtIndex((i) => (i === atMatches.length - 1 ? 0 : i + 1));
+          return true;
+        }
+        if (key.name === "tab") {
+          acceptAtMatch();
+          return true;
+        }
+        if (key.name === "escape") {
+          // Strip the trailing `@<query>` so the popup closes but the
+          // user's prefix text survives.
+          setInput((prev) => prev.replace(/(^|\s)@([^\s]*)$/, "$1"));
+          return true;
+        }
+      }
       return false;
     },
-    [paletteOpen, matches, paletteIndex, state.showHelp]
+    [
+      paletteOpen,
+      matches,
+      paletteIndex,
+      state.showHelp,
+      atPickerOpen,
+      atMatches,
+      acceptAtMatch,
+    ]
   );
 
   // Picker overlays disable the input.
@@ -320,6 +632,20 @@ export function App({ manager, agent, dataDir }: Props) {
         <CommandPalette query={input} selectedIndex={paletteIndex} />
       )}
 
+      {atPickerOpen && (
+        <FilePathPicker
+          query={atQuery!}
+          matches={atMatches}
+          selectedIdx={atIndex}
+          cwd={process.cwd()}
+        />
+      )}
+
+      <PendingAttachmentsBar
+        attachments={state.pendingAttachments}
+        notice={state.attachNotice}
+      />
+
       <StatusLine
         modelLabel={state.modelLabel}
         sessionId={state.sessionId}
@@ -335,9 +661,10 @@ export function App({ manager, agent, dataDir }: Props) {
         placeholder={
           state.status === "streaming"
             ? "(streaming…)"
-            : "Send a message · / for commands · Ctrl+J for newline"
+            : "Send a message · drop a file · @path · / for commands"
         }
         onSpecialKey={handleSpecialKey}
+        onPastePath={(rawPath) => tryAttachPath(rawPath)}
       />
     </Box>
   );
