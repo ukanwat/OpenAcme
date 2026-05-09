@@ -207,7 +207,7 @@ One line target, two cap. No multi-line blocks.
 
 Default to none. Write one only when the *why* is genuinely non-obvious from the code.
 
-Long *why* belongs in the commit message or `.claude/rules/*.md` — not the source.
+Long *why* belongs in the commit message.
 
 ---
 
