@@ -545,6 +545,15 @@ export default function ChatPage() {
                       }),
                     });
                     if (!res.ok) throw new Error(await res.text());
+                    const fresh = await res.json() as { model: { provider: string; model: string } };
+                    // Replace optimistic patch with server truth so auth/baseUrl/headers stay intact.
+                    setAgents((list) =>
+                      list.map((a) =>
+                        a.id === prev.id
+                          ? { ...a, model: { ...a.model, provider: fresh.model.provider, model: fresh.model.model } }
+                          : a
+                      )
+                    );
                     toast.success(`Switched to ${next.label}`);
                   } catch (err) {
                     // Roll back on failure.
@@ -588,19 +597,6 @@ export default function ChatPage() {
                   }
                 />
               ))}
-
-              {isStreaming &&
-                messages[messages.length - 1]?.role === "assistant" &&
-                (messages[messages.length - 1]?.parts?.length ?? 0) === 0 && (
-                  <div className="flex gap-3">
-                    <Avatar role="assistant" />
-                    <div className="flex items-center gap-1.5 pt-2 text-muted-foreground">
-                      <span className="size-1.5 animate-pulse rounded-full bg-current [animation-delay:0ms]" />
-                      <span className="size-1.5 animate-pulse rounded-full bg-current [animation-delay:160ms]" />
-                      <span className="size-1.5 animate-pulse rounded-full bg-current [animation-delay:320ms]" />
-                    </div>
-                  </div>
-                )}
 
               <div ref={messagesEndRef} />
             </div>
@@ -813,6 +809,14 @@ function MessageBubble({
         <div className="text-xs font-medium text-muted-foreground capitalize">
           assistant
         </div>
+
+        {parts.length === 0 && isStreaming && (
+          <div className="flex items-center gap-1.5 pt-2 text-muted-foreground">
+            <span className="size-1.5 animate-pulse rounded-full bg-current [animation-delay:0ms]" />
+            <span className="size-1.5 animate-pulse rounded-full bg-current [animation-delay:160ms]" />
+            <span className="size-1.5 animate-pulse rounded-full bg-current [animation-delay:320ms]" />
+          </div>
+        )}
 
         {parts.map((part, i) =>
           part.kind === "tool" ? (

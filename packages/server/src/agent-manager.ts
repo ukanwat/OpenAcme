@@ -277,7 +277,16 @@ export class AgentManager {
     const existing = this.agentStore.get(id);
     if (!existing) throw new Error(`Agent not found: ${id}`);
 
-    const updated = { ...existing, ...updates, id };
+    const updated: AgentDefinition = {
+      ...existing,
+      ...updates,
+      id,
+      // Deep-merge model so partial callers (e.g. model picker sending only
+      // {provider, model}) don't clobber auth/apiKey/baseUrl/headers.
+      model: updates.model
+        ? { ...existing.model, ...updates.model }
+        : existing.model,
+    };
     this.agentStore.upsert(updated);
 
     const mcpChanged =
