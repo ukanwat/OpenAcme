@@ -203,15 +203,11 @@ Per-agent `skills` array filters which skills are exposed; empty/missing means a
 
 ## Comments
 
-**One line is the target. Two is the cap. No multi-line `/** ... */` blocks except for public API docs.**
+One line target, two cap. No multi-line blocks.
 
-Long comments rot — they pin behaviour to versions, line numbers, or workarounds that move on, and the next reader has to decide whether the comment is still true.
+Default to none. Write one only when the *why* is genuinely non-obvious from the code.
 
-Default to **no comment**. Write one only when the *why* is non-obvious from the code itself. Don't restate what the code does, don't narrate changelog history, don't describe the call graph.
-
-Long-form context (paragraphs of *why*) belongs in the **commit message** or a `.claude/rules/*.md` file — not the source.
-
-When a reader encounters a multi-line comment outside a public API surface, the default action is to delete or compress it.
+Long *why* belongs in the commit message or `.claude/rules/*.md` — not the source.
 
 ---
 
