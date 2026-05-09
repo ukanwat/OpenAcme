@@ -3,7 +3,8 @@
   "private": true,
   "scripts": {
     "build": "turbo run build",
-    "dev": "turbo run dev --filter=web --filter=@openacme/server",
+    "predev": "pnpm --filter @openacme/cli cli stop > /dev/null 2>&1 || true",
+    "dev": "turbo run dev --filter=!docs --concurrency=20",
     "lint": "turbo run lint",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
     "check-types": "turbo run check-types",

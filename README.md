@@ -292,10 +292,51 @@ Adding a provider: enum + factory in `packages/llm-provider/src/registry.ts`.
 
 ---
 
+## 🧪 Development
+
+Two modes — pick the right one for what you're doing.
+
+### `pnpm dev` — active development with hot reload
+
+Use this when you're editing code. It:
+
+- Auto-stops the daemon (frees port 3210)
+- Starts every workspace package in `tsc --watch` (recompiles on save)
+- Starts the server with `tsx watch src/index.ts` (hot-restarts on backend changes)
+- Starts Next.js dev server at **`http://localhost:3000`** with HMR (proxies `/api/*` to `:3210`)
+
+```sh
+pnpm dev
+# open http://localhost:3000  (NOT :3210 — that's the daemon's URL)
+```
+
+What hot-reloads:
+
+| Edit | Reloads automatically? |
+|---|---|
+| `apps/web/**` | Yes — Next.js HMR |
+| `packages/server/**` | Yes — tsx watch restarts the server |
+| `packages/agent-core/**`, `packages/tools/**`, etc. | Yes — their `tsc --watch` rebuilds dist/, server picks it up and restarts |
+| `apps/cli/**` | Recompiles to dist/, but the daemon isn't running in dev mode |
+
+When you stop `pnpm dev`, run `pnpm agent:start` to bring the daemon back up if you want it always-on again.
+
+### Daemon mode — production-style local install
+
+Use this when you're *using* OpenAcme, not editing it. The daemon runs in the background, survives reboots, restarts on crash, and serves the production-built web bundle from `:3210`.
+
+```sh
+pnpm agent:start       # background daemon at http://localhost:3210
+```
+
+The web bundle the daemon serves is rebuilt and copied into `packages/server/web/` only by `pnpm build`. So if you edited web code, you need a full `pnpm build` + `pnpm agent:restart` to see it through the daemon — or just use `pnpm dev` instead.
+
+---
+
 ## 📜 Scripts
 
 ```sh
-pnpm dev               # web + @openacme/server in parallel (dev mode, not the daemon)
+pnpm dev               # active dev (HMR + hot-restart) — http://localhost:3000
 pnpm build             # build everything
 pnpm check-types       # tsc --noEmit across the workspace
 pnpm lint
