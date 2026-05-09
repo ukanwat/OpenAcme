@@ -196,7 +196,7 @@ Per-agent `skills` array filters which skills are exposed; empty/missing means a
 - **Errors**: throw `Error` with a clear message; let the agent loop surface it as a `StreamChunk` of type `error`. Don't swallow.
 - **No emojis** in code or commit messages unless the user asks.
 - **No new docs** unless asked. Working notes belong in PRs / commits, not in `docs/`.
-- **Comments**: only for the non-obvious *why*. Don't restate the code. Don't write multi-paragraph docstrings. Keep them short — one or two lines. Long comments tend to go stale and rarely earn their keep.
+- **Comments — keep short or don't write them.** One line is the target, two is the cap. No multi-line `/** ... */` blocks unless it's a public API doc. Long comments rot — they pin behaviour to specific SDK versions, line numbers, or workarounds that move on. Cite a *why* the code can't show, then stop. If the WHY needs a paragraph, it belongs in the commit message or a `.claude/rules/*.md`, not the source.
 - **No backwards-compat shims** for unreleased / unpublished surfaces — change the code.
 
 ---

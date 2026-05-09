@@ -45,10 +45,7 @@ function anthropicSupports1mContext(model: string): boolean {
   return major > 4 || (major === 4 && effMinor >= 6);
 }
 
-/** Opus 4.7 400s when `fine-grained-tool-streaming-2025-05-14` is set; the
- *  upstream @ai-sdk/anthropic@3.x strips it for that model on its own
- *  codepath. We bypass the SDK with a custom fetch, so we must mirror the
- *  exclusion ourselves. */
+/** Opus 4.7 400s on `fine-grained-tool-streaming-2025-05-14`; mirror the SDK's per-model strip. */
 function anthropicSupportsFineGrainedToolStreaming(model: string): boolean {
   const m = model.toLowerCase();
   if (m.includes("opus") && (m.includes("4-7") || m.includes("4.7"))) return false;
@@ -129,12 +126,9 @@ const providerFactories: Record<
           return fetch(url as string | URL, { ...rewritten, headers });
         },
       });
-      // ChatGPT backend speaks the Responses API, not Chat Completions.
-      // Inject `store: false` into per-call provider options so the SDK's
-      // message converter inlines `function_call` items in tool-call follow-up
-      // turns instead of emitting `item_reference` (the latter relies on the
-      // server having persisted the previous `fc_<id>` item, which never
-      // happens with `store: false` — the contract for ChatGPT-account Codex).
+      // ChatGPT backend speaks the Responses API. `store: false` propagates
+      // into the SDK's message converter so it inlines function_call items
+      // (not item_reference, which needs server-side persistence Codex lacks).
       return wrapLanguageModel({
         model: provider.responses(config.model),
         middleware: defaultSettingsMiddleware({
