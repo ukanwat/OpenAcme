@@ -205,7 +205,7 @@ Per-agent `skills` array filters which skills are exposed; empty/missing means a
 
 One line target, two cap. No multi-line blocks.
 
-Default to none. Write one only when the *why* is genuinely non-obvious from the code.
+Write one only when the *why* is genuinely non-obvious from the code.
 
 Comments rot. Every reader has to decide whether they're still true, and the cost compounds across the codebase. A clear name plus a tight signature usually says enough; reach for a comment only when neither does.
 
