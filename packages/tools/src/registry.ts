@@ -1,5 +1,8 @@
 import { z } from "zod";
 import type { ToolEntry, ToolDefinition, ToolInfo } from "./types.js";
+import { SYSTEM_TOOLS } from "./system.js";
+
+const SYSTEM_TOOL_SET = new Set<string>(SYSTEM_TOOLS);
 
 /**
  * Singleton tool registry — mirrors Hermes tools/registry.py ToolRegistry.
@@ -66,6 +69,7 @@ export class ToolRegistry {
         description: entry.description,
         toolset: entry.toolset,
         emoji: entry.emoji,
+        system: SYSTEM_TOOL_SET.has(entry.name) || undefined,
       }))
       .sort((a, b) =>
         a.toolset === b.toolset

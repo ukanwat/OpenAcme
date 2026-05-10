@@ -54,4 +54,7 @@ export interface ToolInfo {
   description: string;
   toolset: string;
   emoji?: string;
+  /** Always-on tool merged into every agent regardless of config; the agent
+   *  picker should not present it as toggleable. */
+  system?: boolean;
 }

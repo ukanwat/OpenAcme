@@ -21,6 +21,7 @@ import {
   bindSkillView,
   bindMemory,
   bindTaskStore,
+  SYSTEM_TOOLS,
 } from "@openacme/tools";
 import { MemoryStore } from "@openacme/memory";
 import { TaskStore } from "@openacme/tasks";
@@ -404,7 +405,13 @@ export class AgentManager {
       name: def.name,
       model: def.model,
       persona: def.persona,
-      tools: [...def.tools, ...mcpToolNames],
+      // Effective tool set: user-configurable env tools + agent's MCP
+      // tools + always-on system tools (skill_view, memory, session_search,
+      // task_*). Dedup defensively in case a legacy AGENT.md still lists
+      // a system tool explicitly.
+      tools: Array.from(
+        new Set([...def.tools, ...mcpToolNames, ...SYSTEM_TOOLS])
+      ),
       maxSteps: b.maxSteps,
       skillsIndex,
       memoryCharLimit: def.memoryCharLimit,

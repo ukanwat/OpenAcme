@@ -36,16 +36,16 @@ export function AttachmentChip({
 }: AttachmentChipProps) {
   const Icon = kind === "image" ? ImageIcon : FileText;
   const inner = (
-    <span className="flex items-center gap-1.5 min-w-0">
+    <span className="flex items-center gap-2 min-w-0">
       {status === "uploading" ? (
-        <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
+        <Loader2 className="size-3 shrink-0 animate-spin text-ink-soft" />
       ) : status === "error" ? (
-        <AlertCircle className="size-3.5 shrink-0 text-destructive" />
+        <AlertCircle className="size-3 shrink-0 text-destructive" />
       ) : (
-        <Icon className="size-3.5 shrink-0 text-primary" />
+        <Icon className="size-3 shrink-0 text-ink-soft" />
       )}
-      <span className="truncate text-[12px] font-medium">{name}</span>
-      <span className="text-[11px] text-muted-foreground shrink-0">
+      <span className="truncate text-[12px] text-ink">{name}</span>
+      <span className="font-mono text-[11px] text-ink-faint shrink-0 tabular-nums">
         {formatSize(size)}
       </span>
     </span>
@@ -54,8 +54,8 @@ export function AttachmentChip({
   return (
     <span
       className={cn(
-        "inline-flex max-w-[260px] items-center gap-1 rounded-md border bg-muted/50 px-2 py-1",
-        status === "error" && "border-destructive/40 bg-destructive/5"
+        "inline-flex max-w-[260px] items-center gap-1 border border-paper-rule bg-paper-sunk px-2 py-1",
+        status === "error" && "border-destructive text-destructive"
       )}
       title={error ?? `${name} (${mediaType})`}
     >
@@ -64,7 +64,7 @@ export function AttachmentChip({
           href={href}
           target="_blank"
           rel="noreferrer"
-          className="min-w-0 hover:underline"
+          className="min-w-0 hover:text-plot-red"
         >
           {inner}
         </a>
@@ -76,7 +76,7 @@ export function AttachmentChip({
           type="button"
           onClick={onRemove}
           aria-label="Remove attachment"
-          className="ml-0.5 rounded p-0.5 hover:bg-destructive/15 hover:text-destructive shrink-0"
+          className="ml-1 p-0.5 text-ink-soft hover:text-destructive shrink-0 focus-visible:outline focus-visible:outline-1 focus-visible:outline-plot-red"
         >
           <X className="size-3" />
         </button>

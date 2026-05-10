@@ -1,6 +1,7 @@
 "use client";
 
-import { Loader2, Save, Trash2 } from "lucide-react";
+import { useState } from "react";
+import { Loader2, Save, Trash2, X, Copy, Check } from "lucide-react";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { Textarea } from "@/app/components/ui/textarea";
@@ -30,6 +31,8 @@ export interface TaskDetailPanelProps {
   onChange: (next: Task) => void;
   onSave: () => void;
   onDeleteClick: () => void;
+  /** When provided, renders a close X in the header (modal use). */
+  onClose?: () => void;
 }
 
 export function TaskDetailPanel({
@@ -40,13 +43,45 @@ export function TaskDetailPanel({
   onChange,
   onSave,
   onDeleteClick,
+  onClose,
 }: TaskDetailPanelProps) {
+  const [copied, setCopied] = useState(false);
+  const copyId = async () => {
+    try {
+      await navigator.clipboard.writeText(selected.id);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    } catch {
+      /* clipboard unavailable */
+    }
+  };
+  const shortId = selected.id.slice(0, 8);
+
   return (
     <>
-      <div className="flex items-center justify-between border-b px-6 py-3">
-        <div className="text-xs text-muted-foreground">{selected.id}</div>
-        <div className="flex items-center gap-2">
-          <Button size="sm" variant="outline" disabled={saving} onClick={onDeleteClick}>
+      {/* Fixed header */}
+      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-paper-rule bg-paper-sunk px-4 py-2">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
+            Task
+          </span>
+          <button
+            type="button"
+            onClick={copyId}
+            title={`Copy ${selected.id}`}
+            aria-label="Copy task ID"
+            className="group flex items-center gap-1.5 font-mono text-[12px] tabular-nums text-ink-soft transition-colors hover:text-plot-red focus-visible:outline focus-visible:outline-1 focus-visible:outline-plot-red"
+          >
+            <span>{shortId}</span>
+            {copied ? (
+              <Check className="size-3 text-plot-red" />
+            ) : (
+              <Copy className="size-3 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" />
+            )}
+          </button>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <Button size="sm" variant="ghost-destructive" disabled={saving} onClick={onDeleteClick}>
             <Trash2 className="size-4" />
             Delete
           </Button>
@@ -58,10 +93,21 @@ export function TaskDetailPanel({
             )}
             Save
           </Button>
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close"
+              className="ml-1 p-1 text-ink-soft transition-colors hover:text-plot-red focus-visible:outline focus-visible:outline-1 focus-visible:outline-plot-red"
+            >
+              <X className="size-4" />
+            </button>
+          )}
         </div>
       </div>
 
-      <div className="flex-1 space-y-4 overflow-y-auto p-6">
+      {/* Scrollable body */}
+      <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-4">
         <div className="space-y-1.5">
           <Label htmlFor="title">Title</Label>
           <Input
@@ -151,46 +197,55 @@ export function TaskDetailPanel({
           <Label htmlFor="body">Body</Label>
           <Textarea
             id="body"
-            rows={14}
+            rows={12}
             value={draft.body ?? ""}
             onChange={(e) => onChange({ ...draft, body: e.target.value })}
           />
         </div>
+      </div>
 
-        <div className="grid grid-cols-2 gap-4 text-xs text-muted-foreground">
-          <div>
-            <div className="font-medium">Created by</div>
-            <div>{selected.created_by}</div>
-          </div>
-          <div>
-            <div className="font-medium">Created</div>
-            <div>{formatDate(selected.created_at)}</div>
-          </div>
-          <div>
-            <div className="font-medium">Updated</div>
-            <div>{formatDate(selected.updated_at)}</div>
-          </div>
-          {selected.closed_at && (
-            <div>
-              <div className="font-medium">Closed</div>
-              <div>{formatDate(selected.closed_at)}</div>
-            </div>
-          )}
-          {selected.depends_on.length > 0 && (
-            <div className="col-span-2">
-              <div className="font-medium">Depends on</div>
-              <div className="break-all">
-                {selected.depends_on.join(", ")}
-              </div>
-            </div>
-          )}
-          {selected.parent_id && (
-            <div className="col-span-2">
-              <div className="font-medium">Parent</div>
-              <div>{selected.parent_id}</div>
-            </div>
-          )}
-        </div>
+      {/* Fixed footer with audit metadata */}
+      <div className="grid shrink-0 grid-cols-[auto_1fr_auto_1fr] items-baseline gap-x-5 gap-y-1 border-t border-paper-rule bg-paper-sunk px-5 py-3 font-mono text-[12px] tabular-nums">
+        <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
+          By
+        </span>
+        <span className="truncate text-ink-soft">{selected.created_by}</span>
+        <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
+          Created
+        </span>
+        <span className="text-ink-soft">{formatDate(selected.created_at)}</span>
+        <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
+          Updated
+        </span>
+        <span className="text-ink-soft">{formatDate(selected.updated_at)}</span>
+        {selected.closed_at && (
+          <>
+            <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
+              Closed
+            </span>
+            <span className="text-ink-soft">{formatDate(selected.closed_at)}</span>
+          </>
+        )}
+        {selected.depends_on.length > 0 && (
+          <>
+            <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
+              Deps
+            </span>
+            <span className="col-span-3 truncate text-ink-soft">
+              {selected.depends_on.map((id) => id.slice(0, 8)).join(", ")}
+            </span>
+          </>
+        )}
+        {selected.parent_id && (
+          <>
+            <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
+              Parent
+            </span>
+            <span className="col-span-3 truncate text-ink-soft">
+              {selected.parent_id.slice(0, 8)}
+            </span>
+          </>
+        )}
       </div>
     </>
   );
@@ -240,9 +295,9 @@ function RecurrenceEditor({
   };
 
   return (
-    <div className="space-y-3 rounded-md border p-4">
+    <div className="space-y-3 border border-paper-rule bg-paper-sunk p-4">
       <div className="flex items-center justify-between">
-        <Label className="text-sm font-medium">Recurrence</Label>
+        <Label>Recurrence</Label>
         <Select value={kind} onValueChange={(v) => setKind(v as RecurrenceKind)}>
           <SelectTrigger className="w-40">
             <SelectValue />
@@ -295,7 +350,7 @@ function RecurrenceEditor({
               })
             }
           />
-          <p className="text-[11px] text-muted-foreground">
+          <p className="font-mono text-[11px] text-ink-faint">
             Minimum 60000 (1 minute). 60000=1m, 3600000=1h, 86400000=1d.
           </p>
         </div>
@@ -355,18 +410,24 @@ function RecurrenceEditor({
             </Select>
           </div>
 
-          <div className="grid grid-cols-3 gap-4 text-xs text-muted-foreground">
+          <div className="grid grid-cols-3 gap-4 border-t border-paper-rule pt-3 font-mono text-[12px] tabular-nums">
             <div>
-              <div className="font-medium">Runs completed</div>
-              <div>{runs}</div>
+              <div className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
+                Runs
+              </div>
+              <div className="text-ink">{runs}</div>
             </div>
             <div>
-              <div className="font-medium">Last run</div>
-              <div>{lastRunAt ? formatDate(lastRunAt) : "—"}</div>
+              <div className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
+                Last run
+              </div>
+              <div className="text-ink-soft">{lastRunAt ? formatDate(lastRunAt) : "—"}</div>
             </div>
             <div>
-              <div className="font-medium">Next fire</div>
-              <div>{nextStartAt ? formatDate(nextStartAt) : "—"}</div>
+              <div className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
+                Next fire
+              </div>
+              <div className="text-ink-soft">{nextStartAt ? formatDate(nextStartAt) : "—"}</div>
             </div>
           </div>
         </>

@@ -221,49 +221,73 @@ export default function TasksPage() {
     <div className="flex h-screen w-screen overflow-hidden">
       <Sidebar />
 
-      <main className="flex flex-1 flex-col overflow-hidden">
-        <header className="flex h-14 shrink-0 items-center justify-between border-b px-6">
-          <div>
-            <h2 className="text-sm font-semibold">Tasks</h2>
-            <p className="text-xs text-muted-foreground">
-              {tasks.length} task{tasks.length === 1 ? "" : "s"} — agents file
-              and complete; founder observes.
-            </p>
+      <main className="flex flex-1 flex-col overflow-hidden bg-paper">
+        <header className="flex h-12 shrink-0 items-center justify-between border-b border-paper-rule px-6">
+          <div className="flex items-center gap-3">
+            <span className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-faint">
+              Tasks
+            </span>
+            <span className="h-3 w-px bg-paper-rule" aria-hidden />
+            <span className="font-mono text-[12px] tabular-nums text-ink-soft">
+              {tasks.length} filed
+            </span>
+            <span className="font-mono text-[11px] text-ink-faint">
+              · agents file and complete; you observe
+            </span>
           </div>
-          <div className="inline-flex rounded-md border p-0.5">
-            <Button
-              size="sm"
-              variant={viewMode === "board" ? "secondary" : "ghost"}
-              className="h-7 gap-1.5 px-2.5 text-xs"
+          <div className="inline-flex border border-paper-rule">
+            <button
               onClick={() => setViewMode("board")}
+              className={cn(
+                "inline-flex h-7 items-center gap-1.5 px-2.5 font-mono text-[11px] uppercase tracking-[0.08em] transition-colors",
+                viewMode === "board"
+                  ? "bg-ink text-paper"
+                  : "bg-paper text-ink-soft hover:bg-paper-sunk hover:text-ink"
+              )}
             >
               <Kanban className="size-3.5" />
               Board
-            </Button>
-            <Button
-              size="sm"
-              variant={viewMode === "list" ? "secondary" : "ghost"}
-              className="h-7 gap-1.5 px-2.5 text-xs"
+            </button>
+            <button
               onClick={() => setViewMode("list")}
+              className={cn(
+                "inline-flex h-7 items-center gap-1.5 border-l border-paper-rule px-2.5 font-mono text-[11px] uppercase tracking-[0.08em] transition-colors",
+                viewMode === "list"
+                  ? "bg-ink text-paper"
+                  : "bg-paper text-ink-soft hover:bg-paper-sunk hover:text-ink"
+              )}
             >
               <Rows3 className="size-3.5" />
               List
-            </Button>
+            </button>
           </div>
         </header>
 
         {loading ? (
-          <div className="space-y-2 p-4">
+          <div className="space-y-px p-4">
             <Skeleton className="h-12 w-full" />
             <Skeleton className="h-12 w-full" />
             <Skeleton className="h-12 w-full" />
           </div>
         ) : tasks.length === 0 ? (
-          <div className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-center">
-            <ListChecks className="size-8 text-muted-foreground" />
-            <p className="text-sm text-muted-foreground">
-              No tasks yet. Ask an agent to file one in chat.
-            </p>
+          <div className="flex flex-1 items-start justify-center pt-24 px-6">
+            <div className="max-w-md">
+              <div className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-faint">
+                Empty board
+              </div>
+              <h3 className="mt-2 text-base font-semibold text-ink">
+                No tasks filed yet
+              </h3>
+              <p className="mt-2 text-sm leading-relaxed text-ink-soft">
+                Tasks are how agents track work — for themselves and for
+                you. They appear here as agents file them. Ask an agent in
+                chat to{" "}
+                <span className="font-mono text-ink">
+                  file a task to investigate X
+                </span>{" "}
+                to start.
+              </p>
+            </div>
           </div>
         ) : viewMode === "board" ? (
           <>
@@ -282,7 +306,10 @@ export default function TasksPage() {
                 }
               }}
             >
-              <DialogContent className="flex max-h-[85vh] max-w-3xl flex-col overflow-hidden p-0">
+              <DialogContent
+                showCloseButton={false}
+                className="max-h-[85vh] max-w-3xl overflow-hidden"
+              >
                 <VisuallyHidden.Root>
                   <DialogTitle>{selected?.title ?? "Task"}</DialogTitle>
                   <DialogDescription>
@@ -299,6 +326,10 @@ export default function TasksPage() {
                     onChange={setDraft}
                     onSave={() => void save()}
                     onDeleteClick={() => setConfirmDelete(selected.id)}
+                    onClose={() => {
+                      setSelected(null);
+                      setDraft(null);
+                    }}
                   />
                 )}
               </DialogContent>
@@ -306,53 +337,66 @@ export default function TasksPage() {
           </>
         ) : (
           <div className="flex flex-1 overflow-hidden">
-            <aside className="flex w-96 shrink-0 flex-col overflow-y-auto border-r">
+            <aside className="flex w-96 shrink-0 flex-col overflow-y-auto border-r border-paper-rule">
               {STATUS_ORDER.map((status) => {
                 const items = grouped.get(status) ?? [];
                 if (items.length === 0) return null;
                 return (
-                  <div key={status} className="border-b last:border-b-0">
-                    <div className="flex items-center justify-between px-4 py-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  <div key={status}>
+                    <div className="flex items-center justify-between border-b border-paper-rule px-4 py-2 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
                       <span>{STATUS_LABEL[status]}</span>
-                      <span>{items.length}</span>
+                      <span className="tabular-nums">{items.length}</span>
                     </div>
                     <div className="flex flex-col">
-                      {items.map((t) => (
-                        <button
-                          key={t.id}
-                          onClick={() => void loadOne(t.id)}
-                          className={cn(
-                            "flex flex-col items-start gap-1 border-t px-4 py-3 text-left transition-colors",
-                            selected?.id === t.id
-                              ? "bg-accent"
-                              : "hover:bg-accent/50"
-                          )}
-                        >
-                          <div className="flex w-full items-center gap-2">
-                            <Badge
-                              variant={STATUS_VARIANT[t.status]}
-                              className="shrink-0"
-                            >
-                              {STATUS_LABEL[t.status]}
-                            </Badge>
-                            <span className="truncate text-sm font-medium">
-                              {t.title}
-                            </span>
-                          </div>
-                          <div className="flex w-full flex-wrap gap-x-3 text-[11px] text-muted-foreground">
-                            <span>@{t.assignee}</span>
-                            {t.due_at && (
-                              <span>due {formatDate(t.due_at)}</span>
+                      {items.map((t) => {
+                        const isActive = selected?.id === t.id;
+                        return (
+                          <button
+                            key={t.id}
+                            onClick={() => void loadOne(t.id)}
+                            className={cn(
+                              "group relative flex flex-col items-start gap-1 border-b border-paper-rule px-4 py-3 text-left transition-colors",
+                              isActive
+                                ? "bg-paper-sunk text-ink"
+                                : "text-ink-soft hover:bg-paper-sunk hover:text-ink"
                             )}
-                            {t.start_at && (
-                              <span>starts {formatDate(t.start_at)}</span>
-                            )}
-                            {t.depends_on.length > 0 && (
-                              <span>{t.depends_on.length} dep(s)</span>
-                            )}
-                          </div>
-                        </button>
-                      ))}
+                          >
+                            <span
+                              className={cn(
+                                "absolute inset-y-0 left-0 w-[2px] bg-plot-red transition-opacity",
+                                isActive ? "opacity-100" : "opacity-0"
+                              )}
+                              aria-hidden
+                            />
+                            <div className="flex w-full items-center gap-2">
+                              <Badge
+                                variant={STATUS_VARIANT[t.status]}
+                                className="shrink-0"
+                              >
+                                {STATUS_LABEL[t.status]}
+                              </Badge>
+                              <span className="truncate text-sm font-medium text-ink">
+                                {t.title}
+                              </span>
+                            </div>
+                            <div className="flex w-full flex-wrap gap-x-3 font-mono text-[11px] tabular-nums text-ink-faint">
+                              <span>@{t.assignee}</span>
+                              {t.due_at && (
+                                <span>due {formatDate(t.due_at)}</span>
+                              )}
+                              {t.start_at && (
+                                <span>starts {formatDate(t.start_at)}</span>
+                              )}
+                              {t.depends_on.length > 0 && (
+                                <span>
+                                  {t.depends_on.length} dep
+                                  {t.depends_on.length === 1 ? "" : "s"}
+                                </span>
+                              )}
+                            </div>
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
                 );
@@ -361,8 +405,19 @@ export default function TasksPage() {
 
             <section className="flex flex-1 flex-col overflow-hidden">
               {!selected || !draft ? (
-                <div className="flex flex-1 items-center justify-center p-6 text-sm text-muted-foreground">
-                  Select a task to view or edit.
+                <div className="flex flex-1 items-start justify-center pt-24 px-6">
+                  <div className="max-w-sm">
+                    <div className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-faint">
+                      No selection
+                    </div>
+                    <h3 className="mt-2 text-base font-semibold text-ink">
+                      Pick a task
+                    </h3>
+                    <p className="mt-2 text-sm leading-relaxed text-ink-soft">
+                      Each task has a title, status, assignee, schedule, and
+                      free-form body. Status changes are gated by dependencies.
+                    </p>
+                  </div>
                 </div>
               ) : (
                 <TaskDetailPanel

@@ -43,6 +43,7 @@ import {
 } from "@/app/components/ui/tabs";
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogHeader,
@@ -114,17 +115,17 @@ function aggregateStatus(
 function statePillClass(state: McpServerStatus["state"]): string {
   switch (state) {
     case "connected":
-      return "bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/20";
+      return "bg-paper text-ink border border-plot-red";
     case "awaiting_oauth":
-      return "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20";
+      return "bg-paper text-warn-ochre border border-warn-ochre";
     case "failed":
-      return "bg-destructive/10 text-destructive border-destructive/20";
+      return "bg-paper text-destructive border border-destructive";
     case "connecting":
-      return "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20";
+      return "bg-paper text-plot-red border border-plot-red pulse-live";
     case "disabled":
-      return "bg-muted text-muted-foreground border-border";
+      return "bg-paper-sunk text-ink-faint border border-paper-rule";
     default:
-      return "bg-muted text-muted-foreground border-border";
+      return "bg-paper-sunk text-ink-soft border border-paper-rule";
   }
 }
 
@@ -410,13 +411,16 @@ export default function SettingsPage() {
     <div className="flex h-screen w-screen overflow-hidden">
       <Sidebar />
 
-      <main className="flex flex-1 flex-col overflow-hidden">
-        <header className="flex h-14 shrink-0 items-center border-b px-6">
-          <div>
-            <h2 className="text-sm font-semibold">Settings</h2>
-            <p className="text-xs text-muted-foreground">
-              Configure providers, server, and integrations
-            </p>
+      <main className="flex flex-1 flex-col overflow-hidden bg-paper">
+        <header className="flex h-12 shrink-0 items-center border-b border-paper-rule px-6">
+          <div className="flex items-center gap-3">
+            <span className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-faint">
+              Settings
+            </span>
+            <span className="h-3 w-px bg-paper-rule" aria-hidden />
+            <span className="font-mono text-[12px] text-ink-soft">
+              Providers · Server · MCP
+            </span>
           </div>
         </header>
 
@@ -448,7 +452,7 @@ export default function SettingsPage() {
                     <CardTitle>API Keys</CardTitle>
                     <CardDescription>
                       Saved to{" "}
-                      <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px]">
+                      <code className="border border-paper-rule bg-paper-sunk px-1 py-0.5 font-mono text-[11px] text-ink">
                         {config?.dataDir || "~/.openacme"}/.env
                       </code>{" "}
                       on the server. Both the CLI and web app use the same keys.
@@ -456,7 +460,7 @@ export default function SettingsPage() {
                   </CardHeader>
                   <CardContent className="space-y-5">
                     {providersNeedingKeys.length === 0 && (
-                      <p className="text-sm text-muted-foreground">
+                      <p className="font-mono text-[12px] text-ink-faint">
                         Loading providers…
                       </p>
                     )}
@@ -517,48 +521,43 @@ export default function SettingsPage() {
                   <CardHeader>
                     <CardTitle>Server configuration</CardTitle>
                     <CardDescription>
-                      Read from <code className="font-mono">config.yaml</code>. Edit the
-                      file to change these.
+                      Read from{" "}
+                      <code className="border border-paper-rule bg-paper-sunk px-1 py-0.5 font-mono text-[11px] text-ink">
+                        config.yaml
+                      </code>
+                      . Edit the file to change these.
                     </CardDescription>
                   </CardHeader>
                   <CardContent>
                     {config ? (
-                      <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2 text-sm">
-                        <div>
-                          <dt className="text-xs uppercase text-muted-foreground">
-                            Data directory
-                          </dt>
-                          <dd className="mt-0.5 font-mono text-foreground break-all">
-                            {config.dataDir}
-                          </dd>
-                        </div>
-                        <div>
-                          <dt className="text-xs uppercase text-muted-foreground">
-                            Server
-                          </dt>
-                          <dd className="mt-0.5 font-mono text-foreground">
-                            {config.server.host}:{config.server.port}
-                          </dd>
-                        </div>
-                        <div>
-                          <dt className="text-xs uppercase text-muted-foreground">
-                            Max steps
-                          </dt>
-                          <dd className="mt-0.5 font-mono text-foreground">
-                            {config.behavior.maxSteps}
-                          </dd>
-                        </div>
-                        <div className="sm:col-span-2">
-                          <dt className="text-xs uppercase text-muted-foreground">
-                            Skills directory
-                          </dt>
-                          <dd className="mt-0.5 font-mono text-foreground break-all">
-                            {config.skills.directory}
-                          </dd>
-                        </div>
+                      <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 font-mono text-[12px] tabular-nums">
+                        <dt className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
+                          Data dir
+                        </dt>
+                        <dd className="text-ink-soft break-all">
+                          {config.dataDir}
+                        </dd>
+                        <dt className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
+                          Server
+                        </dt>
+                        <dd className="text-ink-soft">
+                          {config.server.host}:{config.server.port}
+                        </dd>
+                        <dt className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
+                          Max steps
+                        </dt>
+                        <dd className="text-ink-soft">
+                          {config.behavior.maxSteps}
+                        </dd>
+                        <dt className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
+                          Skills dir
+                        </dt>
+                        <dd className="text-ink-soft break-all">
+                          {config.skills.directory}
+                        </dd>
                       </dl>
                     ) : (
-                      <p className="text-sm text-muted-foreground">Loading…</p>
+                      <p className="font-mono text-[12px] text-ink-faint">Loading…</p>
                     )}
                   </CardContent>
                 </Card>
@@ -574,23 +573,23 @@ export default function SettingsPage() {
                   </CardHeader>
                   <CardContent>
                     {providers.length === 0 ? (
-                      <p className="text-sm text-muted-foreground">Loading…</p>
+                      <p className="font-mono text-[12px] text-ink-faint">Loading…</p>
                     ) : (
-                      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                      <div className="grid grid-cols-2 gap-px bg-paper-rule sm:grid-cols-3">
                         {providers.map((provider) => (
                           <div
                             key={provider.id}
-                            className="rounded-lg border p-3"
+                            className="bg-paper p-3"
                           >
                             <div className="flex items-center gap-2">
-                              <span className="text-sm font-medium">
+                              <span className="text-sm font-medium text-ink">
                                 {provider.name}
                               </span>
                               {configuredKeys[provider.id] && (
-                                <Check className="size-3.5 text-green-500" />
+                                <Check className="size-3.5 text-plot-red" />
                               )}
                             </div>
-                            <div className="mt-1 font-mono text-[11px] text-muted-foreground">
+                            <div className="mt-1 font-mono text-[11px] text-ink-faint">
                               {provider.requiresApiKey
                                 ? provider.envVar
                                 : "no key needed"}
@@ -610,7 +609,7 @@ export default function SettingsPage() {
                       <CardTitle>MCP servers</CardTitle>
                       <CardDescription>
                         Defined in{" "}
-                        <code className="font-mono">
+                        <code className="font-mono text-ink">
                           {config?.dataDir ?? "~/.openacme"}/mcp.json
                         </code>
                         . Inherited by every agent. Per-agent exclusions and
@@ -620,7 +619,7 @@ export default function SettingsPage() {
                     <div className="flex gap-2">
                       <Button
                         size="sm"
-                        variant="outline"
+                        variant="ghost"
                         onClick={openMcpJsonEditor}
                         title="Edit raw mcp.json"
                       >
@@ -638,14 +637,14 @@ export default function SettingsPage() {
                   </CardHeader>
                   <CardContent>
                     {mcpLoading && Object.keys(mcpServers).length === 0 ? (
-                      <p className="text-sm text-muted-foreground">Loading…</p>
+                      <p className="font-mono text-[12px] text-ink-faint">Loading…</p>
                     ) : Object.keys(mcpServers).length === 0 ? (
-                      <p className="text-sm text-muted-foreground">
+                      <p className="border border-paper-rule bg-paper-sunk px-3 py-2 font-mono text-[12px] text-ink-soft">
                         No MCP servers configured yet. Click &ldquo;Add
                         server&rdquo; to start.
                       </p>
                     ) : (
-                      <ul className="grid gap-2">
+                      <ul className="border-y border-paper-rule">
                         {Object.entries(mcpServers).map(([name, cfg]) => {
                           const status = aggregateStatus(name, mcpStatus);
                           const state =
@@ -657,36 +656,36 @@ export default function SettingsPage() {
                           return (
                             <li
                               key={name}
-                              className="flex flex-col gap-2 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between"
+                              className="flex flex-col gap-2 border-b border-paper-rule last:border-b-0 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between"
                             >
                               <div className="min-w-0 flex-1">
                                 <div className="flex items-center gap-2 flex-wrap">
-                                  <span className="font-medium text-sm">
+                                  <span className="font-mono text-sm text-ink">
                                     {name}
                                   </span>
                                   <span
-                                    className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide ${statePillClass(state)}`}
+                                    className={`px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em] ${statePillClass(state)}`}
                                   >
                                     {state}
                                   </span>
                                   {transport && (
-                                    <Badge variant="secondary" className="text-[10px]">
+                                    <Badge variant="outline">
                                       {transport}
                                     </Badge>
                                   )}
                                   {status && status.toolCount > 0 && (
-                                    <span className="text-[11px] text-muted-foreground">
+                                    <span className="font-mono text-[11px] tabular-nums text-ink-faint">
                                       {status.toolCount} tools
                                     </span>
                                   )}
                                 </div>
-                                <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
+                                <div className="mt-0.5 truncate font-mono text-[11px] text-ink-faint">
                                   {cfg.command
                                     ? `${cfg.command}${cfg.args && cfg.args.length > 0 ? " " + cfg.args.join(" ") : ""}`
                                     : cfg.url ?? ""}
                                 </div>
                                 {status?.lastError && (
-                                  <div className="mt-1 text-[11px] text-destructive line-clamp-2">
+                                  <div className="mt-1 font-mono text-[11px] text-destructive line-clamp-2">
                                     {status.lastError}
                                   </div>
                                 )}
@@ -763,22 +762,24 @@ export default function SettingsPage() {
                       </DialogDescription>
                     </DialogHeader>
                     {mcpDialog && (
-                      <MCPServerForm
-                        initial={
-                          mcpDialog.mode === "edit"
-                            ? mcpDialog.initial
-                            : undefined
-                        }
-                        lockName={mcpDialog.mode === "edit"}
-                        reservedNames={
-                          mcpDialog.mode === "add"
-                            ? Object.keys(mcpServers)
-                            : []
-                        }
-                        onSubmit={handleMcpSubmit}
-                        onCancel={() => setMcpDialog(null)}
-                        onTest={handleMcpTest}
-                      />
+                      <DialogBody>
+                        <MCPServerForm
+                          initial={
+                            mcpDialog.mode === "edit"
+                              ? mcpDialog.initial
+                              : undefined
+                          }
+                          lockName={mcpDialog.mode === "edit"}
+                          reservedNames={
+                            mcpDialog.mode === "add"
+                              ? Object.keys(mcpServers)
+                              : []
+                          }
+                          onSubmit={handleMcpSubmit}
+                          onCancel={() => setMcpDialog(null)}
+                          onTest={handleMcpTest}
+                        />
+                      </DialogBody>
                     )}
                   </DialogContent>
                 </Dialog>
@@ -798,7 +799,7 @@ export default function SettingsPage() {
                         on save — invalid configs aren&apos;t persisted.
                       </DialogDescription>
                     </DialogHeader>
-                    <div className="grid gap-3">
+                    <DialogBody className="grid gap-3">
                       <Textarea
                         value={mcpJsonText}
                         onChange={(e) => {
@@ -807,16 +808,16 @@ export default function SettingsPage() {
                         }}
                         rows={20}
                         spellCheck={false}
-                        className="font-mono text-xs"
+                        className="font-mono text-[12px]"
                       />
                       {mcpJsonError && (
-                        <pre className="whitespace-pre-wrap rounded-md border border-destructive/40 bg-destructive/5 p-3 text-xs text-destructive">
+                        <pre className="whitespace-pre-wrap border border-destructive bg-paper-sunk p-3 font-mono text-[12px] text-destructive">
                           {mcpJsonError}
                         </pre>
                       )}
                       <div className="flex items-center justify-end gap-2">
                         <Button
-                          variant="outline"
+                          variant="ghost"
                           onClick={() => setMcpJsonOpen(false)}
                         >
                           Cancel
@@ -828,7 +829,7 @@ export default function SettingsPage() {
                           Save
                         </Button>
                       </div>
-                    </div>
+                    </DialogBody>
                   </DialogContent>
                 </Dialog>
               </TabsContent>

@@ -3,114 +3,142 @@
 @custom-variant dark (&:is(.dark *));
 
 /*
- * Theme: brutalist neutral (sharp 0 corners, flat shadows, Geist sans/mono).
- * Primary is white in dark mode / near-black in light mode — no chromatic
- * accent. Tweak hues here if a brand color comes back later.
+ * The Operator's Console — see DESIGN.md.
+ * Surfaces: warm paper / cool graphite. Single accent: plot-red, ≤10% rule.
+ * Sharp 0px corners everywhere. No shadows. Hairline 1px rules only.
  */
 
 :root {
-  --background: oklch(1.0000 0 0);
-  --foreground: oklch(0.2178 0 0);
-  --card: oklch(0.9851 0 0);
-  --card-foreground: oklch(0.2393 0 0);
-  --popover: oklch(0.9938 0.0013 106.4231);
-  --popover-foreground: oklch(0.2393 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.9702 0 0);
-  --secondary-foreground: oklch(0.2686 0 0);
-  --muted: oklch(0.9702 0 0);
-  --muted-foreground: oklch(0.4640 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.5830 0.2387 28.4765);
-  --destructive-foreground: oklch(1.0000 0 0);
-  --border: oklch(0.9219 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.9851 0 0);
-  --sidebar-foreground: oklch(0.2178 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  /* Surfaces */
+  --paper: oklch(98% 0.005 75);
+  --paper-sunk: oklch(96% 0.005 75);
+  --paper-rule: oklch(88% 0.005 75);
+
+  /* Ink (text on paper) */
+  --ink: oklch(22% 0.008 280);
+  --ink-soft: oklch(45% 0.005 280);
+  --ink-faint: oklch(62% 0.005 280);
+
+  /* Accent — Plot Red (the only chromatic at any meaningful coverage) */
+  --plot-red: oklch(58% 0.18 28);
+  --plot-red-deep: oklch(48% 0.18 28);
+
+  /* Functional state */
+  --signal-amber: oklch(78% 0.14 75);
+  --signal-cyan: oklch(72% 0.10 215);
+  --warn-ochre: oklch(72% 0.14 75);
+
+  /* Semantic tokens (shadcn API, remapped to paper/ink) */
+  --background: var(--paper);
+  --foreground: var(--ink);
+  --card: var(--paper-sunk);
+  --card-foreground: var(--ink);
+  --popover: var(--paper-sunk);
+  --popover-foreground: var(--ink);
+  --primary: var(--ink);
+  --primary-foreground: var(--paper);
+  --secondary: var(--paper);
+  --secondary-foreground: var(--ink);
+  --muted: var(--paper-sunk);
+  --muted-foreground: var(--ink-soft);
+  --accent: var(--plot-red);
+  --accent-foreground: var(--paper);
+  --destructive: oklch(46% 0.15 28);
+  --destructive-foreground: var(--paper);
+  --border: var(--paper-rule);
+  --input: var(--paper-rule);
+  --ring: var(--plot-red);
+
+  /* Charts — functional, kept off-accent so plot-red stays exclusive */
+  --chart-1: oklch(45% 0.005 280);
+  --chart-2: oklch(60% 0.005 280);
+  --chart-3: oklch(72% 0.10 215);
+  --chart-4: oklch(78% 0.14 75);
+  --chart-5: oklch(58% 0.18 28);
+
+  /* Sidebar */
+  --sidebar: var(--paper-sunk);
+  --sidebar-foreground: var(--ink-soft);
+  --sidebar-primary: var(--plot-red);
+  --sidebar-primary-foreground: var(--paper);
+  --sidebar-accent: var(--paper);
+  --sidebar-accent-foreground: var(--ink);
+  --sidebar-border: var(--paper-rule);
+  --sidebar-ring: var(--plot-red);
+
+  /* Geometry */
   --radius: 0rem;
-  --shadow-x: 0;
-  --shadow-y: 1px;
-  --shadow-blur: 0px;
-  --shadow-spread: 0px;
-  --shadow-opacity: 0;
-  --shadow-color: #000000;
-  --shadow-2xs: 0 1px 0px 0px hsl(0 0% 0% / 0.00);
-  --shadow-xs: 0 1px 0px 0px hsl(0 0% 0% / 0.00);
-  --shadow-sm: 0 1px 0px 0px hsl(0 0% 0% / 0.00), 0 1px 2px -1px hsl(0 0% 0% / 0.00);
-  --shadow: 0 1px 0px 0px hsl(0 0% 0% / 0.00), 0 1px 2px -1px hsl(0 0% 0% / 0.00);
-  --shadow-md: 0 1px 0px 0px hsl(0 0% 0% / 0.00), 0 2px 4px -1px hsl(0 0% 0% / 0.00);
-  --shadow-lg: 0 1px 0px 0px hsl(0 0% 0% / 0.00), 0 4px 6px -1px hsl(0 0% 0% / 0.00);
-  --shadow-xl: 0 1px 0px 0px hsl(0 0% 0% / 0.00), 0 8px 10px -1px hsl(0 0% 0% / 0.00);
-  --shadow-2xl: 0 1px 0px 0px hsl(0 0% 0% / 0.00);
   --tracking-normal: 0em;
   --spacing: 0.25rem;
+
+  /* Shadows: forbidden by no-shadow rule. Vars exist as no-ops so any
+   * stray shadow-* utility renders flat instead of breaking. */
+  --shadow-2xs: 0 0 0 0 transparent;
+  --shadow-xs: 0 0 0 0 transparent;
+  --shadow-sm: 0 0 0 0 transparent;
+  --shadow: 0 0 0 0 transparent;
+  --shadow-md: 0 0 0 0 transparent;
+  --shadow-lg: 0 0 0 0 transparent;
+  --shadow-xl: 0 0 0 0 transparent;
+  --shadow-2xl: 0 0 0 0 transparent;
 }
 
 .dark {
-  --background: oklch(0.1448 0 0);
-  --foreground: oklch(0.9401 0 0);
-  --card: oklch(0.1149 0 0);
-  --card-foreground: oklch(0.9401 0 0);
-  --popover: oklch(0.2178 0 0);
-  --popover-foreground: oklch(0.9401 0 0);
-  --primary: oklch(0.985 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.2686 0 0);
-  --secondary-foreground: oklch(0.9401 0 0);
-  --muted: oklch(0.2686 0 0);
-  --muted-foreground: oklch(0.6830 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.6453 0.2404 27.3106);
-  --destructive-foreground: oklch(1.0000 0 0);
-  --border: oklch(0.2478 0 0);
-  --input: oklch(0.3407 0 0);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.1822 0 0);
-  --sidebar-foreground: oklch(0.9401 0 0);
-  --sidebar-primary: oklch(0.985 0 0);
-  --sidebar-primary-foreground: oklch(0.205 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(0.3012 0 0);
-  --sidebar-ring: oklch(0.556 0 0);
-  --radius: 0rem;
-  --shadow-x: 0;
-  --shadow-y: 1px;
-  --shadow-blur: 0px;
-  --shadow-spread: 0px;
-  --shadow-opacity: 0;
-  --shadow-color: #000000;
-  --shadow-2xs: 0 1px 0px 0px hsl(0 0% 0% / 0.00);
-  --shadow-xs: 0 1px 0px 0px hsl(0 0% 0% / 0.00);
-  --shadow-sm: 0 1px 0px 0px hsl(0 0% 0% / 0.00), 0 1px 2px -1px hsl(0 0% 0% / 0.00);
-  --shadow: 0 1px 0px 0px hsl(0 0% 0% / 0.00), 0 1px 2px -1px hsl(0 0% 0% / 0.00);
-  --shadow-md: 0 1px 0px 0px hsl(0 0% 0% / 0.00), 0 2px 4px -1px hsl(0 0% 0% / 0.00);
-  --shadow-lg: 0 1px 0px 0px hsl(0 0% 0% / 0.00), 0 4px 6px -1px hsl(0 0% 0% / 0.00);
-  --shadow-xl: 0 1px 0px 0px hsl(0 0% 0% / 0.00), 0 8px 10px -1px hsl(0 0% 0% / 0.00);
-  --shadow-2xl: 0 1px 0px 0px hsl(0 0% 0% / 0.00);
+  /* Surfaces flip: graphite is the page; bone is the ink. */
+  --paper: oklch(16% 0.006 280);
+  --paper-sunk: oklch(20% 0.006 280);
+  --paper-rule: oklch(28% 0.006 280);
+
+  --ink: oklch(94% 0.004 75);
+  --ink-soft: oklch(75% 0.005 75);
+  --ink-faint: oklch(58% 0.005 280);
+
+  /* Accent intentionally identical across light/dark — plot-red is plot-red. */
+  --plot-red: oklch(62% 0.19 28);
+  --plot-red-deep: oklch(54% 0.19 28);
+
+  --signal-amber: oklch(78% 0.14 75);
+  --signal-cyan: oklch(72% 0.10 215);
+  --warn-ochre: oklch(72% 0.14 75);
+
+  --background: var(--paper);
+  --foreground: var(--ink);
+  --card: var(--paper-sunk);
+  --card-foreground: var(--ink);
+  --popover: var(--paper-sunk);
+  --popover-foreground: var(--ink);
+  --primary: var(--ink);
+  --primary-foreground: var(--paper);
+  --secondary: var(--paper-sunk);
+  --secondary-foreground: var(--ink);
+  --muted: var(--paper-sunk);
+  --muted-foreground: var(--ink-soft);
+  --accent: var(--plot-red);
+  --accent-foreground: oklch(98% 0.005 75);
+  --destructive: oklch(48% 0.15 28);
+  --destructive-foreground: oklch(98% 0.005 75);
+  --border: var(--paper-rule);
+  --input: var(--paper-rule);
+  --ring: var(--plot-red);
+
+  --chart-1: oklch(75% 0.005 75);
+  --chart-2: oklch(58% 0.005 280);
+  --chart-3: oklch(72% 0.10 215);
+  --chart-4: oklch(78% 0.14 75);
+  --chart-5: oklch(62% 0.19 28);
+
+  --sidebar: var(--paper-sunk);
+  --sidebar-foreground: var(--ink-soft);
+  --sidebar-primary: var(--plot-red);
+  --sidebar-primary-foreground: oklch(98% 0.005 75);
+  --sidebar-accent: var(--paper-rule);
+  --sidebar-accent-foreground: var(--ink);
+  --sidebar-border: var(--paper-rule);
+  --sidebar-ring: var(--plot-red);
 }
 
 @theme inline {
+  /* Semantic shadcn API */
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -144,10 +172,23 @@
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
 
-  --font-sans: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
-  --font-mono: var(--font-mono), ui-monospace, monospace;
+  /* System tokens (use directly: bg-paper, text-ink-soft, border-paper-rule, bg-plot-red, etc.) */
+  --color-paper: var(--paper);
+  --color-paper-sunk: var(--paper-sunk);
+  --color-paper-rule: var(--paper-rule);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-ink-faint: var(--ink-faint);
+  --color-plot-red: var(--plot-red);
+  --color-plot-red-deep: var(--plot-red-deep);
+  --color-signal-amber: var(--signal-amber);
+  --color-signal-cyan: var(--signal-cyan);
+  --color-warn-ochre: var(--warn-ochre);
 
-  /* Forced sharp on every step — `rounded-full` stays circular for avatars. */
+  --font-sans: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-mono), ui-monospace, SFMono-Regular, monospace;
+
+  /* Single radius scale — every step is 0. */
   --radius-sm: 0px;
   --radius-md: 0px;
   --radius-lg: 0px;
@@ -155,6 +196,7 @@
   --radius-2xl: 0px;
   --radius-3xl: 0px;
 
+  /* Shadow utilities are kept as no-ops; the system is flat. */
   --shadow-2xs: var(--shadow-2xs);
   --shadow-xs: var(--shadow-xs);
   --shadow-sm: var(--shadow-sm);
@@ -163,6 +205,12 @@
   --shadow-lg: var(--shadow-lg);
   --shadow-xl: var(--shadow-xl);
   --shadow-2xl: var(--shadow-2xl);
+
+  /* Motion tokens. Restrained ease-out for state changes; long ease-in-out for live pulse. */
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+  --duration-state: 180ms;
+  --duration-pulse: 1200ms;
 }
 
 @layer base {
@@ -170,6 +218,56 @@
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-background text-foreground font-sans;
+    @apply bg-background text-foreground font-sans antialiased;
+    font-feature-settings: "ss01", "cv01", "cv11";
+  }
+  /* Mono numerals always tabular — IDs, timestamps, durations, counts. */
+  code, kbd, samp, pre, .font-mono {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+}
+
+@layer components {
+  /* Faceplate label: UPPERCASE Geist Mono, tracked. The DESIGN.md "Tracked-Label Rule". */
+  .label-faceplate {
+    @apply font-mono uppercase text-[11px] leading-none tracking-[0.08em] text-ink-soft;
+  }
+
+  /* Always-visible mono metadata row (timestamps, IDs, models). */
+  .meta-row {
+    @apply font-mono text-[12px] leading-tight text-ink-soft tabular-nums;
+  }
+
+  /* Status indicator dot. Pair with a label per the no-color-only-state rule. */
+  .status-dot {
+    @apply inline-block size-1.5 shrink-0;
+  }
+
+  /* Live pulse — only place this animation appears. */
+  .pulse-live {
+    animation: pulse-live var(--duration-pulse) var(--ease-out-quart) infinite;
+  }
+}
+
+@keyframes pulse-live {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+/* Streaming cursor — a 2px plot-red bar. */
+.cursor-stream {
+  display: inline-block;
+  width: 2px;
+  height: 1.05em;
+  vertical-align: -0.15em;
+  margin-left: 1px;
+  background-color: var(--plot-red);
+  animation: pulse-live var(--duration-pulse) var(--ease-out-quart) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pulse-live, .cursor-stream {
+    animation: none;
   }
 }

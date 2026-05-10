@@ -362,7 +362,7 @@ export function MCPServerForm({
 
       {testResult && (
         <p
-          className={`text-xs ${testResult.ok ? "text-green-600 dark:text-green-400" : "text-destructive"}`}
+          className={`font-mono text-[12px] ${testResult.ok ? "text-plot-red" : "text-destructive"}`}
         >
           {testResult.message}
         </p>
