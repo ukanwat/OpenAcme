@@ -1,15 +1,15 @@
 {
-  "name": "@openacme/tools",
-  "version": "0.2.0",
-  "description": "Tool definitions and helpers for OpenAcme agents.",
+  "name": "@openacme/tasks",
+  "version": "0.1.0",
+  "description": "File-backed task store for OpenAcme — markdown + YAML frontmatter, atomic writes, dependency enforcement, per-session queues.",
   "license": "MIT",
   "author": "Utkarsh Kanwat",
-  "homepage": "https://github.com/ukanwat/OpenAcme/tree/main/packages/tools#readme",
+  "homepage": "https://github.com/ukanwat/OpenAcme/tree/main/packages/tasks#readme",
   "bugs": "https://github.com/ukanwat/OpenAcme/issues",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/ukanwat/OpenAcme.git",
-    "directory": "packages/tools"
+    "directory": "packages/tasks"
   },
   "publishConfig": {
     "access": "public",
@@ -30,29 +30,19 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc --build && node -e \"require('fs').cpSync('src/builtins/python_repl','dist/builtins/python_repl',{recursive:true})\"",
+    "build": "tsc --build",
     "check-types": "tsc --noEmit",
     "dev": "tsc --watch",
-    "test": "vitest run",
-    "test:watch": "vitest"
+    "test": "vitest run"
   },
   "dependencies": {
-    "@mozilla/readability": "^0.5.0",
-    "@openacme/config": "workspace:*",
-    "@openacme/db": "workspace:*",
-    "@openacme/memory": "workspace:*",
-    "@openacme/tasks": "workspace:*",
-    "jsdom": "^25.0.1",
-    "turndown": "^7.2.0",
+    "croner": "^10.0.1",
+    "gray-matter": "^4.0.3",
     "zod": "^4.1.8"
   },
   "devDependencies": {
     "@repo/typescript-config": "workspace:*",
-    "@types/better-sqlite3": "^7.6.12",
-    "@types/jsdom": "^21.1.7",
     "@types/node": "^22.15.3",
-    "@types/turndown": "^5.0.5",
-    "better-sqlite3": "^11.7.0",
     "typescript": "5.9.2",
     "vitest": "^2.1.9"
   }

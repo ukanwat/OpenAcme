@@ -22,6 +22,10 @@ export {
   bindMemory,
   type MemoryBindings,
 } from "./builtins/memory.js";
+export {
+  bindTaskStore,
+  type TaskStoreBindings,
+} from "./builtins/tasks.js";
 
 // Import builtins to trigger self-registration
 import "./builtins/shell.js";
@@ -35,3 +39,4 @@ import "./builtins/execute_code.js";
 import "./builtins/process.js";
 import "./builtins/skill.js";
 import "./builtins/memory.js";
+import "./builtins/tasks.js";

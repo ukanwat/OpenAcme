@@ -20,7 +20,8 @@ function expandHome(p: string): string {
  * Creates it if it doesn't exist.
  */
 export function resolveDataDir(dataDir?: string): string {
-  const resolved = expandHome(dataDir ?? "~/.openacme");
+  const fromEnv = process.env["OPENACME_DATA_DIR"]?.trim();
+  const resolved = expandHome(dataDir ?? (fromEnv || "~/.openacme"));
   if (!fs.existsSync(resolved)) {
     fs.mkdirSync(resolved, { recursive: true });
   }

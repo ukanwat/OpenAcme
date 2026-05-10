@@ -27,6 +27,34 @@ function resolveDataDir(): string {
 const DEBUG = process.env["OPENACME_DEBUG"]?.includes("auth")
   || process.env["OPENACME_DEBUG"] === "1";
 
+/**
+ * Last-seen OAuth account_id per provider. Logged on change so the user
+ * can see when a new login (or a different account) takes effect mid-run.
+ */
+const lastSeenAccount: Partial<Record<"openai" | "anthropic", string>> = {};
+
+function noteAccount(
+  provider: "openai" | "anthropic",
+  accountId: string | undefined,
+): void {
+  const prev = lastSeenAccount[provider];
+  const next = accountId ?? "(no-account-id)";
+  if (prev === next) return;
+  lastSeenAccount[provider] = next;
+  if (prev) {
+    console.error(
+      `[openacme] auth: ${provider} active account changed: ${maskAccount(prev)} → ${maskAccount(next)}`
+    );
+  } else if (DEBUG) {
+    console.error(`[openacme] auth: ${provider} active account ${maskAccount(next)}`);
+  }
+}
+
+function maskAccount(id: string): string {
+  if (id.length <= 8) return id;
+  return `${id.slice(0, 4)}…${id.slice(-4)}`;
+}
+
 /** Models that 400 if temperature/top_p/top_k are set. Mirrors Hermes' list. */
 function anthropicForbidsSamplingParams(model: string): boolean {
   return ["4-7", "4.7"].some((s) => model.includes(s));
@@ -109,21 +137,49 @@ const providerFactories: Record<
         // Per-request token injection + refresh + body shape coercion.
         // The ChatGPT backend (chatgpt.com/backend-api/codex) requires
         // `store: false` and rejects the SDK's default `temperature: 0`.
-        // See .hermes-ref/agent/codex_responses_adapter.py:670-672.
+        // OAuth↔API-key swap mid-run can't be honored here because the
+        // base URL and request shape differ — that swap takes effect on
+        // the next runStream when getModel re-resolves.
         fetch: async (url, init) => {
-          const { token, accountId } = await getOAuthToken("openai", dataDir);
-          const headers = new Headers(init?.headers as Record<string, string> | undefined);
-          headers.set("Authorization", `Bearer ${token}`);
-          if (accountId) headers.set("chatgpt-account-id", accountId);
-          headers.set("OpenAI-Beta", "responses=experimental");
-          // Apply the full ChatGPT-backend contract: instructions extraction,
-          // store=false, model normalization, sampling-param strip.
+          const buildHeaders = async (force: boolean): Promise<Headers> => {
+            const { token, accountId } = await getOAuthToken(
+              "openai",
+              dataDir,
+              { force }
+            );
+            noteAccount("openai", accountId);
+            const headers = new Headers(
+              init?.headers as Record<string, string> | undefined
+            );
+            headers.set("Authorization", `Bearer ${token}`);
+            if (accountId) headers.set("chatgpt-account-id", accountId);
+            headers.set("OpenAI-Beta", "responses=experimental");
+            return headers;
+          };
+
           const newBody = transformCodexOAuthBody(init?.body);
           const rewritten = init && newBody !== init.body
             ? { ...init, body: newBody as RequestInit["body"] }
             : init;
           if (DEBUG) console.error("[openacme] →", url, rewritten?.body);
-          return fetch(url as string | URL, { ...rewritten, headers });
+
+          const send = async (force: boolean) =>
+            fetch(url as string | URL, {
+              ...rewritten,
+              headers: await buildHeaders(force),
+            });
+
+          let res = await send(false);
+          if (res.status === 401) {
+            if (DEBUG) console.error("[openacme] openai 401 — forcing token refresh and retrying");
+            try {
+              res = await send(true);
+            } catch (e) {
+              if (DEBUG) console.error("[openacme] openai refresh-on-401 failed:", e);
+              throw e;
+            }
+          }
+          return res;
         },
       });
       // ChatGPT backend speaks the Responses API. `store: false` propagates
@@ -149,60 +205,111 @@ const providerFactories: Record<
   anthropic: (config) => {
     const stripSampling = anthropicForbidsSamplingParams(config.model);
     const dataDir = resolveDataDir();
-    const isOAuth = shouldUseOAuth("anthropic", config, "ANTHROPIC_API_KEY", dataDir);
+    // `isOAuth` is re-evaluated per-fetch below so a login/logout that
+    // happens mid-run (between two HTTP requests of the same streamText
+    // multi-step turn) takes effect on the very next request. The
+    // construction-time `apiKey` is just a placeholder — the fetch hook
+    // overwrites the auth header from scratch on every call.
     const provider = createAnthropic({
-      apiKey: isOAuth
-        ? "oauth-placeholder"
-        : (config.apiKey ?? process.env["ANTHROPIC_API_KEY"]),
+      apiKey: "oauth-placeholder",
       baseURL: config.baseUrl,
-      headers: isOAuth ? undefined : config.headers,
-      // Single fetch hook handles both OAuth header swap AND model-specific
-      // body normalization (Claude 4.7+ rejects sampling params).
       fetch: async (url, init) => {
-        const headers = new Headers(init?.headers as Record<string, string> | undefined);
-        if (isOAuth) {
-          const { token } = await getOAuthToken("anthropic", dataDir);
-          headers.delete("x-api-key");
-          headers.set("Authorization", `Bearer ${token}`);
-          headers.set("User-Agent", "claude-cli/2.1.74 (external, cli)");
-          headers.set("x-app", "cli");
-          const betas = new Set<string>([
-            "interleaved-thinking-2025-05-14",
-            "claude-code-20250219",
-            "oauth-2025-04-20",
-          ]);
-          // Opus 4.7 400s on this header — mirror the SDK's per-model strip.
-          if (anthropicSupportsFineGrainedToolStreaming(config.model)) {
-            betas.add("fine-grained-tool-streaming-2025-05-14");
+        // `isOAuth` is recomputed each call (see `shouldUseOAuth`) so a
+        // login/logout that happens mid-run picks up on the very next
+        // request without restarting streamText.
+        const oauthNow = shouldUseOAuth(
+          "anthropic",
+          config,
+          "ANTHROPIC_API_KEY",
+          dataDir
+        );
+
+        const buildHeaders = async (force: boolean): Promise<Headers> => {
+          const headers = new Headers(
+            init?.headers as Record<string, string> | undefined
+          );
+          if (oauthNow) {
+            const { token, accountId } = await getOAuthToken(
+              "anthropic",
+              dataDir,
+              { force }
+            );
+            noteAccount("anthropic", accountId);
+            headers.delete("x-api-key");
+            headers.set("Authorization", `Bearer ${token}`);
+            headers.set("User-Agent", "claude-cli/2.1.74 (external, cli)");
+            headers.set("x-app", "cli");
+            const betas = new Set<string>([
+              "interleaved-thinking-2025-05-14",
+              "claude-code-20250219",
+              "oauth-2025-04-20",
+            ]);
+            if (anthropicSupportsFineGrainedToolStreaming(config.model)) {
+              betas.add("fine-grained-tool-streaming-2025-05-14");
+            }
+            if (anthropicSupports1mContext(config.model)) {
+              betas.add("context-1m-2025-08-07");
+            }
+            const existing = headers.get("anthropic-beta");
+            if (existing) for (const b of existing.split(",")) betas.add(b.trim());
+            headers.set(
+              "anthropic-beta",
+              Array.from(betas).filter(Boolean).join(",")
+            );
+          } else {
+            // API-key path. Strip any stale OAuth bearer the SDK may have
+            // attached and set x-api-key from the current source so an
+            // env-var change between requests is honored.
+            headers.delete("Authorization");
+            const key = config.apiKey ?? process.env["ANTHROPIC_API_KEY"];
+            if (key) headers.set("x-api-key", key);
+            else headers.delete("x-api-key");
+            if (config.headers) {
+              for (const [k, v] of Object.entries(config.headers)) {
+                headers.set(k, v);
+              }
+            }
           }
-          // 1M context is gated to Opus/Sonnet 4.6+; Haiku and older models
-          // reject it ("long context beta is not yet available").
-          if (anthropicSupports1mContext(config.model)) {
-            betas.add("context-1m-2025-08-07");
-          }
-          const existing = headers.get("anthropic-beta");
-          if (existing) for (const b of existing.split(",")) betas.add(b.trim());
-          headers.set("anthropic-beta", Array.from(betas).filter(Boolean).join(","));
-        }
+          return headers;
+        };
+
         let newBody: unknown = init?.body;
-        if (isOAuth) {
-          // Full Claude Code OAuth contract: billing header, identity prefix,
-          // tool-name prefixing, orphan repair.
+        if (oauthNow) {
           newBody = transformAnthropicOAuthBody(newBody);
         }
         if (stripSampling) {
-          // Claude 4.7+ rejects sampling params even with API-key auth.
           newBody = stripAnthropicSamplingParams(newBody);
         }
         const rewritten = init && newBody !== init.body
           ? { ...init, body: newBody as RequestInit["body"] }
           : init;
         if (DEBUG) console.error("[openacme] →", url, rewritten?.body);
-        const res = await fetch(url as string | URL, { ...rewritten, headers });
+
+        const send = async (force: boolean) =>
+          fetch(url as string | URL, {
+            ...rewritten,
+            headers: await buildHeaders(force),
+          });
+
+        let res = await send(false);
+        // 401 on an OAuth call usually means the token was revoked
+        // server-side (account swapped, rotated elsewhere, suspended)
+        // before our `expires_at` claim caught up. Force-refresh once
+        // and retry — if still 401, propagate so the user sees the
+        // login prompt.
+        if (oauthNow && res.status === 401) {
+          if (DEBUG) console.error("[openacme] anthropic 401 — forcing token refresh and retrying");
+          try {
+            res = await send(true);
+          } catch (e) {
+            if (DEBUG) console.error("[openacme] anthropic refresh-on-401 failed:", e);
+            throw e;
+          }
+        }
         // OAuth-only: strip the mcp_<PascalCase> prefix from tool names in the
         // response, otherwise the SDK's tool-call dispatcher fails with
         // AI_NoSuchToolError because the local registry holds unprefixed names.
-        return isOAuth ? transformAnthropicOAuthResponse(res) : res;
+        return oauthNow ? transformAnthropicOAuthResponse(res) : res;
       },
     });
     return provider(config.model);

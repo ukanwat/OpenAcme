@@ -2,6 +2,10 @@
 
 TypeScript agent platform. Multi-provider LLM with streaming tool-calls, SQLite-backed sessions, MCP integration, OAuth (ChatGPT / Claude subscriptions), an Ink-based CLI TUI, and a Next.js web UI served by the Hono server.
 
+**Design lens.** This is a *fleet* platform — many specialized agents under one human user — not a single-agent assistant. Per-agent isolation is the default everywhere: each agent owns its config, model, tools, skills, MCP servers, and (on the roadmap) main session, scheduled jobs, and event inbox. When designing new state or behavior, the question is "does this hold for N agents running in parallel?" — not "does this work for the agent." Anywhere you'd reach for a global table or a singleton, default to scoping by `agent_id` instead. Cross-agent collaboration (one agent posting work into another's inbox) is the direction, so primitives like sessions, inboxes, notifications, schedules should be addressable by agent.
+
+**Not built yet (don't assume these exist):** heartbeat / autonomous wake-ups, scheduled jobs (cron / at), `system_events` inbox queue, per-agent main session designation, agent-to-agent events, notification center. README's "Today vs direction" table is the source of truth — if you implement something there, update README in the same PR.
+
 ---
 
 ## Workspace layout
@@ -20,9 +24,13 @@ packages/
   cli (apps)    # see above
   llm-provider/ # getModel() — OpenAI / Anthropic / Google / OpenRouter / Ollama / custom
   mcp-client/   # MCP stdio + HTTP/SSE transports; tool discovery into registry
-  tools/        # ToolRegistry + built-ins (shell, read_file, write_file, list_files,
-                #   search_files, session_search)
-  db/           # better-sqlite3 + Drizzle; sessions/messages/agents/user_profiles + FTS5
+  tools/        # ToolRegistry + built-ins (shell, read_file, write_file, edit,
+                #   apply_patch, list_files, search_files, session_search, skill_view,
+                #   web_search, web_extract, execute_code, process, memory, task_*)
+  db/           # better-sqlite3 + Drizzle; sessions/messages/user_profiles + FTS5
+                #   (agents are filesystem-backed under <dataDir>/agents/, not in the DB)
+  memory/       # Per-agent persistent MEMORY.md store
+  tasks/        # Per-agent task store (filesystem-backed)
   config/       # Zod schema + YAML/JSON loader (~/.openacme/config.yaml)
   auth/         # OAuth (ChatGPT subscription, Claude Pro), token store, body/response
                 #   transforms, refresh
@@ -145,9 +153,14 @@ Add the enum value to `ProviderSchema` (`config/src/schema.ts`), add a factory i
 Subcommands (`apps/cli/src/commands/`):
 
 - `setup` — Clack-based wizard; writes `~/.openacme/config.yaml` and the first agent.
-- `start` — boots the Hono server + opens the web UI.
+- `start` (default) — installs the launchd/systemd unit on first run, boots the Hono daemon, opens the web UI. `--expose` flips bind to 0.0.0.0 + generates an access secret. `--no-service` spawns detached with a PID file instead.
+- `stop` / `restart` / `status` / `logs [-f]` — daemon lifecycle + introspection.
 - `chat` — terminal chat. **In-process**: instantiates `AgentManager` directly, calls `agent.runStream()`, and consumes `result.fullStream` — no HTTP, no SSE wire format.
-- `login [--provider]`, `logout` — OAuth flows in `@openacme/auth`.
+- `login [--provider] [--device]`, `logout` — OAuth flows in `@openacme/auth`.
+- `secret show|rotate` — manage the access secret used for non-loopback web access.
+- `skills list|view|add|remove` — manage installed skills.
+- `mcp list|status|remove|test` — manage MCP servers (add/edit happens by editing `<dataDir>/mcp.json` directly).
+- `memory status|show <agentId>` — inspect per-agent persistent MEMORY.md.
 
 TUI (`apps/cli/src/tui/`) is React-on-Ink. `render.tsx` mounts the app; `state.ts` reducer carries `committed: UIMessage[]` and an in-flight assistant UIMessage assembled from `result.fullStream` events. `commands.ts` is the slash-command table (`/new`, `/clear`, `/help`, `/exit`, `/model`, `/agent`). Components: `MessageList`, `MessageBubble` (renders UIMessagePart[]), `ToolBlock` (renders ToolUIPart by `state`), `MultilineInput`, `PendingAttachmentsBar`, pickers, `StatusLine`, `Banner`, `CommandPalette`. Markdown via `marked` + `marked-terminal`. Non-TTY → `headless.ts`. Attachments via terminal drag-drop or `@<path>` resolved at submit (`attachments.ts`).
 
@@ -184,9 +197,9 @@ Never log raw tokens. Never write tokens anywhere except via `store.ts`.
 
 ## Config
 
-`packages/config/src/schema.ts` is the source of truth. Top-level keys: `dataDir`, `model` (`ModelConfigSchema`), `agents` (array of `AgentDefinitionSchema`), `server` (`port`, `host`), `behavior` (`maxSteps: 10`, `maxIterations: 90`), `skills` (`directory`, `autoGenerate`).
+`packages/config/src/schema.ts` is the source of truth. Top-level keys: `dataDir`, `model` (`ModelConfigSchema`), `server` (`port`, `host`), `behavior` (`AgentBehaviorSchema` — `maxSteps: 1000` + compression knobs), `skills` (`directory`, `autoGenerate`), `web` (`searchProvider`, `searchApiKey`). **Agents are not in `config.yaml`** — each lives at `<dataDir>/agents/<id>/AGENT.md` (YAML frontmatter + system-prompt body) and is read/written by `AgentStore`.
 
-`AgentDefinitionSchema` defaults `tools` to `[shell, read_file, write_file, list_files, search_files, session_search]`. Per-agent `model` overrides the root `model`.
+`AgentDefinitionSchema` defaults `tools` to `[shell, read_file, write_file, edit, apply_patch, list_files, search_files, session_search, skill_view, web_search, web_extract, execute_code, process, memory, task_list, task_view, task_create, task_update]`. Per-agent `model` overrides the root `model`. Other agent fields: `persona`, `mcpServers` (private), `mcpDisabled` (excludes from global catalog), `skills`, `memoryCharLimit` (default 2200).
 
 `loader.ts:loadConfig(dataDirOverride?)` resolves the data dir, reads `config.yaml` (or `.json`), merges with defaults, validates with Zod. **Always go through the schema** — don't read raw config elsewhere.
 
@@ -222,13 +235,13 @@ Per-agent `skills` array filters which skills are exposed; empty/missing means a
 
 ## Comments
 
-One line target, two cap. No multi-line blocks.
+**Short, or nothing.** One line target, two cap. No multi-line blocks. Long comments are usually not useful — they're skimmed past and rot fastest.
 
-Write one only when the *why* is genuinely non-obvious from the code.
+**Don't be too specific.** Naming exact functions, callers, line numbers, file paths, or "this used by X / added for Y" pins the comment to a snapshot of the code. The code moves; the comment lies. Describe the *why* at the level of the invariant, not the surrounding scaffolding.
 
-Comments rot. Every reader has to decide whether they're still true, and the cost compounds across the codebase. A clear name plus a tight signature usually says enough; reach for a comment only when neither does.
+Write one only when the *why* is genuinely non-obvious from the code. A clear name plus a tight signature usually says enough.
 
-Long *why* belongs in the commit message. On code review, the default action against a stray multi-line comment is to delete or compress it.
+Comments rot. Every reader has to decide whether they're still true, and the cost compounds across the codebase. Long *why* belongs in the commit message. On review, the default action against a stray multi-line or over-specific comment is to delete or compress it.
 
 ---
 
@@ -260,10 +273,16 @@ pnpm lint
 pnpm test                     # vitest where present (most packages have none yet)
 pnpm format                   # prettier
 
-pnpm agent                    # run the CLI (no subcommand → start)
-pnpm agent:setup              # interactive setup wizard
-pnpm agent:start              # server + web UI
-pnpm agent:chat               # terminal chat (in-process)
+pnpm agent                    # run the CLI (no subcommand → start daemon + open web UI)
+pnpm agent setup              # interactive setup wizard
+pnpm agent start              # start daemon (idempotent; --expose for network bind)
+pnpm agent stop               # stop daemon
+pnpm agent restart            # restart daemon
+pnpm agent status             # pid, bind, uptime, recent log
+pnpm agent logs [-f]          # print or follow daemon log
+pnpm agent chat               # terminal chat (in-process; no server needed)
+pnpm agent login --provider <openai|anthropic>   # OAuth subscription sign-in
+pnpm agent skills|mcp|memory  # subcommand groups; run with no args for help
 
 pnpm changeset                # declare a version bump (interactive)
 pnpm version-packages         # consume changesets locally
@@ -271,6 +290,23 @@ pnpm release                  # turbo build @openacme/* + changeset publish
 ```
 
 Per-package: `pnpm --filter @openacme/<pkg> <script>`.
+
+### Running a daemon to test changes
+
+Default — reuse the user's existing daemon: `pnpm agent restart` (or `stop` then `start`) on the default port `3210` and data dir `~/.openacme`. This keeps the user's real config + sessions and avoids accumulating background processes.
+
+If you need an isolated daemon (don't want to touch the user's data, or need to keep the default daemon alive in parallel), use **one fixed test slot** — `~/.openacme-test` with port `3211`. Don't invent a new port/dir each run.
+
+The port lives in `config.yaml` (`server.port`), not a CLI flag — first time, write `~/.openacme-test/config.yaml` with `server: { port: 3211 }`, then:
+
+```
+pnpm agent start   --data-dir ~/.openacme-test --no-service --no-browser
+pnpm agent restart --data-dir ~/.openacme-test --no-service --no-browser
+pnpm agent stop    --data-dir ~/.openacme-test --no-service
+pnpm agent status  --data-dir ~/.openacme-test --no-service
+```
+
+`--no-service` keeps it as a one-off detached process (no launchd/systemd unit installed on the user's machine). Always `restart` (or `stop` then `start`) — never spawn a second test daemon without stopping the first.
 
 ---
 

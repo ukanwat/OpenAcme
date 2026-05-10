@@ -18,6 +18,10 @@ export async function startServer(dataDirOverride?: string) {
   // Initialize MCP connections for all agents
   await manager.initMCP();
 
+  // Start the autonomous task scheduler. Runs the startup sweep
+  // (resets stale in_progress) and arms the first wake.
+  await manager.taskScheduler.start();
+
   const port = config.server.port;
   const host = config.server.host;
 

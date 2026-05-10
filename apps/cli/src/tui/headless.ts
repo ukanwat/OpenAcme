@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import type { AgentManager } from "@openacme/server";
-import type { UIMessage } from "@openacme/agent-core";
+import {
+  ensureStepBoundaries,
+  finalizeOrphanToolParts,
+  type UIMessage,
+} from "@openacme/agent-core";
 import {
   commitAttachmentForCli,
   extractAtPaths,
@@ -89,7 +93,15 @@ export async function runHeadless(
     };
     for await (const part of result.fullStream) {
       const tp = part as { type?: string };
-      if (tp.type === "text-delta") {
+      if (tp.type === "start-step") {
+        // Persist the step boundary so multi-step turns split correctly
+        // on replay (without it, post-tool text collapses into the same
+        // model assistant message and Anthropic rejects).
+        flushText();
+        assistantParts.push({
+          type: "step-start",
+        } as unknown as UIMessage["parts"][number]);
+      } else if (tp.type === "text-delta") {
         const t = (part as { text?: string }).text ?? "";
         if (t) {
           process.stdout.write(t);
@@ -147,10 +159,13 @@ export async function runHeadless(
       parts: userMsg.parts as unknown[],
     });
     if (assistantParts.length > 0) {
+      const sanitized = ensureStepBoundaries(
+        finalizeOrphanToolParts(assistantParts)
+      );
       manager.messageStore.append(sessionId, {
         id: randomUUID(),
         role: "assistant",
-        parts: assistantParts as unknown[],
+        parts: sanitized as unknown[],
       });
     }
   } catch (err) {

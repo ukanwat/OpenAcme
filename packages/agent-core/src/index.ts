@@ -1,4 +1,4 @@
-export { Agent } from "./agent.js";
+export { Agent, AutonomousTurnTimeout } from "./agent.js";
 export { buildSystemPrompt } from "./prompt.js";
 export {
   Compressor,
@@ -42,6 +42,9 @@ export {
   inlineFileAttachments,
   parseAttachmentUrl,
   uiToModelMessages,
+  finalizeOrphanToolParts,
+  ensureStepBoundaries,
+  sanitizeStoredHistory,
 } from "./messages.js";
 // Re-export the SDK types so consumers have one import path.
 export type {

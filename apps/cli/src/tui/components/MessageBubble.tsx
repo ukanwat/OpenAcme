@@ -20,6 +20,7 @@ function PartView({ part, finalized }: { part: Part; finalized: boolean }) {
     return (
       <ToolBlock
         part={part as Extract<Part, { type: `tool-${string}` }>}
+        streaming={!finalized}
       />
     );
   }

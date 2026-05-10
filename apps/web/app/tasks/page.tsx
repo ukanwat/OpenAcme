@@ -1,0 +1,433 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { Kanban, ListChecks, Rows3 } from "lucide-react";
+import { toast } from "sonner";
+import { Sidebar } from "../components/Sidebar";
+import { API_BASE } from "../lib/api";
+import { Button } from "@/app/components/ui/button";
+import { Badge } from "@/app/components/ui/badge";
+import { Skeleton } from "@/app/components/ui/skeleton";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/app/components/ui/dialog";
+import * as VisuallyHidden from "@radix-ui/react-visually-hidden";
+import { cn } from "@/app/lib/utils";
+import { TasksBoard } from "./board";
+import { TaskDetailPanel } from "./detail";
+import {
+  STATUS_LABEL,
+  STATUS_ORDER,
+  STATUS_VARIANT,
+  formatDate,
+  type Task,
+  type TaskStatus,
+} from "./types";
+
+type ViewMode = "board" | "list";
+const VIEW_MODE_STORAGE_KEY = "openacme.tasks.viewMode";
+
+export default function TasksPage() {
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState<Task | null>(null);
+  const [draft, setDraft] = useState<Task | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<ViewMode>("board");
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const stored = window.localStorage.getItem(VIEW_MODE_STORAGE_KEY);
+    if (stored === "list" || stored === "board") setViewMode(stored);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(VIEW_MODE_STORAGE_KEY, viewMode);
+  }, [viewMode]);
+
+  useEffect(() => {
+    const ctrl = new AbortController();
+    void load(ctrl.signal);
+    return () => ctrl.abort();
+  }, []);
+
+  const load = async (signal?: AbortSignal) => {
+    try {
+      setLoading(true);
+      const res = await fetch(`${API_BASE}/api/tasks`, { signal });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = (await res.json()) as { tasks: Task[] };
+      setTasks(json.tasks);
+    } catch (e) {
+      if ((e as Error).name === "AbortError") return;
+      toast.error("Failed to load tasks");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadOne = async (id: string) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/tasks/${id}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = (await res.json()) as { task: Task };
+      setSelected(json.task);
+      setDraft(json.task);
+    } catch {
+      toast.error("Failed to load task");
+    }
+  };
+
+  const save = async () => {
+    if (!draft) return;
+    setSaving(true);
+    try {
+      const patch: Record<string, unknown> = {
+        title: draft.title,
+        body: draft.body ?? "",
+        status: draft.status,
+        assignee: draft.assignee,
+        session_id: draft.session_id,
+        start_at: draft.start_at,
+        due_at: draft.due_at,
+        recurrence: draft.recurrence,
+      };
+      const res = await fetch(`${API_BASE}/api/tasks/${draft.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) {
+        const err = (await res.json().catch(() => ({}))) as {
+          error?: string;
+          message?: string;
+        };
+        throw new Error(err.message ?? err.error ?? `HTTP ${res.status}`);
+      }
+      const json = (await res.json()) as { task: Task };
+      setSelected(json.task);
+      setDraft(json.task);
+      await load();
+      toast.success("Saved");
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Drag-end handler for board mode: optimistic move, PATCH status, revert on error.
+  const moveStatus = async (id: string, target: TaskStatus) => {
+    const before = tasks;
+    const current = before.find((t) => t.id === id);
+    if (!current) return;
+    setTasks(before.map((t) => (t.id === id ? { ...t, status: target } : t)));
+    try {
+      const res = await fetch(`${API_BASE}/api/tasks/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: target }),
+      });
+      if (!res.ok) {
+        const err = (await res.json().catch(() => ({}))) as {
+          error?: string;
+          message?: string;
+        };
+        throw new Error(err.message ?? err.error ?? `HTTP ${res.status}`);
+      }
+      const json = (await res.json()) as { task: Task };
+      // The store may auto-correct (e.g., back to blocked if deps unmet).
+      if (json.task.status !== target) {
+        toast.message(
+          `Auto-corrected to ${STATUS_LABEL[json.task.status]}`,
+          { description: explainAutoCorrect(json.task.status, target) }
+        );
+      }
+      await load();
+      // If the moved task was the selected one, refresh detail view too.
+      if (selected?.id === id) {
+        setSelected(json.task);
+        setDraft(json.task);
+      }
+    } catch (e) {
+      setTasks(before);
+      toast.error((e as Error).message);
+    }
+  };
+
+  const remove = async (id: string, force: boolean) => {
+    try {
+      const res = await fetch(
+        `${API_BASE}/api/tasks/${id}${force ? "?force=true" : ""}`,
+        { method: "DELETE" }
+      );
+      if (!res.ok) {
+        const err = (await res.json().catch(() => ({}))) as {
+          error?: string;
+          message?: string;
+        };
+        if (err.error === "has_dependents") {
+          return false;
+        }
+        throw new Error(err.message ?? err.error ?? `HTTP ${res.status}`);
+      }
+      if (selected?.id === id) {
+        setSelected(null);
+        setDraft(null);
+      }
+      await load();
+      toast.success("Deleted");
+      setConfirmDelete(null);
+      return true;
+    } catch (e) {
+      toast.error((e as Error).message);
+      return false;
+    }
+  };
+
+  const grouped = useMemo(() => {
+    const out = new Map<TaskStatus, Task[]>();
+    for (const s of STATUS_ORDER) out.set(s, []);
+    for (const t of tasks) {
+      out.get(t.status)?.push(t);
+    }
+    for (const list of out.values()) {
+      list.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+    }
+    return out;
+  }, [tasks]);
+
+  const dirty = !!(
+    draft &&
+    selected &&
+    (draft.title !== selected.title ||
+      (draft.body ?? "") !== (selected.body ?? "") ||
+      draft.status !== selected.status ||
+      draft.assignee !== selected.assignee ||
+      (draft.session_id ?? null) !== (selected.session_id ?? null) ||
+      (draft.start_at ?? null) !== (selected.start_at ?? null) ||
+      (draft.due_at ?? null) !== (selected.due_at ?? null) ||
+      JSON.stringify(draft.recurrence) !== JSON.stringify(selected.recurrence))
+  );
+
+  return (
+    <div className="flex h-screen w-screen overflow-hidden">
+      <Sidebar />
+
+      <main className="flex flex-1 flex-col overflow-hidden">
+        <header className="flex h-14 shrink-0 items-center justify-between border-b px-6">
+          <div>
+            <h2 className="text-sm font-semibold">Tasks</h2>
+            <p className="text-xs text-muted-foreground">
+              {tasks.length} task{tasks.length === 1 ? "" : "s"} — agents file
+              and complete; founder observes.
+            </p>
+          </div>
+          <div className="inline-flex rounded-md border p-0.5">
+            <Button
+              size="sm"
+              variant={viewMode === "board" ? "secondary" : "ghost"}
+              className="h-7 gap-1.5 px-2.5 text-xs"
+              onClick={() => setViewMode("board")}
+            >
+              <Kanban className="size-3.5" />
+              Board
+            </Button>
+            <Button
+              size="sm"
+              variant={viewMode === "list" ? "secondary" : "ghost"}
+              className="h-7 gap-1.5 px-2.5 text-xs"
+              onClick={() => setViewMode("list")}
+            >
+              <Rows3 className="size-3.5" />
+              List
+            </Button>
+          </div>
+        </header>
+
+        {loading ? (
+          <div className="space-y-2 p-4">
+            <Skeleton className="h-12 w-full" />
+            <Skeleton className="h-12 w-full" />
+            <Skeleton className="h-12 w-full" />
+          </div>
+        ) : tasks.length === 0 ? (
+          <div className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-center">
+            <ListChecks className="size-8 text-muted-foreground" />
+            <p className="text-sm text-muted-foreground">
+              No tasks yet. Ask an agent to file one in chat.
+            </p>
+          </div>
+        ) : viewMode === "board" ? (
+          <>
+            <TasksBoard
+              tasks={tasks}
+              selectedId={selected?.id ?? null}
+              onPick={(id) => void loadOne(id)}
+              onMove={(id, target) => void moveStatus(id, target)}
+            />
+            <Dialog
+              open={!!selected && !!draft}
+              onOpenChange={(open) => {
+                if (!open) {
+                  setSelected(null);
+                  setDraft(null);
+                }
+              }}
+            >
+              <DialogContent className="flex max-h-[85vh] max-w-3xl flex-col overflow-hidden p-0">
+                <VisuallyHidden.Root>
+                  <DialogTitle>{selected?.title ?? "Task"}</DialogTitle>
+                  <DialogDescription>
+                    Edit task details — title, status, assignee, schedule,
+                    recurrence, and body.
+                  </DialogDescription>
+                </VisuallyHidden.Root>
+                {selected && draft && (
+                  <TaskDetailPanel
+                    selected={selected}
+                    draft={draft}
+                    saving={saving}
+                    dirty={dirty}
+                    onChange={setDraft}
+                    onSave={() => void save()}
+                    onDeleteClick={() => setConfirmDelete(selected.id)}
+                  />
+                )}
+              </DialogContent>
+            </Dialog>
+          </>
+        ) : (
+          <div className="flex flex-1 overflow-hidden">
+            <aside className="flex w-96 shrink-0 flex-col overflow-y-auto border-r">
+              {STATUS_ORDER.map((status) => {
+                const items = grouped.get(status) ?? [];
+                if (items.length === 0) return null;
+                return (
+                  <div key={status} className="border-b last:border-b-0">
+                    <div className="flex items-center justify-between px-4 py-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      <span>{STATUS_LABEL[status]}</span>
+                      <span>{items.length}</span>
+                    </div>
+                    <div className="flex flex-col">
+                      {items.map((t) => (
+                        <button
+                          key={t.id}
+                          onClick={() => void loadOne(t.id)}
+                          className={cn(
+                            "flex flex-col items-start gap-1 border-t px-4 py-3 text-left transition-colors",
+                            selected?.id === t.id
+                              ? "bg-accent"
+                              : "hover:bg-accent/50"
+                          )}
+                        >
+                          <div className="flex w-full items-center gap-2">
+                            <Badge
+                              variant={STATUS_VARIANT[t.status]}
+                              className="shrink-0"
+                            >
+                              {STATUS_LABEL[t.status]}
+                            </Badge>
+                            <span className="truncate text-sm font-medium">
+                              {t.title}
+                            </span>
+                          </div>
+                          <div className="flex w-full flex-wrap gap-x-3 text-[11px] text-muted-foreground">
+                            <span>@{t.assignee}</span>
+                            {t.due_at && (
+                              <span>due {formatDate(t.due_at)}</span>
+                            )}
+                            {t.start_at && (
+                              <span>starts {formatDate(t.start_at)}</span>
+                            )}
+                            {t.depends_on.length > 0 && (
+                              <span>{t.depends_on.length} dep(s)</span>
+                            )}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </aside>
+
+            <section className="flex flex-1 flex-col overflow-hidden">
+              {!selected || !draft ? (
+                <div className="flex flex-1 items-center justify-center p-6 text-sm text-muted-foreground">
+                  Select a task to view or edit.
+                </div>
+              ) : (
+                <TaskDetailPanel
+                  selected={selected}
+                  draft={draft}
+                  saving={saving}
+                  dirty={dirty}
+                  onChange={setDraft}
+                  onSave={() => void save()}
+                  onDeleteClick={() => setConfirmDelete(selected.id)}
+                />
+              )}
+            </section>
+          </div>
+        )}
+
+        <Dialog
+          open={!!confirmDelete}
+          onOpenChange={(open) => {
+            if (!open) setConfirmDelete(null);
+          }}
+        >
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Delete this task?</DialogTitle>
+              <DialogDescription>
+                Permanent. If other tasks depend on this one, you&apos;ll be asked
+                whether to cascade.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setConfirmDelete(null)}>
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={async () => {
+                  if (!confirmDelete) return;
+                  const ok = await remove(confirmDelete, false);
+                  if (!ok) {
+                    if (
+                      window.confirm(
+                        "Other tasks depend on this one. Cascade delete?"
+                      )
+                    ) {
+                      await remove(confirmDelete, true);
+                    } else {
+                      setConfirmDelete(null);
+                    }
+                  }
+                }}
+              >
+                Delete
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </main>
+    </div>
+  );
+}
+
+function explainAutoCorrect(actual: TaskStatus, requested: TaskStatus): string {
+  if (actual === "blocked" && requested === "open") {
+    return "Dependencies aren't all done yet.";
+  }
+  return `Server returned status ${actual} instead of ${requested}.`;
+}

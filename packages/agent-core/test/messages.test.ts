@@ -4,6 +4,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { UIMessage } from "ai";
 import {
+  ensureStepBoundaries,
+  finalizeOrphanToolParts,
   inlineFileAttachments,
   parseAttachmentUrl,
 } from "../src/messages.js";
@@ -110,3 +112,154 @@ describe("inlineFileAttachments", () => {
     expect(part.text).toContain("missing.png");
   });
 });
+
+describe("finalizeOrphanToolParts", () => {
+  it("rewrites input-available to output-error with [interrupted]", () => {
+    const parts: UIMessage["parts"] = [
+      { type: "text", text: "hi" } as UIMessage["parts"][number],
+      {
+        type: "tool-shell",
+        toolCallId: "c1",
+        state: "input-available",
+        input: { cmd: "ls" },
+      } as unknown as UIMessage["parts"][number],
+    ];
+    const out = finalizeOrphanToolParts(parts) as Array<{
+      type: string;
+      state?: string;
+      errorText?: string;
+      toolCallId?: string;
+    }>;
+    expect(out[0]!.type).toBe("text");
+    expect(out[1]!.state).toBe("output-error");
+    expect(out[1]!.errorText).toBe("[interrupted]");
+    expect(out[1]!.toolCallId).toBe("c1");
+  });
+
+  it("rewrites input-streaming the same way", () => {
+    const parts: UIMessage["parts"] = [
+      {
+        type: "tool-shell",
+        toolCallId: "c1",
+        state: "input-streaming",
+      } as unknown as UIMessage["parts"][number],
+    ];
+    const out = finalizeOrphanToolParts(parts) as Array<{ state?: string }>;
+    expect(out[0]!.state).toBe("output-error");
+  });
+
+  it("leaves output-available untouched", () => {
+    const parts: UIMessage["parts"] = [
+      {
+        type: "tool-shell",
+        toolCallId: "c1",
+        state: "output-available",
+        input: {},
+        output: "ok",
+      } as unknown as UIMessage["parts"][number],
+    ];
+    const out = finalizeOrphanToolParts(parts) as Array<{
+      state?: string;
+      output?: string;
+    }>;
+    expect(out[0]!.state).toBe("output-available");
+    expect(out[0]!.output).toBe("ok");
+  });
+
+  it("leaves output-error untouched", () => {
+    const parts: UIMessage["parts"] = [
+      {
+        type: "tool-shell",
+        toolCallId: "c1",
+        state: "output-error",
+        input: {},
+        errorText: "boom",
+      } as unknown as UIMessage["parts"][number],
+    ];
+    const out = finalizeOrphanToolParts(parts) as Array<{ errorText?: string }>;
+    expect(out[0]!.errorText).toBe("boom");
+  });
+
+  it("leaves non-tool parts untouched", () => {
+    const parts: UIMessage["parts"] = [
+      { type: "text", text: "hi" } as UIMessage["parts"][number],
+    ];
+    expect(finalizeOrphanToolParts(parts)).toEqual(parts);
+  });
+});
+
+describe("ensureStepBoundaries", () => {
+  it("inserts step-start before text that follows a tool", () => {
+    const parts: UIMessage["parts"] = [
+      { type: "text", text: "pre" } as UIMessage["parts"][number],
+      {
+        type: "tool-shell",
+        toolCallId: "c1",
+        state: "output-available",
+        input: {},
+        output: "ok",
+      } as unknown as UIMessage["parts"][number],
+      { type: "text", text: "post" } as UIMessage["parts"][number],
+    ];
+    const out = ensureStepBoundaries(parts) as Array<{ type: string }>;
+    expect(out.map((p) => p.type)).toEqual([
+      "text",
+      "tool-shell",
+      "step-start",
+      "text",
+    ]);
+  });
+
+  it("preserves existing step-start and skips re-injection", () => {
+    const parts: UIMessage["parts"] = [
+      { type: "step-start" } as unknown as UIMessage["parts"][number],
+      { type: "text", text: "pre" } as UIMessage["parts"][number],
+      {
+        type: "tool-shell",
+        toolCallId: "c1",
+        state: "output-available",
+      } as unknown as UIMessage["parts"][number],
+      { type: "step-start" } as unknown as UIMessage["parts"][number],
+      { type: "text", text: "post" } as UIMessage["parts"][number],
+    ];
+    const out = ensureStepBoundaries(parts) as Array<{ type: string }>;
+    expect(out.map((p) => p.type)).toEqual([
+      "step-start",
+      "text",
+      "tool-shell",
+      "step-start",
+      "text",
+    ]);
+  });
+
+  it("no-op when there's no tool", () => {
+    const parts: UIMessage["parts"] = [
+      { type: "text", text: "hi" } as UIMessage["parts"][number],
+    ];
+    expect(ensureStepBoundaries(parts)).toEqual(parts);
+  });
+
+  it("handles back-to-back tools without injecting between them", () => {
+    const parts: UIMessage["parts"] = [
+      {
+        type: "tool-a",
+        toolCallId: "c1",
+        state: "output-available",
+      } as unknown as UIMessage["parts"][number],
+      {
+        type: "tool-b",
+        toolCallId: "c2",
+        state: "output-available",
+      } as unknown as UIMessage["parts"][number],
+      { type: "text", text: "after" } as UIMessage["parts"][number],
+    ];
+    const out = ensureStepBoundaries(parts) as Array<{ type: string }>;
+    expect(out.map((p) => p.type)).toEqual([
+      "tool-a",
+      "tool-b",
+      "step-start",
+      "text",
+    ]);
+  });
+});
+

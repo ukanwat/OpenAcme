@@ -2,10 +2,10 @@
 
 # ◢◤ OpenAcme
 
-**A local-first TypeScript agent platform.**
-Streaming tool-calls. Multi-provider LLMs. ChatGPT & Claude OAuth. MCP. Built-in CLI + web UI.
+**A workforce of AI agents.**
+Different agents for different jobs. They work on their own clocks, pass tasks between each other, and post results for you to catch up on later.
 
-<sub>Pre-1.0 · Single-author · Evolving fast — expect breaking changes.</sub>
+<sub>Pre-1.0 · evolving fast — expect breaking changes.</sub>
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178c6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Node](https://img.shields.io/badge/Node-%E2%89%A518-43853d?logo=node.js&logoColor=white)](https://nodejs.org/)
@@ -17,17 +17,41 @@ Streaming tool-calls. Multi-provider LLMs. ChatGPT & Claude OAuth. MCP. Built-in
 
 ---
 
-## ✦ Why OpenAcme
+## ✦ What this is
 
-> Most agent platforms ask you to pay for API credits *and* a subscription. OpenAcme lets your existing ChatGPT or Claude subscription drive the agent — locally, with full session history, MCP tools, and a chat UI you actually own.
+Staff it the way you'd staff a small team — one agent doing research, another watching the infra, another reviewing pull requests, another summarizing your inbox. Each runs on its own model with its own tools, skills, and memory. They run on their own clocks. They hand work between each other.
 
-- 🔌 **Bring your own model.** Six providers, one config — swap them per agent.
-- 🔑 **Sign in, don't pay twice.** OAuth into ChatGPT (Plus/Pro) or Claude (Pro/Max); API keys remain a fallback.
-- 🛠 **Tools that compose.** Built-in shell + filesystem + session search; add any MCP server and its tools show up automatically.
-- 💾 **Sessions stay yours.** SQLite + FTS5 in `~/.openacme/`; no cloud, no telemetry, no external state.
-- 🧠 **Skills as context.** Drop `SKILL.md` files in; the agent gets a tag-indexed summary, fetches the body on demand.
-- 🖥 **Two interfaces, one runtime.** A React-on-Ink TUI and a Next.js web UI, both backed by the same Hono server.
-- 🔄 **Always-on daemon.** Managed by launchd (macOS) or systemd-user (Linux) — survives reboots and crashes.
+You write the briefs. They do the work. You read the summary when you check in.
+
+### Today vs direction
+
+|  | Today | Direction |
+|---|---|---|
+| Multiple agent definitions | yes — per-agent model / tools / skills / MCP / system prompt | — |
+| Per-agent chat (web + TUI) | yes | — |
+| Local SQLite + FTS5 history | yes | — |
+| ChatGPT / Claude OAuth (no double-paying) | yes | — |
+| MCP tools, skills, file attachments | yes | — |
+| Daemon (launchd / systemd-user) — auto-start, auto-restart | yes | — |
+| Remote founder access via `--expose` + secret | yes | per-agent push notifications |
+| **Autonomous wake-ups** | not yet | each agent ticks on its own clock, drains a system-event inbox |
+| **Scheduled jobs (cron / at)** | not yet | per-agent recurring + one-shot, results into chat or notifications |
+| **Agent-to-agent collaboration** | not yet | inboxes accept events from other agents, not only the founder |
+| **Notification center** | not yet | catch up on what each agent did while you were away |
+
+The remainder of this README documents the *Today* column.
+
+---
+
+## ✦ What's solid today
+
+- 🔌 **Six model providers** — Anthropic / OpenAI / Google / OpenRouter / Ollama / any OpenAI-compatible endpoint. Pick per agent.
+- 🔑 **Subscription-aware auth.** OAuth into ChatGPT (Plus/Pro) or Claude (Pro/Max); API keys remain a fallback. Don't pay your provider twice.
+- 🛠 **Tools that compose.** Built-in shell + filesystem + session search; add any MCP server and its tools register automatically.
+- 💾 **Local-only state.** SQLite + FTS5 in `~/.openacme/`. No cloud, no telemetry.
+- 🧠 **Skills as progressive context.** `SKILL.md` files indexed as tags; the body is fetched on demand.
+- 🖥 **Two interfaces, one runtime.** React-on-Ink TUI and a Next.js web UI, both backed by the same Hono server.
+- 🔄 **Always-on daemon.** launchd (macOS) or systemd-user (Linux); survives reboots and crashes.
 
 ---
 
@@ -215,8 +239,8 @@ server:
   host: 127.0.0.1             # loopback only by default; `openacme expose` flips to 0.0.0.0
 
 behavior:
-  maxSteps: 10
-  maxIterations: 90
+  maxSteps: 1000                  # safety cap on agentic steps per turn
+  compressionThresholdPercent: 0.5  # proactive compression at half the model's context window
 
 skills:
   directory: skills
@@ -244,6 +268,8 @@ Turborepo + pnpm 9. `apps/*` for binaries and UIs, `packages/*` for libraries.
 | `@openacme/mcp-client` | MCP stdio + HTTP/SSE; tool discovery into the registry |
 | `@openacme/tools` | `ToolRegistry` + built-in tools |
 | `@openacme/db` | better-sqlite3 + Drizzle, FTS5-backed message search |
+| `@openacme/memory` | Per-agent persistent `MEMORY.md` store |
+| `@openacme/tasks` | Per-agent task store (filesystem-backed) |
 | `@openacme/config` | Zod schema + YAML/JSON loader + secret helpers |
 | `@openacme/auth` | OAuth (ChatGPT, Claude), token store, body/response transforms |
 | `@openacme/skills` | `SKILL.md` discovery + progressive disclosure |
@@ -258,9 +284,17 @@ Turborepo + pnpm 9. `apps/*` for binaries and UIs, `packages/*` for libraries.
 | `shell` | Run a shell command (timeout · 50KB output cap · destructive-pattern warning) |
 | `read_file` | Read a file, optionally `maxLines` |
 | `write_file` | Write a file, creating parent dirs |
+| `edit` | In-place find/replace edits |
+| `apply_patch` | Apply a V4A-format multi-file patch |
 | `list_files` | List a directory |
 | `search_files` | Grep across files |
 | `session_search` | FTS5 search across past conversations |
+| `skill_view` | Fetch a skill's full body on demand |
+| `web_search` / `web_extract` | Tavily / Exa / Brave search + page extraction |
+| `execute_code` | Sandboxed code execution (Python REPL) |
+| `process` | Background process management |
+| `memory` | Read/write the agent's `MEMORY.md` |
+| `task_list` / `task_view` / `task_create` / `task_update` | Per-agent task store |
 
 Plus any MCP-server tool, namespaced as `mcp-<server>__<tool>`.
 

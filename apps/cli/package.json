@@ -42,6 +42,7 @@
     "@openacme/memory": "workspace:*",
     "@openacme/server": "workspace:*",
     "@openacme/skills": "workspace:*",
+    "@openacme/tasks": "workspace:*",
     "@openacme/tools": "workspace:*",
     "chalk": "^5.4.1",
     "cli-highlight": "^2.1.11",

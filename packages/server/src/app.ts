@@ -6,11 +6,17 @@ import {
   createUIMessageStreamResponse,
   type UIMessage,
 } from "ai";
-import type { OpenAcmeUIMessage } from "@openacme/agent-core";
+import {
+  ensureStepBoundaries,
+  finalizeOrphanToolParts,
+  sanitizeStoredHistory,
+  type OpenAcmeUIMessage,
+} from "@openacme/agent-core";
 import { AgentManager } from "./agent-manager.js";
 import { authMiddleware } from "./middleware/auth.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerUploadsRoutes, type UploadsContext } from "./routes/uploads.js";
+import { registerTaskRoutes } from "./routes/tasks.js";
 import {
   AgentDefinitionSchema,
   MCPServerConfigSchema,
@@ -67,6 +73,10 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
   // shared with /api/chat below so we can resolve `attachmentId` parts
   // back to a path on disk.
   const uploads: UploadsContext = registerUploadsRoutes(app, manager);
+
+  // Tasks: founder read/edit/delete. POST is intentionally absent — task
+  // creation is agent-only via the `task_create` tool.
+  registerTaskRoutes(app, manager);
 
   // Health check
   app.get("/api/health", (c) =>
@@ -166,7 +176,9 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
   app.get("/api/sessions/:id/messages", (c) => {
     // Returns UIMessage[] verbatim — useChat consumes these directly via
     // setMessages on session change.
-    const messages = manager.messageStore.getHistory(c.req.param("id"));
+    const messages = sanitizeStoredHistory(
+      manager.messageStore.getHistory(c.req.param("id"))
+    );
     return c.json(messages);
   });
 
@@ -345,10 +357,15 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
               parts: lastUser.parts as unknown[],
             });
           }
+          const sanitizedParts = ensureStepBoundaries(
+            finalizeOrphanToolParts(
+              responseMessage.parts as UIMessage["parts"]
+            )
+          );
           manager.messageStore.append(effectiveSessionId, {
             id: responseMessage.id,
             role: responseMessage.role as "user" | "assistant",
-            parts: responseMessage.parts as unknown[],
+            parts: sanitizedParts as unknown[],
           });
 
           // Title from the assistant's first text-part if the session
