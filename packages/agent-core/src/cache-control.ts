@@ -67,14 +67,12 @@ function markCacheable(m: ModelMessage, marker: EphemeralMarker): void {
   const opts = { anthropic: { cacheControl: marker } };
   const msg = m as { content: unknown; providerOptions?: Record<string, unknown> };
 
-  if (typeof msg.content === "string") {
-    msg.content = [
-      {
-        type: "text",
-        text: msg.content,
-        providerOptions: opts,
-      },
-    ];
+  // For string content (always for system, sometimes for user/assistant): put
+  // providerOptions on the message envelope. The @ai-sdk/anthropic SDK reads
+  // it from there for system blocks and as the last-part fallback for users.
+  // Don't convert string→TextPart[] — SystemModelMessage validator rejects it.
+  if (typeof msg.content === "string" || msg.content == null) {
+    msg.providerOptions = { ...(msg.providerOptions ?? {}), ...opts };
     return;
   }
   if (Array.isArray(msg.content) && msg.content.length > 0) {
