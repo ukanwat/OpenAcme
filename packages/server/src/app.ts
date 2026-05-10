@@ -900,16 +900,10 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
     return c.json({ success: true, envVar });
   });
 
-  // ── Static Web UI (if bundled) ──
-  // In the workspace (dev), apps/web/out is the canonical Next static export
-  // — no copy step required. In a published @openacme/server install, that
-  // path doesn't exist and we fall back to packages/server/web (which the
-  // publish pipeline materializes via prepack).
-  const workspaceWebDir = path.resolve(__dirname, "../../../apps/web/out");
-  const bundledWebDir = path.resolve(__dirname, "../web");
-  const webDir = fs.existsSync(path.join(workspaceWebDir, "index.html"))
-    ? workspaceWebDir
-    : bundledWebDir;
+  // ── Static Web UI (published installs only) ──
+  // Bundled at packages/server/web by the publish pipeline (prepack). In the
+  // workspace, web is served by `next dev` on :3000 — Hono stays API-only.
+  const webDir = path.resolve(__dirname, "../web");
   if (fs.existsSync(path.join(webDir, "index.html"))) {
     const { serveStatic } = await import("@hono/node-server/serve-static");
 

@@ -172,7 +172,7 @@ TUI (`apps/cli/src/tui/`) is React-on-Ink. `render.tsx` mounts the app; `state.t
 
 `apps/web/` — Next.js 16 App Router. Pages: `/` (chat), `/agents`, `/settings`, `/skills`. Tailwind + Radix primitives + react-markdown.
 
-Build → `out/` → copied to `packages/server/web/` and served as static by Hono. `next.config.js` and `apps/web/app/lib/api.ts` carry the API base URL (defaults to `http://localhost:3210`).
+Dev: Next dev on `:3000` (HMR), Hono on `:3210` API-only — open the webapp at `:3000`. Published: only `:3210`, with the web bundle copied into `packages/server/web/` by `prepack` and served static by Hono. `next.config.js` and `apps/web/app/lib/api.ts` carry the API base URL.
 
 The chat page uses `@ai-sdk/react`'s `useChat` with a `DefaultChatTransport` configured via `prepareSendMessagesRequest` to inject `agentId` + `sessionId` into the body each send. Streaming is the SDK's UIMessageStream protocol — the SDK handles parsing; we don't write our own. Custom data parts (`data-session`) arrive via the `onData` callback; `useChat`'s `messages` is the canonical render source.
 
@@ -256,7 +256,7 @@ Comments rot. Every reader has to decide whether they're still true, and the cos
 - **`inlineFileAttachments` is required at chat time.** Providers can't fetch our local URLs; the agent reads the bytes off disk and rewrites to a `data:` URL before `convertToModelMessages`. If you add a new local-URL scheme, extend `parseAttachmentUrl` in `messages.ts`.
 - **Compression preserves FileUIParts via `originalParts` + `rebindAttachmentsForChild`.** The internal Step shape would otherwise drop file parts on user messages; flatten stashes the pristine parts, coalesce restores them, and `Agent.compress` copies the bytes under the child session dir + rewrites URLs. Don't strip `originalParts` from `Step`; don't skip the rebind.
 - **OAuth body/response transforms are required for correctness**, not optional polish. Skipping them produces 400s on Anthropic OAuth and tool-id mismatches. Mirror existing transforms when adding a new OAuth-aware provider.
-- **Web build → server static**: web changes only land in the Hono-served bundle after `apps/web` builds and copies into `packages/server/web/`. Plain `pnpm dev` doesn't do this; it runs Next dev (port 3000) + Hono (3210) side by side.
+- **Dev web is at `:3000`, not `:3210`**: in the workspace, Hono never mounts the webapp — it's API-only. Open `:3000` for the UI (HMR works there). The `packages/server/web/` bundle exists only in published `@openacme/server` installs (filled by `prepack`), so `:3210/` serves the UI only after a real publish, not after a local `pnpm build`.
 - **MCP env injection is filtered**. `buildSafeEnv` drops anything that smells like a credential. Pass explicit `env` in `MCPServerConfig` for tokens you actually need.
 - **`apps/cli` chat does not call the server** — agent runs in-process via `agent.runStream`. Server-only changes (HTTP middleware, /api/chat handler) won't affect terminal chat behavior.
 
