@@ -25,6 +25,7 @@ import type { OpenAcmeUIMessage } from "./lib/types";
 import { Sidebar } from "./components/Sidebar";
 import { Markdown } from "./components/Markdown";
 import { AttachmentChip } from "./components/AttachmentChip";
+import { ToolBlock } from "./components/ToolBlock";
 import { API_BASE } from "./lib/api";
 import { Button } from "@/app/components/ui/button";
 import { Textarea } from "@/app/components/ui/textarea";
@@ -1119,83 +1120,7 @@ function MessageBubble({
               output?: unknown;
               errorText?: string;
             };
-            const toolName = tp.type.slice("tool-".length);
-            const interrupted =
-              tp.state === "output-error" && tp.errorText === "[interrupted]";
-            const staleOrphan =
-              !isStreaming &&
-              (tp.state === "input-streaming" ||
-                tp.state === "input-available");
-            const livePending =
-              isStreaming &&
-              (tp.state === "input-streaming" ||
-                tp.state === "input-available");
-            const errored = tp.state === "output-error" && !interrupted;
-
-            const statusLabel = livePending
-              ? "Running"
-              : interrupted || staleOrphan
-                ? "Interrupted"
-                : errored
-                  ? "Error"
-                  : "Done";
-            const dotClass = livePending
-              ? "bg-plot-red pulse-live"
-              : interrupted || staleOrphan
-                ? "bg-warn-ochre"
-                : errored
-                  ? "bg-destructive"
-                  : "bg-ink";
-            const labelClass = errored
-              ? "text-destructive"
-              : interrupted || staleOrphan
-                ? "text-warn-ochre"
-                : livePending
-                  ? "text-plot-red"
-                  : "text-ink-soft";
-            const showResult =
-              !interrupted &&
-              !staleOrphan &&
-              (tp.output !== undefined || tp.errorText !== undefined);
-
-            return (
-              <div
-                key={i}
-                className="border border-paper-rule bg-paper-sunk"
-              >
-                <div className="flex items-center gap-3 border-b border-paper-rule px-3 py-2">
-                  <span className={cn("status-dot", dotClass)} aria-hidden />
-                  <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
-                    Tool
-                  </span>
-                  <span className="font-mono text-[12px] text-ink">
-                    {toolName}
-                  </span>
-                  <span className={cn("ml-auto font-mono text-[10px] uppercase tracking-[0.08em]", labelClass)}>
-                    {statusLabel}
-                  </span>
-                </div>
-                {tp.input !== undefined && (
-                  <pre className="overflow-x-auto px-3 py-2 font-mono text-[11px] leading-snug text-ink-soft">
-                    {JSON.stringify(tp.input, null, 2)}
-                  </pre>
-                )}
-                {showResult && (
-                  <div className="border-t border-paper-rule bg-paper px-3 py-2 font-mono text-[11px] leading-snug text-ink whitespace-pre-wrap break-words">
-                    {(() => {
-                      const result =
-                        tp.errorText ??
-                        (typeof tp.output === "string"
-                          ? tp.output
-                          : JSON.stringify(tp.output, null, 2));
-                      return result.length > 600
-                        ? result.slice(0, 600) + "…"
-                        : result;
-                    })()}
-                  </div>
-                )}
-              </div>
-            );
+            return <ToolBlock key={i} part={tp} isStreaming={isStreaming} />;
           }
           if ((part as { type?: unknown }).type === "text") {
             const text = (part as { text: string }).text;
