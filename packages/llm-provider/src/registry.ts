@@ -16,6 +16,7 @@ import {
   transformAnthropicOAuthResponse,
   transformCodexOAuthBody,
 } from "@openacme/auth";
+import { injectAnthropicCacheControl } from "./openrouter-cache.js";
 
 function resolveDataDir(): string {
   const fromEnv = process.env["OPENACME_DATA_DIR"];
@@ -325,6 +326,9 @@ const providerFactories: Record<
   },
 
   openrouter: (config) => {
+    const isClaudeModel =
+      config.model.toLowerCase().startsWith("anthropic/") ||
+      config.model.toLowerCase().includes("claude");
     const provider = createOpenAICompatible({
       name: "openrouter",
       apiKey: config.apiKey ?? process.env["OPENROUTER_API_KEY"],
@@ -334,6 +338,22 @@ const providerFactories: Record<
         "X-Title": "OpenAcme Agent",
         ...config.headers,
       },
+      // Anthropic models routed via OpenRouter accept native `cache_control`
+      // on chat-completions content blocks, but the openai-compatible adapter
+      // won't translate `providerOptions.anthropic.cacheControl` for us.
+      // Inject at the wire level for Claude-family models only.
+      ...(isClaudeModel
+        ? {
+            fetch: async (url, init) => {
+              const newBody = injectAnthropicCacheControl(init?.body);
+              const rewritten =
+                init && newBody !== init.body
+                  ? { ...init, body: newBody as RequestInit["body"] }
+                  : init;
+              return fetch(url as string | URL, rewritten);
+            },
+          }
+        : {}),
     });
     return provider(config.model);
   },

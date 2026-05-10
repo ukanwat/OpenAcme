@@ -18,6 +18,10 @@ import type { SessionStore, MessageStore, StoredUIMessage } from "@openacme/db";
 import { buildSystemPrompt } from "./prompt.js";
 import { Compressor } from "./compression.js";
 import {
+  anthropicCachePolicy,
+  applyAnthropicCacheControl,
+} from "./cache-control.js";
+import {
   uiToModelMessages,
   parseAttachmentUrl,
   sanitizeStoredHistory,
@@ -125,10 +129,14 @@ export class Agent {
       tools: tools as ToolSet,
     });
 
+    const system = this.getSystemPrompt(opts.sessionId);
+    const { system: cachedSystem, messages: cachedMessages } =
+      this.applyPromptCaching(system, messages);
+
     return streamText({
       model: getModel(this.config.model),
-      system: this.getSystemPrompt(opts.sessionId),
-      messages,
+      system: cachedSystem,
+      messages: cachedMessages,
       tools: tools as Parameters<typeof streamText>[0]["tools"],
       stopWhen: stepCountIs(this.config.maxSteps),
       abortSignal: opts.signal,
@@ -138,6 +146,32 @@ export class Agent {
         metadata: { sessionId: opts.sessionId },
       },
     });
+  }
+
+  /**
+   * For native Anthropic, fold the system string into messages so we can
+   * attach `providerOptions.anthropic.cacheControl` and apply system_and_3
+   * breakpoints. OpenRouter Claude is handled at the fetch layer in
+   * llm-provider; here it's a no-op. Other providers pass through.
+   */
+  private applyPromptCaching(
+    system: string,
+    messages: import("ai").ModelMessage[]
+  ): {
+    system: string | undefined;
+    messages: import("ai").ModelMessage[];
+  } {
+    if (anthropicCachePolicy(this.config.model) !== "native") {
+      return { system, messages };
+    }
+    const withSystem: import("ai").ModelMessage[] = [
+      { role: "system", content: system },
+      ...messages,
+    ];
+    return {
+      system: undefined,
+      messages: applyAnthropicCacheControl(withSystem),
+    };
   }
 
   /**
@@ -453,17 +487,20 @@ export class Agent {
         sessionId,
         agentId: this.config.id,
       });
+      const flushMessages: import("ai").ModelMessage[] = [
+        ...messages,
+        {
+          role: "user",
+          content:
+            "Pre-compaction memory flush. Older messages in this conversation will be summarized away shortly. Use the `memory` tool to save any durable facts, preferences, decisions, or environment details that should survive into future sessions. If nothing is worth saving, respond with a single word and stop.",
+        },
+      ];
+      const { system: cachedSystem, messages: cachedMessages } =
+        this.applyPromptCaching(system, flushMessages);
       await generateText({
         model: getModel(this.config.model),
-        system,
-        messages: [
-          ...messages,
-          {
-            role: "user",
-            content:
-              "Pre-compaction memory flush. Older messages in this conversation will be summarized away shortly. Use the `memory` tool to save any durable facts, preferences, decisions, or environment details that should survive into future sessions. If nothing is worth saving, respond with a single word and stop.",
-          },
-        ],
+        system: cachedSystem,
+        messages: cachedMessages,
         tools: tools as Parameters<typeof generateText>[0]["tools"],
         stopWhen: stepCountIs(this.config.maxSteps),
         experimental_telemetry: {
