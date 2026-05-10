@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/app/lib/utils";
 import { Logotype } from "@/app/components/Logotype";
+import { ThemeToggle } from "@/app/components/ThemeToggle";
 
 interface NavItem {
   href: string;
@@ -78,11 +79,11 @@ export function Sidebar({ children }: { children?: React.ReactNode }) {
 
       <div className="flex-1 overflow-y-auto">{children}</div>
 
-      <div className="border-t border-paper-rule px-4 py-3">
-        <div className="flex items-center justify-between font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
-          <span>OpenAcme</span>
-          <span>v0.1.0</span>
+      <div className="flex items-center justify-between gap-2 border-t border-paper-rule px-4 py-3">
+        <div className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
+          v0.1.0
         </div>
+        <ThemeToggle />
       </div>
     </aside>
   );

@@ -10,14 +10,14 @@
 
 :root {
   /* Surfaces */
-  --paper: oklch(98% 0.005 75);
-  --paper-sunk: oklch(96% 0.005 75);
-  --paper-rule: oklch(88% 0.005 75);
+  --paper: oklch(98.5% 0.004 75);
+  --paper-sunk: oklch(94.5% 0.004 75);
+  --paper-rule: oklch(86% 0.004 75);
 
   /* Ink (text on paper) */
   --ink: oklch(22% 0.008 280);
-  --ink-soft: oklch(45% 0.005 280);
-  --ink-faint: oklch(62% 0.005 280);
+  --ink-soft: oklch(42% 0.006 280);
+  --ink-faint: oklch(54% 0.006 280);
 
   /* Accent — Plot Red (the only chromatic at any meaningful coverage) */
   --plot-red: oklch(58% 0.18 28);

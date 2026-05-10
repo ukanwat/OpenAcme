@@ -29,7 +29,19 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="dark">
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        {/*
+         * Set the dark class before first paint so SSR + theme stay in sync
+         * and the user doesn't see a flash. Reads localStorage; falls back
+         * to system preference. Mirrors logic in components/ThemeToggle.tsx.
+         */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var k='openacme.theme';var c=localStorage.getItem(k);var s=window.matchMedia('(prefers-color-scheme: dark)').matches;var d=c==='dark'||((c==null||c==='system')&&s);document.documentElement.classList.toggle('dark',d);}catch(e){}})();`,
+          }}
+        />
+      </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} bg-background text-foreground antialiased`}
       >
