@@ -34,13 +34,15 @@ Server emits `{type: "data-session", data: {sessionId}, transient: true}` BEFORE
 - Provider-gate the picker via `activeModalities` from `/api/models` (each preset carries `inputModalities` from the bundled registry). Disable picker + drag-drop overlay when the active model is text-only.
 - Per-file blob preview URL — `URL.revokeObjectURL` after send to avoid leaking object URLs.
 
-## Dev = `:3000` (web), `:3210` (API only). Published = `:3210` (web + API).
+## One URL: `:3210` in dev and published. Hono fronts the UI; in dev it proxies to Next.
 
-`pnpm dev` runs Next dev (3000) and Hono (3210) side by side. Hono is **API-only in dev** — it does not mount any static UI. Open `:3000` for the webapp; HMR works there.
+`pnpm dev` runs Hono on the configured `server.port` (default `:3210`) and Next dev on `server.port + 10` (default `:3220`, loopback only). Hono routes `/api/*` in-process and proxies everything else — including `_next/*` HMR WebSocket upgrades — to Next. Open the API port. The proxy seam lives in `packages/server/src/dev-proxy.ts`; both dev scripts (`packages/server/scripts/dev.mjs`, `apps/web/scripts/dev.mjs`) share `scripts/lib/dev-ports.mjs`, which reads `server.port` from `<dataDir>/config.yaml` and derives the web port. Two parallel `pnpm dev` sessions against different data dirs work automatically as long as their API ports differ — single config knob (`server.port`), no env vars.
 
-- The bundled `packages/server/web/` only exists in published `@openacme/server` installs (materialized at publish time by `prepack`). In the workspace it's absent, so Hono has nothing to serve and `:3210/` is API-only.
-- Don't reintroduce a workspace `apps/web/out` fallback in Hono — that's what made `:3210` show a stale UI alongside `:3000`.
-- Don't try to stream HMR through Hono — the dev server is meant for that.
+- Don't reintroduce `next.config.js` rewrites for `/api/*`. Same-origin already works — the browser only sees `:3210`.
+- Don't open `:3220` in docs / browser-launch / status output. It's an internal port; `:3210` is the canonical URL.
+- The Next dev port is loopback-bound but technically reachable on the box. Treat it like the rest of the local-only attack surface (no auth between web ↔ server today).
+- Published installs: Hono on `:3210` serves the static export at `packages/server/web/` (filled by `prepack`). No proxy, no Next process. Same URL.
+- Daemons running outside the dev proxy (e.g. `pnpm agent start --data-dir ~/.openacme-test`) skip Next entirely. They serve the bundled static if present, else fall back to the workspace `apps/web/out` (after a local `pnpm build`). API-only if neither exists. Two daemons can run at once because the test slot doesn't need `:3220`.
 
 ## No auth between web and server. Treat as 127.0.0.1 only.
 
@@ -67,6 +69,6 @@ There is **no** session, no token, no CSRF, no CORS gate (CORS is wide open). Th
 
 ## API client + base URL
 
-`app/lib/api.ts` carries `API_BASE` (default `""` for same-origin). When the bundle is served from Hono itself, same-origin works; in dev (Next at :3000 → Hono at :3210), `next.config.js` rewrites `/api/*`.
+`app/lib/api.ts` carries `API_BASE` (default `""` for same-origin). The browser only ever talks to `:3210` (Hono fronts the UI in dev via proxy and serves the bundled static in published), so same-origin always works — no `next.config.js` rewrites and no hardcoded host.
 
 - Don't hardcode `http://localhost:3210` elsewhere. Threading `API_BASE` through is the only way same-origin static and split-port dev both keep working.

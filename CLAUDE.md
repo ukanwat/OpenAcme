@@ -172,7 +172,15 @@ TUI (`apps/cli/src/tui/`) is React-on-Ink. `render.tsx` mounts the app; `state.t
 
 `apps/web/` — Next.js 16 App Router. Pages: `/` (chat), `/agents`, `/settings`, `/skills`. Tailwind + Radix primitives + react-markdown.
 
-Dev: Next dev on `:3000` (HMR), Hono on `:3210` API-only — open the webapp at `:3000`. Published: only `:3210`, with the web bundle copied into `packages/server/web/` by `prepack` and served static by Hono. `next.config.js` and `apps/web/app/lib/api.ts` carry the API base URL.
+**One URL, dev and published: `http://127.0.0.1:3210`.** In dev, Hono fronts both API and UI — `/api/*` is handled in-process; everything else (including `_next/*` HMR over WebSocket) is proxied to a Next dev server bound to a private loopback port. In published installs, the static export at `packages/server/web/` (copied in by `prepack`) is served by Hono on the same `:3210`. `next.config.js`'s rewrites are gone — same-origin works because the browser only ever talks to `:3210`.
+
+Dev wiring: `packages/server/scripts/dev.mjs` and `apps/web/scripts/dev.mjs` share `scripts/lib/dev-ports.mjs`, which reads `<dataDir>/config.yaml`'s `server.port` and derives the web dev port as **`server.port` + 10**. Single source of truth, no env vars. A `~/.openacme-test/config.yaml` with `server.port: 3219` automatically uses `:3229` for `next dev`; two parallel `pnpm dev` sessions against different data dirs just work as long as their API ports differ:
+
+```sh
+OPENACME_DATA_DIR=~/.openacme-test pnpm dev   # → :3219 + :3229
+```
+
+This is dev-only — published installs serve everything on `server.port` from the bundled static and don't run Next.
 
 The chat page uses `@ai-sdk/react`'s `useChat` with a `DefaultChatTransport` configured via `prepareSendMessagesRequest` to inject `agentId` + `sessionId` into the body each send. Streaming is the SDK's UIMessageStream protocol — the SDK handles parsing; we don't write our own. Custom data parts (`data-session`) arrive via the `onData` callback; `useChat`'s `messages` is the canonical render source.
 
@@ -256,7 +264,7 @@ Comments rot. Every reader has to decide whether they're still true, and the cos
 - **`inlineFileAttachments` is required at chat time.** Providers can't fetch our local URLs; the agent reads the bytes off disk and rewrites to a `data:` URL before `convertToModelMessages`. If you add a new local-URL scheme, extend `parseAttachmentUrl` in `messages.ts`.
 - **Compression preserves FileUIParts via `originalParts` + `rebindAttachmentsForChild`.** The internal Step shape would otherwise drop file parts on user messages; flatten stashes the pristine parts, coalesce restores them, and `Agent.compress` copies the bytes under the child session dir + rewrites URLs. Don't strip `originalParts` from `Step`; don't skip the rebind.
 - **OAuth body/response transforms are required for correctness**, not optional polish. Skipping them produces 400s on Anthropic OAuth and tool-id mismatches. Mirror existing transforms when adding a new OAuth-aware provider.
-- **Dev web is at `:3000`, not `:3210`**: in the workspace, Hono never mounts the webapp — it's API-only. Open `:3000` for the UI (HMR works there). The `packages/server/web/` bundle exists only in published `@openacme/server` installs (filled by `prepack`), so `:3210/` serves the UI only after a real publish, not after a local `pnpm build`.
+- **One URL in dev and published — `:3210`.** In dev (`OPENACME_DEV_PROXY_TARGET` set), Hono proxies non-API HTTP and WS upgrades to an internal `next dev` (default `:3220`, loopback-bound). The Next dev port is reachable on the box but isn't printed and isn't the canonical URL — open `:3210`. In published installs Hono serves the bundled static at `packages/server/web/` (filled by `prepack`) on `:3210`. Daemons started without the proxy env (e.g. test slots via `pnpm agent start --data-dir ~/.openacme-test`) prefer the bundled path and fall back to the workspace `apps/web/out` if you've built it — keep that fallback for test-daemon UI; just don't let it activate under the proxy (it would shadow the proxy and double-serve).
 - **MCP env injection is filtered**. `buildSafeEnv` drops anything that smells like a credential. Pass explicit `env` in `MCPServerConfig` for tokens you actually need.
 - **`apps/cli` chat does not call the server** — agent runs in-process via `agent.runStream`. Server-only changes (HTTP middleware, /api/chat handler) won't affect terminal chat behavior.
 
@@ -309,6 +317,8 @@ pnpm agent status  --data-dir ~/.openacme-test --no-service
 ```
 
 `--no-service` keeps it as a one-off detached process (no launchd/systemd unit installed on the user's machine). Always `restart` (or `stop` then `start`) — never spawn a second test daemon without stopping the first.
+
+The test daemon is API-only by default. If you need to exercise the UI from the test slot, run `pnpm build` first — Hono will pick up `apps/web/out/` as a workspace fallback (only when `OPENACME_DEV_PROXY_TARGET` is unset, so the main `pnpm dev` is unaffected). For a parallel **dev** session (HMR) against the test slot, just `OPENACME_DATA_DIR=~/.openacme-test pnpm dev` — the web dev port is derived from the test slot's `server.port` (API+10), so no port-collision setup is required.
 
 ---
 

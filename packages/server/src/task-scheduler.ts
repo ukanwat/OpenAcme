@@ -136,7 +136,10 @@ export class TaskScheduler {
     for (const sessionId of sessions) {
       const head = this.taskStore.nextEligibleFor(sessionId, now);
       if (!head) continue;
-      if (head.status === "in_progress") continue;
+      // Only `open` tasks are runnable — `blocked` requires explicit unblock
+      // (e.g. user moves to open after fixing the cause), otherwise the
+      // turn-error / agent-missing handlers would loop on the same task.
+      if (head.status !== "open") continue;
       if (this.pending.has(head.id)) continue;
       if (!this.depsSatisfied(head)) continue;
       if (isFutureStart(head.start_at, now)) continue;
@@ -244,10 +247,16 @@ export class TaskScheduler {
     try {
       agent = this.agentManager.getAgent(agentId);
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
       console.warn(
-        `TaskScheduler: agent ${agentId} not found for task ${taskId}: ${e instanceof Error ? e.message : String(e)}`
+        `TaskScheduler: agent ${agentId} not found for task ${taskId}: ${msg} — blocking task`
       );
-      await this.safeUpdate(taskId, { status: "open" });
+      const cur = this.taskStore.get(taskId);
+      const note = `\n\n> [scheduler] agent \`${agentId}\` not found at ${this.now().toISOString()}: ${msg}`;
+      await this.safeUpdate(taskId, {
+        status: "blocked",
+        body: (cur?.body ?? "") + note,
+      });
       return;
     }
 
