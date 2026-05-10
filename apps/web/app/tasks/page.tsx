@@ -19,7 +19,7 @@ import {
 import * as VisuallyHidden from "@radix-ui/react-visually-hidden";
 import { cn } from "@/app/lib/utils";
 import { TasksBoard } from "./board";
-import { TaskDetailPanel } from "./detail";
+import { TaskDetailPanel, type AgentOption } from "./detail";
 import {
   STATUS_LABEL,
   STATUS_ORDER,
@@ -34,6 +34,7 @@ const VIEW_MODE_STORAGE_KEY = "openacme.tasks.viewMode";
 
 export default function TasksPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [agents, setAgents] = useState<AgentOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Task | null>(null);
   const [draft, setDraft] = useState<Task | null>(null);
@@ -55,6 +56,7 @@ export default function TasksPage() {
   useEffect(() => {
     const ctrl = new AbortController();
     void load(ctrl.signal);
+    void loadAgents(ctrl.signal);
     return () => ctrl.abort();
   }, []);
 
@@ -70,6 +72,18 @@ export default function TasksPage() {
       toast.error("Failed to load tasks");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadAgents = async (signal?: AbortSignal) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/agents`, { signal });
+      if (!res.ok) return;
+      const list = (await res.json()) as { id: string; name: string }[];
+      setAgents(list.map((a) => ({ id: a.id, name: a.name })));
+    } catch (e) {
+      if ((e as Error).name === "AbortError") return;
+      // non-fatal: assignee select falls back to current value
     }
   };
 
@@ -323,6 +337,7 @@ export default function TasksPage() {
                     draft={draft}
                     saving={saving}
                     dirty={dirty}
+                    agents={agents}
                     onChange={setDraft}
                     onSave={() => void save()}
                     onDeleteClick={() => setConfirmDelete(selected.id)}
@@ -425,6 +440,7 @@ export default function TasksPage() {
                   draft={draft}
                   saving={saving}
                   dirty={dirty}
+                  agents={agents}
                   onChange={setDraft}
                   onSave={() => void save()}
                   onDeleteClick={() => setConfirmDelete(selected.id)}
