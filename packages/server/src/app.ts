@@ -45,6 +45,17 @@ const PENDING_URL_RE = /^\/api\/attachments\/__pending__\/(pend_[^/]+)\/(.+)$/;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+const PKG_VERSION: string = (() => {
+  try {
+    const pkg = JSON.parse(
+      fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8")
+    );
+    return typeof pkg.version === "string" ? pkg.version : "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+})();
+
 /**
  * Create the Hono HTTP app with all API routes.
  */
@@ -82,7 +93,7 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
   app.get("/api/health", (c) =>
     c.json({
       status: "ok",
-      version: "0.0.1",
+      version: PKG_VERSION,
       agents: manager.listAgents().length,
       skills: manager.skillRegistry.size,
     })
