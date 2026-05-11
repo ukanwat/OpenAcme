@@ -13,6 +13,7 @@ export {
   readClaudeCodeCredentials,
   refreshAnthropic,
   isAnthropicOAuthToken,
+  tryReimportClaudeCode,
   type AnthropicLoginResult,
 } from "./oauth-anthropic.js";
 
