@@ -70,6 +70,21 @@ function readAgentsMd(dataDir: string): string | undefined {
   }
 }
 
+/** Write `<dataDir>/AGENTS.md`, or delete it when `content` is empty/whitespace. */
+function writeAgentsMd(dataDir: string, content: string): void {
+  const file = path.join(dataDir, "AGENTS.md");
+  if (content.trim().length === 0) {
+    try {
+      fs.unlinkSync(file);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+    }
+    return;
+  }
+  const body = content.endsWith("\n") ? content : content + "\n";
+  fs.writeFileSync(file, body, "utf-8");
+}
+
 /**
  * AgentManager — manages multiple agent instances, MCP connections, and skills.
  * Routes chat requests to the correct agent.
@@ -494,6 +509,19 @@ export class AgentManager {
     }
     this.agents.delete(id);
     this.agentStore.delete(id);
+  }
+
+  /** Current AGENTS.md content, or undefined when the file is absent. */
+  getAgentsMd(): string | undefined {
+    return this.agentsMd;
+  }
+
+  /** Set AGENTS.md content. Empty/whitespace deletes the file. Evicts
+   *  cached Agents so next activation rebuilds the system prompt. */
+  setAgentsMd(content: string): void {
+    writeAgentsMd(this.config.dataDir, content);
+    this.agentsMd = readAgentsMd(this.config.dataDir);
+    this.agents.clear();
   }
 
   private createAgentFromDef(def: AgentDefinition): Agent {
