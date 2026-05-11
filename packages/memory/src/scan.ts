@@ -1,20 +1,8 @@
 /**
- * Memory-directory scanning + manifest formatting. Shared by the recall
- * selector (Phase 2) and the extraction subagent (Phase 3) — pulled out
- * so neither has to duplicate the readdir/frontmatter walk.
- *
- * Port of Claude Code `memdir/memoryScan.ts`. Two intentional simplifications:
- * - `MemoryType` taxonomy dropped (see plan §B). The manifest line just
- *   omits the `[type] ` prefix.
- * - We parse `description` from frontmatter via a tight regex rather
- *   than pulling in gray-matter — keeps `@openacme/memory` dep-free
- *   (other workspace packages with gray-matter aren't reachable from
- *   here, and the convention is `description: <one line>` so a multi-
- *   line value isn't part of the contract anyway).
- *
- * Caps mirror Claude Code: `MAX_MEMORY_FILES = 200` on the result set
- * (newest-first) so the manifest can't grow unbounded; per-file we read
- * only the head bytes needed for frontmatter rather than the whole body.
+ * Memory-directory scan + manifest formatting. Shared by the recall
+ * selector and the extractor. CC `memdir/memoryScan.ts` lift; we drop
+ * the type taxonomy and parse `description` via a tight regex (keeps
+ * @openacme/memory dependency-free).
  */
 
 import { readdir, stat } from "node:fs/promises";
@@ -26,20 +14,14 @@ const FRONTMATTER_MAX_LINES = 30;
 const INDEX_FILE = "MEMORY.md";
 
 export interface MemoryHeader {
-  /** Path relative to memoryDir (may include subdirs). */
+  /** Path relative to memoryDir. */
   filename: string;
   /** Absolute filesystem path. */
   filePath: string;
   mtimeMs: number;
-  /** Frontmatter `description` if present, else null. */
   description: string | null;
 }
 
-/**
- * Read the first `maxLines` of a file. Frontmatter is always at the top;
- * cap at 30 lines (matches Claude Code) so we don't pull entire entry
- * bodies into memory just to peek at YAML.
- */
 async function readHead(filePath: string, maxLines: number): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: string[] = [];
@@ -85,15 +67,8 @@ export function parseFrontmatterDescription(head: string): string | null {
   return v.length > 0 ? v : null;
 }
 
-/**
- * Walk a memory directory recursively, return headers sorted newest-first
- * and capped at MAX_MEMORY_FILES. Excludes MEMORY.md (already loaded into
- * the system prompt) and hidden dotfiles.
- *
- * Per-file failures (read errors, missing entries) are dropped silently —
- * the scan must be best-effort, since both callers (selector + extractor)
- * are advisory paths that should never fail the parent turn.
- */
+/** Recursive scan, sorted newest-first, capped at MAX_MEMORY_FILES.
+ *  Best-effort: per-file read failures dropped silently. */
 export async function scanMemoryFiles(
   memoryDir: string,
   signal?: AbortSignal
@@ -138,11 +113,7 @@ export async function scanMemoryFiles(
     .slice(0, MAX_MEMORY_FILES);
 }
 
-/**
- * Format scanned headers as a text manifest. One line per file:
- * `- <filename> (<iso-ts>): <description?>`. Used by both the selector's
- * Sonnet prompt and the extractor's pre-injected listing.
- */
+/** Format: `- <filename> (<iso-ts>): <description?>` per line. */
 export function formatMemoryManifest(headers: MemoryHeader[]): string {
   return headers
     .map((m) => {

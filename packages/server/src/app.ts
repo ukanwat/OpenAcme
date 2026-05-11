@@ -347,24 +347,13 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
         });
         const agent = manager.getAgent(agentId);
 
-        // Phase-2 recall pass — selector picks up to 5 relevant entries
-        // from the agent's memory dir, returns entries (UI chip +
-        // alreadySurfaced dedup) and a pre-rendered modelContent string
-        // (persisted on the user message for byte-stable replay across
-        // turns → prefix cache hits). No-ops when memory is empty, when
-        // nothing survives the alreadySurfaced filter, when the session
-        // hit the cumulative byte cap, or when the selector model
-        // errors out.
         const recall = await agent.applyMemoryRecall({
           history: committed,
           signal,
         });
-        // Attach `data-relevant-memory` to the new user message BEFORE
-        // runStream so (a) uiToModelMessages prepends modelContent into
-        // the model input this turn AND (b) onFinish persists the part
-        // — every future load of this message replays identical bytes,
-        // keeping the prefix cache intact from this message onward.
-        // The same part also drives the UI chip + surfaced-set dedup.
+        // Attach to the new user msg before runStream: the model sees
+        // it via uiToModelMessages this turn; persisted in onFinish so
+        // future loads replay identical bytes (prefix cache).
         const recallPart = agent.buildRelevantMemoryPart(
           recall.entries,
           recall.modelContent

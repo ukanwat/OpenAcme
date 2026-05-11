@@ -1,47 +1,24 @@
 /**
- * System prompt builder.
- *
- * The memory section is assembled in three parts when memory is enabled:
- *   1. Index header + truncated MEMORY.md content + warning if truncated
- *   2. Convention text (Claude Code's auto-memory rules, types dropped)
- *   3. Conditional cluttered-memory instruction (Anthropic's secondary
- *      mitigation — appended when entry-file count > 10 OR index >80% cap)
- *
- * The Anthropic `memory_20250818` "ALWAYS VIEW YOUR MEMORY DIRECTORY..."
- * protocol text lives ONLY in the memory tool's description (where the
- * Anthropic spec auto-injects it). Duplicating it in the system prompt
- * over-primed the agent — every turn started with "I'll check my memory
- * directory first as required by the protocol." Claude Code's own
- * `buildMemoryLines` doesn't include it either; convention is enough.
+ * System prompt builder. Memory section: index + convention + conditional
+ * "keep organized" instruction. The Anthropic memory_20250818 protocol
+ * preamble is left to the tool description (duplicating it over-primed
+ * the agent into narrating "checking memory first" every turn).
  */
 
 import type { IndexSnapshot } from "@openacme/memory";
 import { MEMORY_CONVENTION } from "./prompt-fragments/memory-convention.js";
 
-// ── Memory injection caps (Claude Code `memdir/memdir.ts` lift) ────────
-
-/** Index line cap at injection. Truncates with verbatim warning. */
+// Memory-index injection caps (CC `memdir/memdir.ts` lift). Byte cap
+// catches long-line indexes that slip past the line cap.
 export const MAX_ENTRYPOINT_LINES = 200;
-
-/**
- * Index byte cap at injection. Catches long-line indexes that slip past
- * the line cap. Claude Code comment: `p100 observed: 197KB under 200 lines`.
- */
 export const MAX_ENTRYPOINT_BYTES = 25_000;
 
-/** Threshold for appending Anthropic's "keep your memory folder organized"
- * instruction — fires when there are more than this many entry files. */
+// Cluttered-memory thresholds. Triggers appending Anthropic's "keep
+// organized" instruction.
 const CLUTTERED_FILE_COUNT_THRESHOLD = 10;
-
-/** Threshold for the same — fires when MEMORY.md is over this fraction
- * of its configured char cap. */
 const CLUTTERED_FILL_FRACTION_THRESHOLD = 0.8;
 
-/**
- * Anthropic's secondary mitigation, quoted verbatim from the memory-tool
- * docs. Appended only when the dir is starting to look cluttered — Anthropic
- * explicitly suggests this for the cluttered-memory case.
- */
+// Verbatim from Anthropic memory-tool docs.
 const CLUTTERED_MEMORY_INSTRUCTION =
   "Note: when editing your memory folder, always try to keep its content " +
   "up-to-date, coherent and organized. You can rename or delete files that " +
@@ -53,11 +30,7 @@ function formatBytes(n: number): string {
   return `${(n / 1024 / 1024).toFixed(1)}MB`;
 }
 
-/**
- * Truncate the index content to the line AND byte caps, appending a
- * verbatim warning that names which cap fired. Lifted from Claude Code
- * `memdir/memdir.ts:truncateEntrypointContent`.
- */
+// CC `memdir/memdir.ts:truncateEntrypointContent` lift.
 function truncateIndex(raw: string): {
   content: string;
   wasLineTruncated: boolean;
@@ -100,16 +73,10 @@ function truncateIndex(raw: string): {
   };
 }
 
-/**
- * Build the four-part `## Memory` section for the system prompt.
- * Always emits the protocol + convention when memory is enabled, even
- * if MEMORY.md is empty — so the agent knows the tool exists from
- * turn one.
- */
+// Always emits even when MEMORY.md is empty so the agent knows the tool exists.
 function buildMemorySection(snapshot: IndexSnapshot): string {
   const parts: string[] = [];
 
-  // Part 1 — index (with header showing utilization and entry count)
   const used = snapshot.used;
   const limit = snapshot.limit;
   const pct = limit > 0 ? Math.round((used / limit) * 100) : 0;
@@ -124,14 +91,8 @@ MEMORY [${pct}% — ${used}/${limit} chars] · ${snapshot.entryCount} ${entryWor
     parts.push(`${header}\n(empty — no memories yet)`);
   }
 
-  // Part 2 — convention text (Claude Code, types dropped). The
-  // Anthropic protocol text lives in the memory tool's description
-  // only; we used to duplicate it here and the agent over-narrated
-  // ("I'll check my memory directory first as required by the
-  // protocol") on every turn. Convention alone is sufficient.
   parts.push(MEMORY_CONVENTION);
 
-  // Part 3 — conditional cluttered-memory instruction
   const fillFraction = limit > 0 ? used / limit : 0;
   const isCluttered =
     snapshot.entryCount > CLUTTERED_FILE_COUNT_THRESHOLD ||
