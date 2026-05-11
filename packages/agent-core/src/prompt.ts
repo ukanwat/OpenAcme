@@ -148,11 +148,20 @@ export function buildSystemPrompt(options: {
   tasksContext?: string;
   memorySnapshot?: IndexSnapshot;
   platformHints?: string;
+  /** Verbatim AGENTS.md contents. Empty/undefined ⇒ section omitted. */
+  agentsMd?: string;
 }): string {
   const parts: string[] = [];
 
   // Identity / persona
   parts.push(options.persona);
+
+  // Generic preface so AGENTS.md reads as shared background, not persona drift.
+  if (options.agentsMd && options.agentsMd.trim().length > 0) {
+    parts.push(
+      `\nShared context (from AGENTS.md):\n\n${options.agentsMd.trim()}`
+    );
+  }
 
   // Tool usage guidance
   if (options.toolNames.length > 0) {

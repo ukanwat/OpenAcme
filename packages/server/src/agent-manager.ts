@@ -55,6 +55,21 @@ import * as path from "node:path";
 // regex; the three must stay in sync.
 const PEER_ID_SAFE = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 
+/** Read optional `<dataDir>/AGENTS.md`. Returns undefined when absent. */
+function readAgentsMd(dataDir: string): string | undefined {
+  const file = path.join(dataDir, "AGENTS.md");
+  try {
+    const content = fs.readFileSync(file, "utf-8");
+    return content.trim().length > 0 ? content : undefined;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    console.warn(
+      `Failed to read ${file}: ${e instanceof Error ? e.message : String(e)}`
+    );
+    return undefined;
+  }
+}
+
 /**
  * AgentManager — manages multiple agent instances, MCP connections, and skills.
  * Routes chat requests to the correct agent.
@@ -68,6 +83,8 @@ export class AgentManager {
   readonly eventStore: EventStore;
   readonly attachmentsRoot: string;
   readonly agentsDir: string;
+  /** `<dataDir>/AGENTS.md` contents; restart to pick up edits. */
+  private agentsMd: string | undefined;
   readonly memoryStore: MemoryStore;
   readonly taskStore: TaskStore;
   readonly taskScheduler: TaskScheduler;
@@ -93,6 +110,7 @@ export class AgentManager {
     // state in config.yaml.
     this.agentsDir = path.join(config.dataDir, "agents");
     this.agentStore = createAgentStore(this.agentsDir);
+    this.agentsMd = readAgentsMd(config.dataDir);
     // One MemoryStore per AgentManager — shared between every Agent
     // instance and the `memory` tool's binding so the in-process mutex
     // map is consistent across both write paths.
@@ -544,6 +562,7 @@ export class AgentManager {
         summarizerInputCharBudget: b.compressionSummarizerInputCharBudget,
         summarizerModel: b.compressionSummarizerModel,
       },
+      agentsMd: this.agentsMd,
     };
 
     return new Agent(agentConfig, {
