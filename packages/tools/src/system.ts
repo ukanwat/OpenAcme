@@ -18,6 +18,7 @@ export const SYSTEM_TOOLS = [
   "task_update",
   "task_comment",
   "task_comments",
+  "agent_list",
 ] as const;
 
 export type SystemTool = (typeof SYSTEM_TOOLS)[number];

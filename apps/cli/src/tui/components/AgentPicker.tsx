@@ -17,7 +17,12 @@ export function AgentPicker({
   const items = agents.map((a) => ({
     key: a.id,
     label: a.name,
-    hint: `${a.model.provider}/${a.model.model}`,
+    // Role (paragraph-length, written for other agents/users) is the
+    // useful "which one is this?" signal. Falls back to provider/model
+    // when an agent's role hasn't been filled in yet.
+    hint: a.role && a.role.trim().length > 0
+      ? a.role
+      : `${a.model.provider}/${a.model.model}`,
   }));
 
   return (

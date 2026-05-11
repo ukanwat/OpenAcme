@@ -60,7 +60,7 @@ interface PageState {
 }
 
 /**
- * Owns the single managed Chrome process for the OpenAcme fleet.
+ * Owns the single managed Chrome process for the OpenAcme workforce.
  *
  * One Chrome under `<dataDir>/browser-profile/`; one shared default
  * `BrowserContext` so all agents share cookies / login state. Tabs are

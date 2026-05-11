@@ -54,6 +54,7 @@ import { cn } from "@/app/lib/utils";
 interface Agent {
   id: string;
   name: string;
+  role: string;
   model: { provider: string; model: string };
   persona: string;
   tools: string[];
@@ -641,7 +642,14 @@ function ChatPageInner() {
                   aria-hidden
                 />
                 <Bot className="size-3.5 shrink-0" />
-                <span className="truncate">{agent.name}</span>
+                <span className="min-w-0 flex-1" title={agent.role || undefined}>
+                  <span className="block truncate">{agent.name}</span>
+                  {agent.role && (
+                    <span className="block truncate text-[11px] text-sidebar-foreground/60">
+                      {agent.role}
+                    </span>
+                  )}
+                </span>
               </button>
             );
           })}

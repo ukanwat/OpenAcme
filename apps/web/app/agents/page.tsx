@@ -55,6 +55,7 @@ import { cn } from "@/app/lib/utils";
 interface Agent {
   id: string;
   name: string;
+  role: string;
   model: { provider: string; model: string };
   persona: string;
   tools: string[];
@@ -66,6 +67,7 @@ interface Agent {
 interface FormState {
   id: string;
   name: string;
+  role: string;
   provider: string;
   model: string;
   persona: string;
@@ -79,6 +81,7 @@ const CUSTOM_MODEL = "__custom__";
 const FALLBACK_FORM: FormState = {
   id: "",
   name: "",
+  role: "",
   provider: "openrouter",
   model: "",
   persona: "You are a helpful AI assistant.",
@@ -218,6 +221,7 @@ function AgentsPageInner() {
 
   const buildAgentBody = () => ({
     name: formData.name,
+    role: formData.role,
     model: { provider: formData.provider, model: formData.model },
     persona: formData.persona,
     tools: formData.tools,
@@ -379,6 +383,7 @@ function AgentsPageInner() {
         setFormData({
           id: found.id,
           name: found.name,
+          role: found.role ?? "",
           provider: found.model.provider,
           model: found.model.model,
           persona: found.persona,
@@ -463,12 +468,21 @@ function AgentsPageInner() {
                     <div className="truncate text-sm font-medium text-ink">
                       {agent.name}
                     </div>
-                    <div
-                      className="truncate font-mono text-[11px] tabular-nums text-ink-faint"
-                      title={`${agent.model.provider}/${agent.model.model}`}
-                    >
-                      {agent.model.provider}/{agent.model.model}
-                    </div>
+                    {agent.role ? (
+                      <div
+                        className="truncate text-[11px] text-ink-faint"
+                        title={agent.role}
+                      >
+                        {agent.role}
+                      </div>
+                    ) : (
+                      <div
+                        className="truncate font-mono text-[11px] tabular-nums text-ink-faint"
+                        title={`${agent.model.provider}/${agent.model.model}`}
+                      >
+                        {agent.model.provider}/{agent.model.model}
+                      </div>
+                    )}
                   </div>
                 </button>
               );
@@ -582,6 +596,24 @@ function AgentsPageInner() {
                     </div>
 
                     <div className="grid gap-2">
+                      <Label htmlFor="role">
+                        Role
+                        <span className="ml-2 font-normal text-ink-faint">
+                          visible to other agents
+                        </span>
+                      </Label>
+                      <Textarea
+                        id="role"
+                        value={formData.role}
+                        onChange={(e) =>
+                          setFormData({ ...formData, role: e.target.value })
+                        }
+                        placeholder="Owns X. Good for Y. Redirects Z to @other-agent."
+                        rows={3}
+                      />
+                    </div>
+
+                    <div className="grid gap-2">
                       <Label htmlFor="persona">Persona</Label>
                       <Textarea
                         id="persona"
@@ -638,7 +670,7 @@ function AgentsPageInner() {
                 </div>
               </form>
             ) : agents.length === 0 ? (
-              <EmptyFleetState onCreate={startCreate} />
+              <EmptyWorkforceState onCreate={startCreate} />
             ) : (
               <NoAgentPicked />
             )}
@@ -986,11 +1018,11 @@ function ToolToggle({
   );
 }
 
-function EmptyFleetState({ onCreate }: { onCreate: () => void }) {
+function EmptyWorkforceState({ onCreate }: { onCreate: () => void }) {
   const rowDelay = (i: number) => 80 + i * 120;
   return (
     <div className="mx-auto max-w-2xl">
-      <SectionEyebrow meta="0 agents">The fleet is empty</SectionEyebrow>
+      <SectionEyebrow meta="0 agents">The workforce is empty</SectionEyebrow>
 
       <div className="mt-6 border border-paper-rule paper-surface">
         {/* Faux dossier — visual demonstration of an AGENT.md. Every row

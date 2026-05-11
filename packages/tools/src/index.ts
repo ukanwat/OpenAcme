@@ -30,6 +30,12 @@ export {
   bindBrowser,
   type BrowserBindings,
 } from "./builtins/browser/bindings.js";
+export {
+  bindAgentTool,
+  type AgentToolBindings,
+  type AgentSummary,
+  type PeerNote,
+} from "./builtins/agent.js";
 export { SYSTEM_TOOLS, type SystemTool } from "./system.js";
 
 // Import builtins to trigger self-registration
@@ -45,4 +51,5 @@ import "./builtins/process.js";
 import "./builtins/skill.js";
 import "./builtins/memory.js";
 import "./builtins/tasks.js";
+import "./builtins/agent.js";
 import "./builtins/browser/index.js";
