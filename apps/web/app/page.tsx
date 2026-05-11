@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Suspense,
   useState,
   useRef,
   useEffect,
@@ -28,6 +29,7 @@ import { AttachmentChip } from "./components/AttachmentChip";
 import { ToolBlock } from "./components/ToolBlock";
 import { API_BASE } from "./lib/api";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/app/components/ui/button";
 import { Textarea } from "@/app/components/ui/textarea";
 import { SectionEyebrow } from "@/app/components/ui/section-eyebrow";
@@ -93,10 +95,22 @@ interface PendingAttachment {
 type Part = UIMessage["parts"][number];
 
 export default function ChatPage() {
+  return (
+    <Suspense fallback={null}>
+      <ChatPageInner />
+    </Suspense>
+  );
+}
+
+function ChatPageInner() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const sessionFromUrl = searchParams.get("session") ?? "";
+
   const [agents, setAgents] = useState<Agent[]>([]);
   const [activeAgentId, setActiveAgentId] = useState<string>("");
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
-  const [activeSessionId, setActiveSessionId] = useState<string>("");
+  const [activeSessionId, setActiveSessionId] = useState<string>(sessionFromUrl);
   const [input, setInput] = useState("");
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [isDragging, setIsDragging] = useState(false);
@@ -124,6 +138,27 @@ export default function ChatPage() {
   useEffect(() => {
     activeSessionIdRef.current = activeSessionId;
   }, [activeSessionId]);
+
+  // activeSessionId ↔ ?session= URL search param. `replace` (not push) so
+  // session pinning during streaming doesn't fill browser history.
+  useEffect(() => {
+    const currentInUrl = searchParams.get("session") ?? "";
+    if (activeSessionId !== currentInUrl) {
+      router.replace(
+        activeSessionId
+          ? `/?session=${encodeURIComponent(activeSessionId)}`
+          : "/"
+      );
+    }
+  }, [activeSessionId, searchParams, router]);
+
+  // Browser back / forward → re-sync state from URL.
+  useEffect(() => {
+    if (sessionFromUrl !== activeSessionId) {
+      setActiveSessionId(sessionFromUrl);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionFromUrl]);
 
   // ── Chat state via useChat ────────────────────────────────────────────
   const transport = useMemo(

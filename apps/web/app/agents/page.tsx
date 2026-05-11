@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { Suspense, useState, useEffect, useMemo } from "react";
 import {
   Bot,
   Plus,
@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Sidebar } from "../components/Sidebar";
 import { API_BASE } from "../lib/api";
 import type { ToolInfo, ProviderInfo, ModelPreset } from "../lib/types";
@@ -87,6 +88,19 @@ const FALLBACK_FORM: FormState = {
 };
 
 export default function AgentsPage() {
+  return (
+    <Suspense fallback={null}>
+      <AgentsPageInner />
+    </Suspense>
+  );
+}
+
+function AgentsPageInner() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const urlId = searchParams.get("id");
+  const urlCreate = searchParams.get("create") === "1";
+
   const [agents, setAgents] = useState<Agent[]>([]);
   const [tools, setTools] = useState<ToolInfo[]>([]);
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
@@ -269,10 +283,10 @@ export default function AgentsPage() {
         }),
       });
       if (res.ok) {
+        const created = (await res.json()) as Agent;
         toast.success("Agent created");
-        setIsCreating(false);
-        resetForm();
-        reloadAgents();
+        await reloadAgents();
+        router.push(`/agents?id=${encodeURIComponent(created.id)}`);
       } else {
         const data = await res.json();
         toast.error("Failed to create agent", { description: data.error });
@@ -311,36 +325,16 @@ export default function AgentsPage() {
       const res = await fetch(`${API_BASE}/api/agents/${id}`, { method: "DELETE" });
       if (res.ok) {
         toast.success("Agent deleted");
+        await reloadAgents();
         if (selectedAgent?.id === id) {
-          setSelectedAgent(null);
-          resetForm();
+          router.push("/agents");
         }
-        reloadAgents();
       } else {
         toast.error("Failed to delete agent");
       }
     } catch {
       toast.error("Failed to delete agent");
     }
-  };
-
-  const selectAgent = (agent: Agent) => {
-    const provPresets =
-      providers.find((p) => p.id === agent.model.provider)?.models ?? [];
-    const matchedPreset = provPresets.some((m) => m.id === agent.model.model);
-    setSelectedAgent(agent);
-    setIsCreating(false);
-    setIsCustomModel(!matchedPreset);
-    setFormData({
-      id: agent.id,
-      name: agent.name,
-      provider: agent.model.provider,
-      model: agent.model.model,
-      persona: agent.persona,
-      tools: agent.tools,
-      mcpServers: agent.mcpServers ?? {},
-      mcpDisabled: agent.mcpDisabled ?? [],
-    });
   };
 
   const resetForm = () => {
@@ -355,11 +349,55 @@ export default function AgentsPage() {
     setIsCustomModel(defaultModel === "");
   };
 
-  const startCreate = () => {
+  // URL → selection state. ?id=<id> selects an agent; ?create=1 starts create.
+  useEffect(() => {
+    if (urlCreate) {
+      setSelectedAgent(null);
+      setIsCreating(true);
+      const defaultProvider = providers[0]?.id ?? FALLBACK_FORM.provider;
+      const defaultModel =
+        providers.find((p) => p.id === defaultProvider)?.models[0]?.id ?? "";
+      setFormData({
+        ...FALLBACK_FORM,
+        provider: defaultProvider,
+        model: defaultModel,
+      });
+      setIsCustomModel(defaultModel === "");
+      return;
+    }
+    if (urlId) {
+      const found = agents.find((a) => a.id === urlId);
+      if (found) {
+        const provPresets =
+          providers.find((p) => p.id === found.model.provider)?.models ?? [];
+        const matchedPreset = provPresets.some(
+          (m) => m.id === found.model.model
+        );
+        setSelectedAgent(found);
+        setIsCreating(false);
+        setIsCustomModel(!matchedPreset);
+        setFormData({
+          id: found.id,
+          name: found.name,
+          provider: found.model.provider,
+          model: found.model.model,
+          persona: found.persona,
+          tools: found.tools,
+          mcpServers: found.mcpServers ?? {},
+          mcpDisabled: found.mcpDisabled ?? [],
+        });
+      } else if (agents.length > 0) {
+        router.replace("/agents");
+      }
+      return;
+    }
     setSelectedAgent(null);
-    setIsCreating(true);
-    resetForm();
-  };
+    setIsCreating(false);
+  }, [urlId, urlCreate, agents, providers, router]);
+
+  const selectAgent = (agent: Agent) =>
+    router.push(`/agents?id=${encodeURIComponent(agent.id)}`);
+  const startCreate = () => router.push("/agents?create=1");
 
   const showForm = selectedAgent || isCreating;
 
