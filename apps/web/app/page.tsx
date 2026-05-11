@@ -203,21 +203,16 @@ export default function ChatPage() {
     onError: (err) => {
       toast.error("Chat failed", { description: err.message });
     },
-    onFinish: ({ messages: finalMsgs }) => {
-      // The server's onFinish persists the user message with rewritten
-      // attachment URLs (pending → committed). The optimistic local
-      // user message still carries the dead `__pending__` URLs, so
-      // refetch to replace it with the canonical persisted shape.
-      // Cheap and only fires for turns that actually had attachments;
-      // text-only turns don't need it (URLs are stable).
+    onFinish: () => {
+      // The server's onFinish persists the user message with both
+      // (a) rewritten attachment URLs (pending → committed) and
+      // (b) any `data-relevant-memory` part attached by the recall
+      // selector. Both modifications happen server-side and useChat's
+      // local user-message snapshot doesn't reflect them. Refetch on
+      // every turn finish so the chip renders + attachment chips
+      // resolve. Cheap: single GET of <50 short messages typical.
       const sid = activeSessionIdRef.current;
       if (!sid) return;
-      const lastUser = [...finalMsgs].reverse().find((m) => m.role === "user");
-      const hasAttachment = lastUser?.parts.some(
-        (p: { type?: string; url?: string }) =>
-          p.type === "file" && (p.url ?? "").includes("/__pending__/")
-      );
-      if (!hasAttachment) return;
       fetch(`${API_BASE}/api/sessions/${sid}/messages`)
         .then((r) => r.json())
         .then((data: OpenAcmeUIMessage[]) => setMessages(data))
@@ -631,7 +626,10 @@ export default function ChatPage() {
               + New
             </button>
           </div>
-          {sessions.slice(0, 30).map((s) => {
+          {sessions
+            .filter((s) => !activeAgentId || s.agentId === activeAgentId)
+            .slice(0, 30)
+            .map((s) => {
             const isActive = s.id === activeSessionId;
             return (
               <div
@@ -673,7 +671,7 @@ export default function ChatPage() {
               </div>
             );
           })}
-          {sessions.length === 0 && (
+          {sessions.filter((s) => !activeAgentId || s.agentId === activeAgentId).length === 0 && (
             <div className="px-4 pb-3 font-mono text-[11px] text-ink-faint">
               No sessions yet.
             </div>
@@ -1029,12 +1027,30 @@ function MessageBubble({
     const others = files.filter(
       (f) => !(f as { mediaType: string }).mediaType.startsWith("image/")
     );
+    // Recall chip — `data-relevant-memory` lives on the user message
+    // (selector picked these for THIS turn). Renders as a collapsible
+    // block under the user's text.
+    const recallEntries: Array<{
+      path: string;
+      mtimeMs: number;
+      content: string;
+    }> = [];
+    for (const p of message.parts) {
+      if ((p as { type?: unknown }).type !== "data-relevant-memory") continue;
+      const data = (p as { data?: { entries?: typeof recallEntries } }).data;
+      if (Array.isArray(data?.entries)) recallEntries.push(...data.entries);
+    }
     return (
       <section className="border-t border-paper-rule py-5 first:border-t-0 first:pt-0">
         <MessageHeader role="user" />
         {text && (
           <div className="text-sm leading-relaxed text-ink whitespace-pre-wrap break-words">
             {text}
+          </div>
+        )}
+        {recallEntries.length > 0 && (
+          <div className="mt-3">
+            <RelevantMemoryBlock entries={recallEntries} />
           </div>
         )}
         {images.length > 0 && (
@@ -1134,11 +1150,50 @@ function MessageBubble({
               </div>
             );
           }
-          // reasoning, file, source, data-* — silently ignore in v1.
+          // `data-relevant-memory` lives on the USER message (chip
+          // rendered there). reasoning, file, source, other data-* —
+          // silently ignore in v1.
           return null;
         })}
       </div>
     </section>
+  );
+}
+
+function RelevantMemoryBlock({
+  entries,
+}: {
+  entries: Array<{ path: string; mtimeMs: number; content: string }>;
+}) {
+  const [open, setOpen] = useState(false);
+  const label = entries.length === 1 ? "1 memory recalled" : `${entries.length} memories recalled`;
+  return (
+    <div className="border border-paper-rule bg-paper-sunk text-sm">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between px-3 py-2 text-left text-ink-faint hover:bg-paper hover:text-ink"
+      >
+        <span className="flex items-center gap-2">
+          <span className="font-mono text-[11px] uppercase tracking-[0.08em]">memory</span>
+          <span>{label}</span>
+        </span>
+        <span className="font-mono text-[11px]">{open ? "−" : "+"}</span>
+      </button>
+      {open && (
+        <div className="border-t border-paper-rule">
+          {entries.map((e, i) => {
+            const name = e.path.split("/").slice(-1)[0] ?? e.path;
+            return (
+              <div key={i} className="border-b border-paper-rule p-3 last:border-b-0">
+                <div className="mb-1 font-mono text-[11px] text-ink-faint">{name}</div>
+                <pre className="whitespace-pre-wrap break-words text-xs text-ink">{e.content}</pre>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 

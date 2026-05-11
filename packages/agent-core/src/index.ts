@@ -1,6 +1,33 @@
 export { Agent, AutonomousTurnTimeout } from "./agent.js";
 export { buildSystemPrompt } from "./prompt.js";
 export {
+  findRelevantMemories,
+  type RelevantMemory,
+  type FindRelevantMemoriesArgs,
+} from "./selector.js";
+export {
+  collectSurfacedMemories,
+  resetForActivation,
+  type SurfacedSnapshot,
+} from "./surfaced.js";
+export {
+  runSubagent,
+  type SubagentStatus,
+  type SubagentArgs,
+  type SubagentResult,
+  type ForkedSubagentArgs,
+  type ForkedSubagentResult,
+  type StructuredSubagentArgs,
+  type StructuredSubagentResult,
+} from "./subagent.js";
+export {
+  runExtractor,
+  hasMemoryWritesIn,
+  type ExtractorResult,
+  type ExtractorStatus,
+  type RunExtractorArgs,
+} from "./extractor.js";
+export {
   Compressor,
   // Pure helpers — exported for tests and downstream tooling.
   contentLengthForBudget,

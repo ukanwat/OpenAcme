@@ -150,14 +150,14 @@ export const AgentDefinitionSchema = z.object({
   // Empty (default) = inherit everything.
   mcpDisabled: z.array(z.string()).default([]),
   skills: z.array(z.string()).default([]),
-  // MEMORY.md cap in chars (Hermes default 2200). Bounded so the
-  // system-prompt injection stays small and the agent has consolidation
-  // pressure rather than infinite append.
-  // Mirror of `DEFAULT_MEMORY_CHAR_LIMIT` in `@openacme/memory`.
-  // Kept as a literal here to avoid a `config → memory` package dep
-  // (config is depended on by everything; pulling memory into the
-  // graph everywhere would couple them unnecessarily). If you change
-  // this, update the constant there too.
+  // WRITE-time cap on `MEMORY.md` (the index) so the agent has
+  // consolidation pressure rather than infinite append. Hermes default
+  // 2200. Per-entry topic files have no char cap (they're not
+  // auto-injected — only Anthropic's universal 999,999-line cap
+  // applies to them). Mirror of `DEFAULT_MEMORY_CHAR_LIMIT` in
+  // `@openacme/memory` — kept as a literal here to avoid a
+  // `config → memory` package dep. If you change this, update the
+  // constant there too.
   memoryCharLimit: z.number().int().positive().default(2200),
 });
 export type AgentDefinition = z.infer<typeof AgentDefinitionSchema>;

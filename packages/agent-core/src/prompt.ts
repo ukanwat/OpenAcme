@@ -1,35 +1,147 @@
 /**
- * System prompt builder — assembles the system prompt from persona, skills, tools.
- * Mirrors Hermes agent/prompt_builder.py.
+ * System prompt builder.
+ *
+ * The memory section is assembled in three parts when memory is enabled:
+ *   1. Index header + truncated MEMORY.md content + warning if truncated
+ *   2. Convention text (Claude Code's auto-memory rules, types dropped)
+ *   3. Conditional cluttered-memory instruction (Anthropic's secondary
+ *      mitigation — appended when entry-file count > 10 OR index >80% cap)
+ *
+ * The Anthropic `memory_20250818` "ALWAYS VIEW YOUR MEMORY DIRECTORY..."
+ * protocol text lives ONLY in the memory tool's description (where the
+ * Anthropic spec auto-injects it). Duplicating it in the system prompt
+ * over-primed the agent — every turn started with "I'll check my memory
+ * directory first as required by the protocol." Claude Code's own
+ * `buildMemoryLines` doesn't include it either; convention is enough.
  */
 
+import type { IndexSnapshot } from "@openacme/memory";
+import { MEMORY_CONVENTION } from "./prompt-fragments/memory-convention.js";
+
+// ── Memory injection caps (Claude Code `memdir/memdir.ts` lift) ────────
+
+/** Index line cap at injection. Truncates with verbatim warning. */
+export const MAX_ENTRYPOINT_LINES = 200;
+
 /**
- * Memory tool behavioral guidance. Ported verbatim from Hermes
- * `agent/prompt_builder.py:150-168` (`MEMORY_GUIDANCE`). Only injected when the
- * `memory` tool is available — otherwise it's noise.
- *
- * The declarative-vs-imperative paragraph is the load-bearing part: without
- * it, models save entries like "Always use Pino" which get re-read as
- * directives in every future session.
+ * Index byte cap at injection. Catches long-line indexes that slip past
+ * the line cap. Claude Code comment: `p100 observed: 197KB under 200 lines`.
  */
-const MEMORY_GUIDANCE =
-  "You have persistent memory across sessions. Save durable facts using the memory " +
-  "tool: user preferences, environment details, tool quirks, and stable conventions. " +
-  "Memory is injected into every turn, so keep it compact and focused on facts that " +
-  "will still matter later.\n" +
-  "Prioritize what reduces future user steering — the most valuable memory is one " +
-  "that prevents the user from having to correct or remind you again. " +
-  "User preferences and recurring corrections matter more than procedural task details.\n" +
-  "Do NOT save task progress, session outcomes, completed-work logs, or temporary TODO " +
-  "state to memory; use session_search to recall those from past transcripts. " +
-  "If you've discovered a new way to do something, solved a problem that could be " +
-  "necessary later, save it as a skill with the skill tool.\n" +
-  "Write memories as declarative facts, not instructions to yourself. " +
-  "'User prefers concise responses' ✓ — 'Always respond concisely' ✗. " +
-  "'Project uses pytest with xdist' ✓ — 'Run tests with pytest -n 4' ✗. " +
-  "Imperative phrasing gets re-read as a directive in later sessions and can " +
-  "cause repeated work or override the user's current request. Procedures and " +
-  "workflows belong in skills, not memory.";
+export const MAX_ENTRYPOINT_BYTES = 25_000;
+
+/** Threshold for appending Anthropic's "keep your memory folder organized"
+ * instruction — fires when there are more than this many entry files. */
+const CLUTTERED_FILE_COUNT_THRESHOLD = 10;
+
+/** Threshold for the same — fires when MEMORY.md is over this fraction
+ * of its configured char cap. */
+const CLUTTERED_FILL_FRACTION_THRESHOLD = 0.8;
+
+/**
+ * Anthropic's secondary mitigation, quoted verbatim from the memory-tool
+ * docs. Appended only when the dir is starting to look cluttered — Anthropic
+ * explicitly suggests this for the cluttered-memory case.
+ */
+const CLUTTERED_MEMORY_INSTRUCTION =
+  "Note: when editing your memory folder, always try to keep its content " +
+  "up-to-date, coherent and organized. You can rename or delete files that " +
+  "are no longer relevant. Do not create new files unless necessary.";
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n}B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)}KB`;
+  return `${(n / 1024 / 1024).toFixed(1)}MB`;
+}
+
+/**
+ * Truncate the index content to the line AND byte caps, appending a
+ * verbatim warning that names which cap fired. Lifted from Claude Code
+ * `memdir/memdir.ts:truncateEntrypointContent`.
+ */
+function truncateIndex(raw: string): {
+  content: string;
+  wasLineTruncated: boolean;
+  wasByteTruncated: boolean;
+} {
+  const trimmed = raw.trim();
+  const contentLines = trimmed.split("\n");
+  const lineCount = contentLines.length;
+  const byteCount = trimmed.length;
+
+  const wasLineTruncated = lineCount > MAX_ENTRYPOINT_LINES;
+  const wasByteTruncated = byteCount > MAX_ENTRYPOINT_BYTES;
+
+  if (!wasLineTruncated && !wasByteTruncated) {
+    return { content: trimmed, wasLineTruncated, wasByteTruncated };
+  }
+
+  let truncated = wasLineTruncated
+    ? contentLines.slice(0, MAX_ENTRYPOINT_LINES).join("\n")
+    : trimmed;
+
+  if (truncated.length > MAX_ENTRYPOINT_BYTES) {
+    const cutAt = truncated.lastIndexOf("\n", MAX_ENTRYPOINT_BYTES);
+    truncated = truncated.slice(0, cutAt > 0 ? cutAt : MAX_ENTRYPOINT_BYTES);
+  }
+
+  const reason =
+    wasByteTruncated && !wasLineTruncated
+      ? `${formatBytes(byteCount)} (limit: ${formatBytes(MAX_ENTRYPOINT_BYTES)}) — index entries are too long`
+      : wasLineTruncated && !wasByteTruncated
+        ? `${lineCount} lines (limit: ${MAX_ENTRYPOINT_LINES})`
+        : `${lineCount} lines and ${formatBytes(byteCount)}`;
+
+  return {
+    content:
+      truncated +
+      `\n\n> WARNING: MEMORY.md is ${reason}. Only part of it was loaded. Keep index entries to one line under ~200 chars; move detail into topic files.`,
+    wasLineTruncated,
+    wasByteTruncated,
+  };
+}
+
+/**
+ * Build the four-part `## Memory` section for the system prompt.
+ * Always emits the protocol + convention when memory is enabled, even
+ * if MEMORY.md is empty — so the agent knows the tool exists from
+ * turn one.
+ */
+function buildMemorySection(snapshot: IndexSnapshot): string {
+  const parts: string[] = [];
+
+  // Part 1 — index (with header showing utilization and entry count)
+  const used = snapshot.used;
+  const limit = snapshot.limit;
+  const pct = limit > 0 ? Math.round((used / limit) * 100) : 0;
+  const entryWord = snapshot.entryCount === 1 ? "entry" : "entries";
+  const header = `══════════════════════════════════════════════
+MEMORY [${pct}% — ${used}/${limit} chars] · ${snapshot.entryCount} ${entryWord}
+══════════════════════════════════════════════`;
+  if (snapshot.content.length > 0) {
+    const truncated = truncateIndex(snapshot.content);
+    parts.push(`${header}\n${truncated.content}`);
+  } else {
+    parts.push(`${header}\n(empty — no memories yet)`);
+  }
+
+  // Part 2 — convention text (Claude Code, types dropped). The
+  // Anthropic protocol text lives in the memory tool's description
+  // only; we used to duplicate it here and the agent over-narrated
+  // ("I'll check my memory directory first as required by the
+  // protocol") on every turn. Convention alone is sufficient.
+  parts.push(MEMORY_CONVENTION);
+
+  // Part 3 — conditional cluttered-memory instruction
+  const fillFraction = limit > 0 ? used / limit : 0;
+  const isCluttered =
+    snapshot.entryCount > CLUTTERED_FILE_COUNT_THRESHOLD ||
+    fillFraction > CLUTTERED_FILL_FRACTION_THRESHOLD;
+  if (isCluttered) {
+    parts.push(CLUTTERED_MEMORY_INSTRUCTION);
+  }
+
+  return parts.join("\n\n");
+}
 
 /**
  * Behavioral guidance for the task tools. Injected when `task_create` is
@@ -71,7 +183,7 @@ export function buildSystemPrompt(options: {
   toolNames: string[];
   skillsIndex?: string;
   tasksContext?: string;
-  memoryContext?: string;
+  memorySnapshot?: IndexSnapshot;
   platformHints?: string;
 }): string {
   const parts: string[] = [];
@@ -88,11 +200,12 @@ export function buildSystemPrompt(options: {
     );
   }
 
-  // Memory tool guidance — gated on the tool being available, mirrors
-  // Hermes `run_agent.py:4874`. This stays in the prompt even when MEMORY.md
-  // is empty so the agent knows the tool exists and what to save into it.
-  if (options.toolNames.includes("memory")) {
-    parts.push(`\n## Memory tool\n${MEMORY_GUIDANCE}`);
+  // Memory section — emitted whenever the agent has the memory tool
+  // (presence of memorySnapshot from the caller signals this). Always
+  // includes protocol + convention; index is empty-formatted when there
+  // are no entries yet.
+  if (options.toolNames.includes("memory") && options.memorySnapshot) {
+    parts.push(`\n## Memory\n${buildMemorySection(options.memorySnapshot)}`);
   }
 
   // Tasks behavioral guidance — gated on `task_create` so the agent
@@ -116,13 +229,6 @@ export function buildSystemPrompt(options: {
   // give the agent live state mid-turn.
   if (options.tasksContext) {
     parts.push(`\n## Tasks\n${options.tasksContext}`);
-  }
-
-  // Memory context (rendered MEMORY.md block — header + entries).
-  // Empty when MEMORY.md is empty; skipped here so a fresh agent doesn't
-  // see an empty section.
-  if (options.memoryContext) {
-    parts.push(`\n## Memory\n${options.memoryContext}`);
   }
 
   // Platform-specific hints
