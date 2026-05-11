@@ -2,9 +2,9 @@
 
 TypeScript agent platform. Multi-provider LLM with streaming tool-calls, SQLite-backed sessions, MCP integration, OAuth (ChatGPT / Claude subscriptions), an Ink-based CLI TUI, and a Next.js web UI served by the Hono server.
 
-**Design lens.** This is a *fleet* platform — many specialized agents under one human user — not a single-agent assistant. Per-agent isolation is the default everywhere: each agent owns its config, model, tools, skills, MCP servers, and (on the roadmap) main session, scheduled jobs, and event inbox. When designing new state or behavior, the question is "does this hold for N agents running in parallel?" — not "does this work for the agent." Anywhere you'd reach for a global table or a singleton, default to scoping by `agent_id` instead. Cross-agent collaboration (one agent posting work into another's inbox) is the direction, so primitives like sessions, inboxes, notifications, schedules should be addressable by agent.
+**Design lens.** This is a *fleet* platform — many specialized agents under one human user — not a single-agent assistant. Per-agent isolation is the default everywhere: each agent owns its config, model, tools, skills, MCP servers, sessions, and tasks. When designing new state or behavior, the question is "does this hold for N agents running in parallel?" — not "does this work for the agent." Anywhere you'd reach for a global table or a singleton, default to scoping by `agent_id` instead. Cross-agent work (one agent assigning a task to another) is a first-class primitive, so anything you add should be addressable by agent.
 
-**Not built yet (don't assume these exist):** heartbeat / autonomous wake-ups, scheduled jobs (cron / at), `system_events` inbox queue, per-agent main session designation, agent-to-agent events, notification center. README's "Today vs direction" table is the source of truth — if you implement something there, update README in the same PR.
+The task subsystem runs end-to-end today: per-agent file-backed `TaskStore` (`packages/tasks`), `task_*` system tools (`packages/tools/src/builtins/tasks.ts`), and `TaskScheduler` (`packages/server/src/task-scheduler.ts`) that lazily allocates sessions, arms future `start_at`s via croner, runs the agent autonomously through `Agent.runAutonomous`, and self-resets recurring tasks (cron + interval) on `done`. Any agent can `task_create({assignee: other})`.
 
 ---
 
@@ -229,6 +229,32 @@ Per-agent `skills` array filters which skills are exposed; empty/missing means a
 
 ---
 
+## Tasks & the scheduler
+
+`@openacme/tasks` is one filesystem store under `<dataDir>/tasks/<id>.md` (YAML frontmatter + markdown body), shared by all agents. Per-agent isolation is by `assignee`, not by store. `task_list` / `task_view` / `task_create` / `task_update` are **system tools** (always on, hidden from the picker; see `SYSTEM_TOOLS` in `packages/tools/src/system.ts`).
+
+`TaskStore` enforces the invariants:
+- cycle-free `depends_on` (DFS on write); unmet deps force `blocked`, satisfied deps auto-flip back to `open`.
+- at most one `in_progress` per `session_id`.
+- on `done`, dependents auto-unblock; a **recurring** task self-resets to `open` with the next fire time (so the returned status is `open`, not `done`) — `canceled` is the only way to stop a recurrence permanently.
+- inputs validated against the frontmatter schema at the write boundary so a bad PATCH can't land malformed YAML on disk.
+
+`TaskScheduler` (`packages/server/src/task-scheduler.ts`) is the wake mechanism:
+- `start()` runs `sweepStale` (in_progress > 10 min → open), then ticks.
+- Each `tick`: (1) lazily allocates a fresh session for any ready, unbound task; (2) picks one head per session via `nextEligibleFor` and enqueues an autonomous turn; (3) reconciles future-dated `start_at` into per-task croner arms (`maxRuns:1, unref:true`).
+- `poke()` is the change-driven entry — debounced 50ms — wired to `TaskStore.setOnChange` in `AgentManager`.
+- Per-agent serialization via `chains` map; `pending` set dedups across rapid ticks. Errors and `AutonomousTurnTimeout` park the task as `blocked` with a `> [scheduler]` note appended to the body — they don't loop.
+
+### Editing the task model
+
+- New frontmatter field: add to `TaskFrontmatterSchema` + `TaskCreate` / `TaskUpdate` + `TaskCreateInputSchema` / `TaskUpdateInputSchema` (write-boundary guards). Don't skip the second pair — `update()` would happily persist garbage.
+- New status: extend `TASK_STATUSES`, then audit `computeAutoStatus`, the closing branches in `update()`, and the recurring-task self-reset.
+- New recurrence kind: extend the discriminated union in both `types.ts` and the tool params in `builtins/tasks.ts`; add a branch in `computeNextFire` + `validateRecurrence`.
+
+### `task-scheduler.ts` is the most state-dense file in the repo and has no tests today — exercise paths you touch.
+
+---
+
 ## Conventions
 
 - **TypeScript** strict, ES modules, `.js` import suffix on relative paths (NodeNext). Target Node ≥18.
@@ -344,3 +370,6 @@ Manual via Changesets — see `CONTRIBUTING.md`. Workflow `.github/workflows/rel
 | Add an OAuth provider | `packages/auth/src/oauth-<name>.ts` + `transforms-<name>.ts` + plug into `llm-provider` factory |
 | Persist a new field | `packages/db/src/schema.ts` + `pnpm db:generate` + the relevant store |
 | Add config | `packages/config/src/schema.ts` |
+| Change task state model / recurrence | `packages/tasks/src/{store,recurrence,types}.ts` |
+| Change autonomous wake / scheduling | `packages/server/src/task-scheduler.ts` (+ `Agent.runAutonomous` in `packages/agent-core/src/agent.ts`) |
+| Add a task tool | `packages/tools/src/builtins/tasks.ts` — register, add to `SYSTEM_TOOLS` in `packages/tools/src/system.ts` |
