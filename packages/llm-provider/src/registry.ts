@@ -82,6 +82,17 @@ function anthropicSupportsFineGrainedToolStreaming(model: string): boolean {
 }
 
 /**
+ * Per-process latch: set to true the first time an Anthropic request
+ * with the 1M-context beta header comes back with "Extra usage required"
+ * (the account-level entitlement isn't present). Future requests skip
+ * the beta entirely. Resets on daemon restart — re-probe is one
+ * transparent retry on the first request.
+ */
+let anthropic1mDisabled = false;
+const ANTHROPIC_NO_1M_ENTITLEMENT_RX =
+  /extra usage is required for long context|context_1m|long.?context.*not.*enabled/i;
+
+/**
  * Resolve whether a request should take the OAuth path. Honors the explicit
  * `config.auth === "oauth"` first; otherwise silently falls back to OAuth
  * when no API key is configured AND a token exists in auth.json. This makes
@@ -248,7 +259,15 @@ const providerFactories: Record<
             if (anthropicSupportsFineGrainedToolStreaming(config.model)) {
               betas.add("fine-grained-tool-streaming-2025-05-14");
             }
-            if (anthropicSupports1mContext(config.model)) {
+            // 1M context: try by default on capable models. If the API
+            // rejects it (account lacks the paid entitlement), the
+            // fetch wrapper below latches `anthropic1mDisabled` and
+            // retries without the beta — and all subsequent requests
+            // in this process skip it from the start.
+            if (
+              !anthropic1mDisabled &&
+              anthropicSupports1mContext(config.model)
+            ) {
               betas.add("context-1m-2025-08-07");
             }
             const existing = headers.get("anthropic-beta");
@@ -305,6 +324,28 @@ const providerFactories: Record<
           } catch (e) {
             if (DEBUG) console.error("[openacme] anthropic refresh-on-401 failed:", e);
             throw e;
+          }
+        }
+        // 1M-context fallback: if the API rejects the beta because the
+        // account lacks entitlement, latch it off for this process and
+        // retry the same request without the beta header. Subsequent
+        // requests skip the beta in `buildHeaders` from the start.
+        if (
+          !res.ok &&
+          !anthropic1mDisabled &&
+          anthropicSupports1mContext(config.model)
+        ) {
+          try {
+            const body = await res.clone().text();
+            if (ANTHROPIC_NO_1M_ENTITLEMENT_RX.test(body)) {
+              anthropic1mDisabled = true;
+              console.warn(
+                "[openacme] Anthropic 1M-context not entitled for this account; falling back to 200k for this and future requests."
+              );
+              res = await send(false);
+            }
+          } catch {
+            // Body read errors fall through with the original response.
           }
         }
         // OAuth-only: strip the mcp_<PascalCase> prefix from tool names in the

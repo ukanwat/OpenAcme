@@ -231,27 +231,47 @@ Per-agent `skills` array filters which skills are exposed; empty/missing means a
 
 ## Tasks & the scheduler
 
-`@openacme/tasks` is one filesystem store under `<dataDir>/tasks/<id>.md` (YAML frontmatter + markdown body), shared by all agents. Per-agent isolation is by `assignee`, not by store. `task_list` / `task_view` / `task_create` / `task_update` are **system tools** (always on, hidden from the picker; see `SYSTEM_TOOLS` in `packages/tools/src/system.ts`).
+`@openacme/tasks` is one filesystem store under `<dataDir>/tasks/<id>.md` (YAML frontmatter + markdown body), shared by all agents. Per-agent isolation is by `assignee`, not by store. `task_list` / `task_view` / `task_create` / `task_update` / `task_comment` / `task_comments` are **system tools** (always on, hidden from the picker; see `SYSTEM_TOOLS` in `packages/tools/src/system.ts`).
+
+Tasks are documents (filesystem). **Comments and events live in SQLite** (`task_comments`, `task_events`) — they're message-shaped (high-frequency, append-only, queryable) and don't belong inside the task body. Body is the spec; comments are the discussion; events are the signal log.
 
 `TaskStore` enforces the invariants:
 - cycle-free `depends_on` (DFS on write); unmet deps force `blocked`, satisfied deps auto-flip back to `open`.
 - at most one `in_progress` per `session_id`.
 - on `done`, dependents auto-unblock; a **recurring** task self-resets to `open` with the next fire time (so the returned status is `open`, not `done`) — `canceled` is the only way to stop a recurrence permanently.
 - inputs validated against the frontmatter schema at the write boundary so a bad PATCH can't land malformed YAML on disk.
+- `addComment`, `listComments`, `latestResult`, `commentCounts` delegate to the injected `CommentStore`. Mutating paths (`create` / `update` / `addComment` / `unblockDependents`) emit events via the injected `EventStore`. Both stores are optional — tests can omit them and the methods no-op.
 
-`TaskScheduler` (`packages/server/src/task-scheduler.ts`) is the wake mechanism:
-- `start()` runs `sweepStale` (in_progress > 10 min → open), then ticks.
-- Each `tick`: (1) lazily allocates a fresh session for any ready, unbound task; (2) picks one head per session via `nextEligibleFor` and enqueues an autonomous turn; (3) reconciles future-dated `start_at` into per-task croner arms (`maxRuns:1, unref:true`).
-- `poke()` is the change-driven entry — debounced 50ms — wired to `TaskStore.setOnChange` in `AgentManager`.
-- Per-agent serialization via `chains` map; `pending` set dedups across rapid ticks. Errors and `AutonomousTurnTimeout` park the task as `blocked` with a `> [scheduler]` note appended to the body — they don't loop.
+### Agent-driven task selection
+
+The scheduler is the **wake mechanism**, not the dispatcher. `runAutonomous({sessionId})` (no `taskId`) brings the agent to life with full queue + recent-activity context in the prompt; the agent picks what to work on and calls `task_update(in_progress)` itself when claiming. Failure attribution is post-hoc: on `AutonomousTurnTimeout` or generic error, the scheduler reads "which task in this session is `in_progress`" and parks *that* one as `blocked` with a `system:scheduler` comment.
+
+### Wake policy (event-driven)
+
+`TaskScheduler` (`packages/server/src/task-scheduler.ts`) is **pure event-driven** — no periodic tick. All runtime wakes flow through `onEvent`; time-based wakes through croner; everything else through a one-shot `startupSweep`.
+
+- `start()` runs `sweepStale` (in_progress > 10 min → open), then `startupSweep` once: allocate sessions for any unbound ready tasks the daemon picked up from disk, arm crons for future `start_at`s, and immediately enqueue wakes for sessions that have eligible work.
+- `onEvent(event)` is the **only runtime wake path** — wired to `EventStore.onEmit` in `AgentManager`. Unified for every kind (no hard-eligibility special-casing). For each event: resolve the task, skip terminal status, arm a cron if `start_at` is future, allocate a session inline if unbound, echo-check (`event.actor === session.agentId` AND session existed before this event → drop), then `scheduleWake`.
+- `scheduleWake` debounces 7s to coalesce bursts and floors a 10s gap between successive wakes per session. Rate-limit is a **delay, not a drop** — events that arrive in the floor window fire when it opens. Events arriving DURING a turn set `wakeRequestedDuringTurn` so the wake re-fires after the turn ends.
+- `task_assigned` is emitted with `actor: null` — new work shouldn't be echo-suppressed, otherwise a self-assigned task in the agent's own session never wakes. Creator info is in the payload.
+- `reconcile()` (called via `TaskStore.setOnChange`) covers the few mutations that don't emit events (e.g. a bare `start_at` patch with no status change) — re-arms crons only, no wakes.
+- Per-agent serialization via `chains` map; `pendingSessions` set dedups concurrent wakes.
+
+### Mid-turn event injection
+
+`Agent.runAutonomous` passes a `prepareStep` callback to `streamText`. Between LLM steps, fresh events for the session (excluding self-authored) get appended as a system message before the next inference call — the agent reacts to events that landed mid-turn without waiting for the next wake. Capped at 5 injections per turn to bound runaway loops.
 
 ### Editing the task model
 
 - New frontmatter field: add to `TaskFrontmatterSchema` + `TaskCreate` / `TaskUpdate` + `TaskCreateInputSchema` / `TaskUpdateInputSchema` (write-boundary guards). Don't skip the second pair — `update()` would happily persist garbage.
 - New status: extend `TASK_STATUSES`, then audit `computeAutoStatus`, the closing branches in `update()`, and the recurring-task self-reset.
 - New recurrence kind: extend the discriminated union in both `types.ts` and the tool params in `builtins/tasks.ts`; add a branch in `computeNextFire` + `validateRecurrence`.
+- New comment kind: add to the tool's Zod enum (currently only `result` is exposed; `system` is reserved and rejected by both the tool and HTTP routes).
+- New event kind: add to the `EventKind` union in `packages/tasks/src/ports.ts`, emit at the appropriate site in `TaskStore`, and add a `summarizeEventPayload` branch so the prompt's `## Recent activity` section formats it.
 
-### `task-scheduler.ts` is the most state-dense file in the repo and has no tests today — exercise paths you touch.
+### `task-scheduler.ts` test coverage
+
+Lives at `packages/server/test/task-scheduler.test.ts` (real DB + temp filesystem + mock AgentManager). Covers wake-only behavior, on-timeout park with `system:scheduler` comments, lazy session allocation, dep-blocking, wake policy (echo suppression, debounce, hard-eligibility bypass), recurring self-reset, and agent-missing handling. Add tests for any path you touch — the scheduler is still the most state-dense file in the repo.
 
 ---
 
@@ -293,6 +313,9 @@ Comments rot. Every reader has to decide whether they're still true, and the cos
 - **One URL in dev and published — `:3210`.** In dev (`OPENACME_DEV_PROXY_TARGET` set), Hono proxies non-API HTTP and WS upgrades to an internal `next dev` (default `:3220`, loopback-bound). The Next dev port is reachable on the box but isn't printed and isn't the canonical URL — open `:3210`. In published installs Hono serves the bundled static at `packages/server/web/` (filled by `prepack`) on `:3210`. Daemons started without the proxy env (e.g. test slots via `pnpm agent start --data-dir ~/.openacme-test`) prefer the bundled path and fall back to the workspace `apps/web/out` if you've built it — keep that fallback for test-daemon UI; just don't let it activate under the proxy (it would shadow the proxy and double-serve).
 - **MCP env injection is filtered**. `buildSafeEnv` drops anything that smells like a credential. Pass explicit `env` in `MCPServerConfig` for tokens you actually need.
 - **`apps/cli` chat does not call the server** — agent runs in-process via `agent.runStream`. Server-only changes (HTTP middleware, /api/chat handler) won't affect terminal chat behavior.
+- **Scheduler errors land as `system:scheduler` comments, not body suffixes.** Pre-Tasks-v2 the scheduler appended `> [scheduler] turn timed out at ...` to the task body. New code emits a `kind: "system"` comment via `TaskStore.addComment` and the body stays clean. Pre-existing tasks still carry the historical body suffixes; no migration ran.
+- **One slice per task tool.** `task_view` returns frontmatter + body only (no comments, no events). `task_comments` and the `/api/tasks/:id/comments` route return comments only. `/api/tasks/:id/events` returns the event log only. Don't bundle these — the cost compounds across calls and agents only pay for what they ask for.
+- **Per-session events cursor is `sessions.last_seen_event_ts`.** Updated at the end of every successful autonomous turn so the next turn's `## Recent activity` section is incremental. New sessions inherit `created_at` so their first turn sees nothing-from-before.
 
 ---
 

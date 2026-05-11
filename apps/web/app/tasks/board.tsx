@@ -179,6 +179,12 @@ function BoardCard({
               {task.depends_on.length === 1 ? "" : "s"}
             </span>
           )}
+          {task.comment_count !== undefined && task.comment_count > 0 && (
+            <span>
+              {task.comment_count} comment
+              {task.comment_count === 1 ? "" : "s"}
+            </span>
+          )}
           {task.recurrence && (
             <span className="inline-flex items-center gap-0.5">
               <Repeat2 className="size-3" />

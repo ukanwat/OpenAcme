@@ -405,6 +405,13 @@ function TasksPageInner() {
                                   {t.depends_on.length === 1 ? "" : "s"}
                                 </span>
                               )}
+                              {t.comment_count !== undefined &&
+                                t.comment_count > 0 && (
+                                  <span>
+                                    {t.comment_count} comment
+                                    {t.comment_count === 1 ? "" : "s"}
+                                  </span>
+                                )}
                             </div>
                           </button>
                         );

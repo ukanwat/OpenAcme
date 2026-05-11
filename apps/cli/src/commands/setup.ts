@@ -97,17 +97,20 @@ async function addAgentReusingProvider(
   agentStore: ReturnType<typeof createAgentStore>,
   existingAgents: AgentDefinition[]
 ): Promise<void> {
-  // 1. Collect unique provider configs from existing agents. Two agents
-  // sharing the same (provider, auth, baseUrl) tuple appear once.
+  // 1. Collect unique provider configs from existing agents that set
+  // `model` explicitly (agents without it inherit the root config —
+  // nothing per-agent to reuse). Two agents sharing the same
+  // (provider, auth, baseUrl) tuple appear once.
   const seen = new Set<string>();
   const reusable: Array<{
     key: string;
     label: string;
     hint: string;
-    config: AgentDefinition["model"];
+    config: NonNullable<AgentDefinition["model"]>;
   }> = [];
   for (const a of existingAgents) {
     const m = a.model;
+    if (!m) continue;
     const key = `${m.provider}:${m.auth ?? "api_key"}:${m.baseUrl ?? ""}`;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -240,7 +243,7 @@ async function configureProviderAndCreateAgent(
 
   // 4. Replace-vs-add when an agent with a different provider exists.
   const firstAgent = existingAgents[0];
-  const existingProvider = firstAgent?.model.provider;
+  const existingProvider = firstAgent?.model?.provider;
   let mode: "replace" | "add" = "replace";
   if (firstAgent && existingProvider && existingProvider !== provider.id) {
     const existingName = firstAgent.name || firstAgent.id;

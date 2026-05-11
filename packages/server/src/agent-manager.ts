@@ -7,13 +7,18 @@ import {
   type AgentStore,
   type Config,
   type MCPServerConfig,
+  type ModelConfig,
 } from "@openacme/config";
 import {
   createDatabase,
   createSessionStore,
   createMessageStore,
+  createCommentStore,
+  createEventStore,
   type SessionStore,
   type MessageStore,
+  type CommentStore,
+  type EventStore,
 } from "@openacme/db";
 import {
   registry as toolRegistry,
@@ -21,10 +26,12 @@ import {
   bindSkillView,
   bindMemory,
   bindTaskStore,
+  bindBrowser,
   SYSTEM_TOOLS,
 } from "@openacme/tools";
 import { MemoryStore } from "@openacme/memory";
 import { TaskStore } from "@openacme/tasks";
+import { BrowserManager } from "@openacme/browser";
 import { TaskScheduler } from "./task-scheduler.js";
 import {
   MCPClient,
@@ -50,12 +57,15 @@ export class AgentManager {
   private db: ReturnType<typeof createDatabase>;
   readonly sessionStore: SessionStore;
   readonly messageStore: MessageStore;
+  readonly commentStore: CommentStore;
+  readonly eventStore: EventStore;
   readonly attachmentsRoot: string;
   readonly agentsDir: string;
   readonly memoryStore: MemoryStore;
   readonly taskStore: TaskStore;
   readonly taskScheduler: TaskScheduler;
   readonly agentStore: AgentStore;
+  readonly browserManager: BrowserManager;
   private config: Config;
   private mcpClients = new Map<string, MCPClient>();
   readonly skillRegistry: SkillRegistry;
@@ -68,6 +78,8 @@ export class AgentManager {
       attachmentsRoot: this.attachmentsRoot,
     });
     this.messageStore = createMessageStore(this.db);
+    this.commentStore = createCommentStore(this.db);
+    this.eventStore = createEventStore(this.db);
 
     // Agents live as folders at <dataDir>/agents/<id>/AGENT.md — the
     // directory is the only source of truth, no DB mirror, no shadow
@@ -104,17 +116,40 @@ export class AgentManager {
     });
 
     // Tasks: one shared TaskStore, bound to the task tools and driven
-    // by the autonomous scheduler. setOnChange wires mutating store
-    // calls (from tools, HTTP routes, scheduler itself) into a poke so
-    // the next eligible task is picked up without polling.
-    this.taskStore = new TaskStore(path.join(config.dataDir, "tasks"));
+    // by the autonomous scheduler. CommentStore + EventStore wire the
+    // store's mutating paths to event emission so the scheduler hears
+    // about every state change and the agent's "Recent activity" prompt
+    // surface stays current.
+    this.taskStore = new TaskStore(path.join(config.dataDir, "tasks"), {
+      commentStore: this.commentStore,
+      eventStore: this.eventStore,
+    });
     bindTaskStore({ store: this.taskStore });
     this.taskScheduler = new TaskScheduler({
       taskStore: this.taskStore,
       sessionStore: this.sessionStore,
       agentManager: this,
     });
-    this.taskStore.setOnChange(() => this.taskScheduler.poke());
+    // Pure event-driven wake — every state change emits an event,
+    // scheduler.onEvent runs the unified pipeline (lazy session alloc,
+    // echo suppression, debounce + rate-limit queue, fire wake).
+    this.eventStore.onEmit((event) => this.taskScheduler.onEvent(event));
+    // setOnChange covers the few mutations that don't emit events
+    // (e.g. a bare `start_at` patch with no status change) — it only
+    // reconciles cron arms; wakes still go through events.
+    this.taskStore.setOnChange(() => this.taskScheduler.reconcile());
+
+    // Browser: one managed Chrome shared across the fleet under
+    // `<dataDir>/browser-profile/`. Lazy — Chrome doesn't spawn until
+    // the first browser_* tool call. Per-agent tab ownership lives
+    // inside the manager. Bound via the same placeholder pattern as
+    // session_search so @openacme/tools stays free of a runtime dep
+    // on playwright-core.
+    this.browserManager = new BrowserManager({
+      dataDir: config.dataDir,
+      config: config.browser,
+    });
+    bindBrowser({ manager: this.browserManager });
 
     // Load skills
     this.skillRegistry = new SkillRegistry();
@@ -280,6 +315,31 @@ export class AgentManager {
   }
 
   /**
+   * Resolve an agent's effective model. Per-agent `model` overrides the
+   * root `config.yaml` model; missing per-agent → fall back to root.
+   * `AgentDefinitionSchema.model` is intentionally optional so we can
+   * detect "user didn't override" here instead of baking in the schema's
+   * hardcoded defaults.
+   */
+  private resolveModel(def: AgentDefinition): ModelConfig {
+    return def.model ?? this.config.model;
+  }
+
+  /**
+   * Return an agent def with `model` resolved against the root config.
+   * Called on every list/get boundary so callers (HTTP, web, internal)
+   * see a fully-populated model regardless of whether the AGENT.md
+   * file specified one. The returned type narrows `model` to non-optional.
+   */
+  private withResolvedModel(
+    def: AgentDefinition
+  ): AgentDefinition & { model: ModelConfig } {
+    return def.model
+      ? (def as AgentDefinition & { model: ModelConfig })
+      : { ...def, model: this.config.model };
+  }
+
+  /**
    * Get or lazily create an Agent instance.
    */
   getAgent(id: string): Agent {
@@ -294,10 +354,20 @@ export class AgentManager {
   }
 
   /**
-   * List all agent definitions.
+   * Get an agent definition with its effective model resolved.
    */
-  listAgents(): AgentDefinition[] {
-    return this.agentStore.list();
+  getAgentDef(
+    id: string
+  ): (AgentDefinition & { model: ModelConfig }) | null {
+    const def = this.agentStore.get(id);
+    return def ? this.withResolvedModel(def) : null;
+  }
+
+  /**
+   * List all agent definitions with their effective models resolved.
+   */
+  listAgents(): (AgentDefinition & { model: ModelConfig })[] {
+    return this.agentStore.list().map((def) => this.withResolvedModel(def));
   }
 
   /**
@@ -396,14 +466,17 @@ export class AgentManager {
     }
 
     const b = this.config.behavior;
+    // Resolve the agent's effective model against the root config
+    // before building. Per-agent `model` overrides; absent → root.
+    const effectiveModel = this.resolveModel(def);
     // Look up the agent's model in the bundled registry once at
     // AgentConfig build time. The runtime compressor only sees the
     // resolved contextWindow — it never has to know about the snapshot.
-    const metadata = lookupModelMetadata(def.model);
+    const metadata = lookupModelMetadata(effectiveModel);
     const agentConfig: AgentConfig = {
       id: def.id,
       name: def.name,
-      model: def.model,
+      model: effectiveModel,
       persona: def.persona,
       // Effective tool set: user-configurable env tools + agent's MCP
       // tools + always-on system tools (skill_view, memory, session_search,
@@ -510,6 +583,7 @@ export class AgentManager {
     for (const [_, mcpClient] of this.mcpClients) {
       await mcpClient.disconnect();
     }
+    await this.browserManager.close();
     this.db.close();
   }
 }

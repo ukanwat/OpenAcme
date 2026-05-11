@@ -22,4 +22,26 @@ export {
   describeRecurrence,
 } from "./recurrence.js";
 
-export { TaskStore, TaskStoreError, type OnChangeFn } from "./store.js";
+export {
+  TaskStore,
+  TaskStoreError,
+  type OnChangeFn,
+  type TaskStoreOptions,
+} from "./store.js";
+
+export {
+  COMMENT_KINDS,
+  EVENT_KINDS,
+} from "./ports.js";
+
+export type {
+  Comment,
+  CommentInput,
+  CommentKind,
+  CommentListOptions,
+  CommentStorePort,
+  EventInput,
+  EventKind,
+  EventStorePort,
+  TaskEvent,
+} from "./ports.js";

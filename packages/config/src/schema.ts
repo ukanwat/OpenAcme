@@ -120,7 +120,12 @@ export type MCPServerConfig = z.infer<typeof MCPServerConfigSchema>;
 export const AgentDefinitionSchema = z.object({
   id: z.string(),
   name: z.string(),
-  model: ModelConfigSchema.prefault({}),
+  // Optional per-agent override. When absent, the root `config.yaml`'s
+  // `model` is used at agent-manager resolution time. Don't prefault
+  // here — that would silently bake the schema's hardcoded defaults
+  // (openrouter / sonnet-4-20250514) into every agent that didn't
+  // override, ignoring the root config.
+  model: ModelConfigSchema.optional(),
   persona: z.string().default("You are a helpful AI assistant."),
   // Environment-touching tools the agent may use. Introspection /
   // self-management tools (`skill_view`, `memory`, `session_search`,

@@ -20,13 +20,28 @@
  */
 
 import { Cron } from "croner";
-import type { TaskStore, Task } from "@openacme/tasks";
-import { TaskStoreError } from "@openacme/tasks";
+import type { TaskStore, Task, TaskEvent } from "@openacme/tasks";
 import { AutonomousTurnTimeout } from "@openacme/agent-core";
 import type { SessionStore } from "@openacme/db";
 import type { AgentManager } from "./agent-manager.js";
 
-const POKE_DEBOUNCE_MS = 50;
+const SESSION_WAKE_DEBOUNCE_MS = 7_000;
+// Floor on the gap between two wakes on the same session. With pure
+// event-driven scheduling (no periodic tick fallback), events that
+// arrive while a session is rate-limited are QUEUED — they fire when
+// the window opens. Originally 30s when the tick covered the gap; 10s
+// now to keep latency tolerable for users.
+const SESSION_MIN_WAKE_INTERVAL_MS = 10_000;
+
+interface SessionWakeState {
+  debounceTimer?: NodeJS.Timeout;
+  lastWakeAt: number;
+  /** An event arrived while a turn was running for this session.
+   *  We re-schedule a wake in the turn's `finally` so the event
+   *  doesn't get lost in the race between "event fires" and "turn
+   *  ends + pendingSessions clears." */
+  wakeRequestedDuringTurn?: boolean;
+}
 
 export interface TaskSchedulerOptions {
   taskStore: TaskStore;
@@ -45,10 +60,15 @@ export class TaskScheduler {
   /** One Cron per task awaiting a future start_at. */
   private armed = new Map<string, Cron>();
   private chains = new Map<string, Promise<void>>();
-  /** Task ids currently enqueued or executing — avoid double-enqueue across rapid ticks. */
-  private pending = new Set<string>();
-  private pokeTimer?: NodeJS.Timeout;
-  private stopped = false;
+  /** Sessions currently enqueued or running — avoid double-enqueue across rapid ticks. */
+  private pendingSessions = new Set<string>();
+  /** Per-session wake bookkeeping for debounce + rate-limit. */
+  private wakeBySession = new Map<string, SessionWakeState>();
+  // Defaults to true: events that fire before `start()` are dropped so
+  // they don't race with `startupSweep`. The sweep handles every task
+  // present at boot via a single sequential pass; once `start()` flips
+  // this to false, the event-driven path takes over.
+  private stopped = true;
 
   constructor(opts: TaskSchedulerOptions) {
     this.taskStore = opts.taskStore;
@@ -71,44 +91,200 @@ export class TaskScheduler {
         `TaskScheduler: startup sweep failed: ${e instanceof Error ? e.message : String(e)}`
       );
     }
-    await this.tick();
+    await this.startupSweep();
   }
 
   stop(): void {
     this.stopped = true;
     for (const cron of this.armed.values()) cron.stop();
     this.armed.clear();
-    if (this.pokeTimer) {
-      clearTimeout(this.pokeTimer);
-      this.pokeTimer = undefined;
+    for (const state of this.wakeBySession.values()) {
+      if (state.debounceTimer) clearTimeout(state.debounceTimer);
+    }
+    this.wakeBySession.clear();
+  }
+
+  /**
+   * Reconcile cron arms for future-dated tasks. Called on any TaskStore
+   * mutation (via `setOnChange`) to catch non-event-emitting changes
+   * like a bare `start_at` update. Cheap — walks the task list, no
+   * waking happens here.
+   */
+  reconcile(): void {
+    if (this.stopped) return;
+    this.reconcileArmed(this.taskStore.list(), this.now());
+  }
+
+  /**
+   * React to a TaskStore event. Single unified path — no per-kind
+   * routing. All events go through:
+   *   1. Resolve the task. Skip terminal (done/canceled).
+   *   2. If task has a future `start_at`, arm a cron and stop here —
+   *      no wake until the time arrives.
+   *   3. If the task is unbound, allocate a fresh session inline.
+   *   4. Echo: skip if `event.actor === session.agentId` (self-action)
+   *      AND the session existed before this event. Newly-allocated
+   *      sessions never echo — they haven't done anything yet.
+   *   5. Confirm the session still has non-terminal work
+   *      (`hasAnyActive`); skip if not.
+   *   6. Schedule the wake with `scheduleWake` — debounce coalesces
+   *      bursts, rate-limit delays (does NOT drop) so busy sessions
+   *      still hear about every event eventually.
+   */
+  async onEvent(event: TaskEvent): Promise<void> {
+    if (this.stopped) return;
+    const task = this.taskStore.get(event.taskId);
+    if (!task) return;
+    if (task.status === "done" || task.status === "canceled") return;
+    if (isFutureStart(task.start_at, this.now())) {
+      // Not ready yet — let croner handle the wake at the right time.
+      this.reconcileArmed([task], this.now());
+      return;
+    }
+
+    let sessionId = task.session_id;
+    let isNewSession = false;
+    if (!sessionId) {
+      // Only allocate when the task is actually startable. Blocked
+      // tasks wait for `dep_unblocked` (which fires another event
+      // with the now-open task that will allocate then).
+      if (task.status !== "open") return;
+      if (!this.depsSatisfied(task)) return;
+      try {
+        const session = this.sessionStore.create(task.assignee, {
+          title: task.title.slice(0, 80),
+        });
+        await this.taskStore.update(task.id, { session_id: session.id });
+        sessionId = session.id;
+        isNewSession = true;
+      } catch (e) {
+        console.warn(
+          `TaskScheduler: failed to allocate session for ${task.id}: ${e instanceof Error ? e.message : String(e)}`
+        );
+        return;
+      }
+    }
+
+    const session = this.sessionStore.get(sessionId);
+    if (!session) {
+      this.dropWakeState(sessionId);
+      return;
+    }
+
+    if (
+      !isNewSession &&
+      event.actor &&
+      event.actor === session.agentId
+    ) {
+      return;
+    }
+
+    if (!this.hasAnyActive(sessionId)) return;
+
+    this.scheduleWake(sessionId);
+  }
+
+  /**
+   * Schedule (or coalesce into an existing) wake for a session.
+   * - First event in a quiet window → fires after the 7s debounce.
+   * - Burst events arrive while a timer is in flight → coalesced
+   *   (no new timer; they'll be visible in the prompt's Recent
+   *   Activity once the existing timer fires).
+   * - Session is rate-limited (woke recently) → the timer fires
+   *   when the rate-limit window opens, not before. The event is
+   *   QUEUED, not dropped.
+   */
+  private scheduleWake(sessionId: string): void {
+    const state = this.getOrInitWakeState(sessionId);
+    if (this.pendingSessions.has(sessionId)) {
+      // A turn is running. Queue the wake to fire when it finishes.
+      state.wakeRequestedDuringTurn = true;
+      return;
+    }
+    if (state.debounceTimer) return;
+
+    const nowMs = this.now().getTime();
+    const sinceLast =
+      state.lastWakeAt > 0 ? nowMs - state.lastWakeAt : Infinity;
+    const rateLimitWait =
+      sinceLast < SESSION_MIN_WAKE_INTERVAL_MS
+        ? SESSION_MIN_WAKE_INTERVAL_MS - sinceLast
+        : 0;
+    const wait = Math.max(SESSION_WAKE_DEBOUNCE_MS, rateLimitWait);
+
+    state.debounceTimer = setTimeout(() => {
+      state.debounceTimer = undefined;
+      if (this.stopped) return;
+      this.fireWake(sessionId);
+    }, wait);
+    if (typeof state.debounceTimer.unref === "function") {
+      state.debounceTimer.unref();
     }
   }
 
-  /** Re-evaluate the schedule. Coalesces bursty calls within 50ms. */
-  poke(): void {
-    if (this.stopped) return;
-    if (this.pokeTimer) return;
-    this.pokeTimer = setTimeout(() => {
-      this.pokeTimer = undefined;
-      if (this.stopped) return;
-      this.tick().catch((e) => {
-        console.warn(
-          `TaskScheduler: tick failed: ${e instanceof Error ? e.message : String(e)}`
-        );
-      });
-    }, POKE_DEBOUNCE_MS);
-    if (typeof this.pokeTimer.unref === "function") this.pokeTimer.unref();
+  private fireWake(sessionId: string): void {
+    if (this.pendingSessions.has(sessionId)) {
+      // Lost the race to a concurrent turn — queue for after-turn retry.
+      const state = this.getOrInitWakeState(sessionId);
+      state.wakeRequestedDuringTurn = true;
+      return;
+    }
+    if (!this.hasAnyActive(sessionId)) return;
+    const session = this.sessionStore.get(sessionId);
+    if (!session) {
+      this.dropWakeState(sessionId);
+      return;
+    }
+    // Bump the rate-limit clock only when we actually fire a turn —
+    // a no-op fireWake (session busy / no work) shouldn't count.
+    const state = this.getOrInitWakeState(sessionId);
+    state.lastWakeAt = this.now().getTime();
+    this.enqueueTurn(sessionId, session.agentId);
+  }
+
+  private getOrInitWakeState(sessionId: string): SessionWakeState {
+    let s = this.wakeBySession.get(sessionId);
+    if (!s) {
+      s = { lastWakeAt: 0 };
+      this.wakeBySession.set(sessionId, s);
+    }
+    return s;
+  }
+
+  private dropWakeState(sessionId: string): void {
+    const s = this.wakeBySession.get(sessionId);
+    if (s?.debounceTimer) clearTimeout(s.debounceTimer);
+    this.wakeBySession.delete(sessionId);
+  }
+
+  /**
+   * Resolve which session should wake for an event. Bound tasks → that
+   * session. Unbound tasks → null (caller handles inline allocation).
+   * DON'T fall back to the assignee's most-recent session here — that
+   * triggers self-echo for tasks an agent created in their own session.
+   */
+  private resolveTargetSession(event: TaskEvent): string | null {
+    const task = this.taskStore.get(event.taskId);
+    if (!task) return null;
+    return task.session_id;
   }
 
   // ── Internals ─────────────────────────────────────────────────────
 
-  private async tick(): Promise<void> {
-    if (this.stopped) return;
-
+  /**
+   * One-time startup pass. Runs at `start()`:
+   *   - allocate sessions for any unbound, ready, open tasks that
+   *     accumulated while we were down (sweepStale already flipped
+   *     stale in_progress back to open);
+   *   - arm crons for future-dated tasks;
+   *   - schedule wakes for sessions that now have active work.
+   * No periodic timer drives this — runtime wakes come from
+   * `onEvent` (state changes) and croner (time-based).
+   */
+  private async startupSweep(): Promise<void> {
     const now = this.now();
     const all = this.taskStore.list();
 
-    // Step 1: lazily allocate sessions for ready unbound tasks.
     for (const t of all) {
       if (t.session_id) continue;
       if (t.status !== "open") continue;
@@ -126,28 +302,38 @@ export class TaskScheduler {
       }
     }
 
-    // Step 2: pick up to one ready task per session and run.
     const refreshed = this.taskStore.list();
+    this.reconcileArmed(refreshed, now);
+
+    // Startup wakes fire immediately — no debounce coalescing needed
+    // since we're processing the accumulated backlog, not a burst.
     const sessions = new Set(
       refreshed
         .map((t) => t.session_id)
         .filter((s): s is string => s !== null)
     );
     for (const sessionId of sessions) {
-      const head = this.taskStore.nextEligibleFor(sessionId, now);
-      if (!head) continue;
-      // Only `open` tasks are runnable — `blocked` requires explicit unblock
-      // (e.g. user moves to open after fixing the cause), otherwise the
-      // turn-error / agent-missing handlers would loop on the same task.
-      if (head.status !== "open") continue;
-      if (this.pending.has(head.id)) continue;
-      if (!this.depsSatisfied(head)) continue;
-      if (isFutureStart(head.start_at, now)) continue;
-      this.enqueueTurn(head);
+      if (this.pendingSessions.has(sessionId)) continue;
+      if (!this.hasAnyActive(sessionId)) continue;
+      const session = this.sessionStore.get(sessionId);
+      if (!session) continue;
+      const state = this.getOrInitWakeState(sessionId);
+      state.lastWakeAt = this.now().getTime();
+      this.enqueueTurn(sessionId, session.agentId);
     }
+  }
 
-    // Step 3: reconcile future-dated cron arms.
-    this.reconcileArmed(refreshed, now);
+  /**
+   * Is there any non-terminal task in this session? Used for both
+   * event-driven wakes and the startup sweep. The triggering signal
+   * (event or startup) justifies attention; we just confirm there's
+   * something for the agent to act on. Excludes done / canceled.
+   */
+  private hasAnyActive(sessionId: string): boolean {
+    const tasks = this.taskStore.list({ session_id: sessionId });
+    return tasks.some(
+      (t) => t.status !== "done" && t.status !== "canceled"
+    );
   }
 
   private reconcileArmed(tasks: Task[], now: Date): void {
@@ -186,9 +372,9 @@ export class TaskScheduler {
         () => {
           this.armed.delete(id);
           if (this.stopped) return;
-          this.tick().catch((e) => {
+          this.fireArmed(id).catch((e) => {
             console.warn(
-              `TaskScheduler: armed tick for ${id} failed: ${e instanceof Error ? e.message : String(e)}`
+              `TaskScheduler: armed wake for ${id} failed: ${e instanceof Error ? e.message : String(e)}`
             );
           });
         }
@@ -197,17 +383,50 @@ export class TaskScheduler {
     }
   }
 
-  private enqueueTurn(task: Task): void {
-    const agentId = task.assignee;
-    const sessionId = task.session_id;
-    if (!sessionId) return;
-    this.pending.add(task.id);
+  /**
+   * Croner fired — its task's `start_at` has arrived. Dispatch a wake
+   * through the same allocate→schedule pipeline as events. No `actor`
+   * to echo-check; the trigger is the wall clock.
+   */
+  private async fireArmed(taskId: string): Promise<void> {
+    const task = this.taskStore.get(taskId);
+    if (!task) return;
+    if (task.status === "done" || task.status === "canceled") return;
+
+    let sessionId = task.session_id;
+    if (!sessionId) {
+      try {
+        const session = this.sessionStore.create(task.assignee, {
+          title: task.title.slice(0, 80),
+        });
+        await this.taskStore.update(task.id, { session_id: session.id });
+        sessionId = session.id;
+      } catch (e) {
+        console.warn(
+          `TaskScheduler: armed alloc for ${task.id} failed: ${e instanceof Error ? e.message : String(e)}`
+        );
+        return;
+      }
+    }
+    if (!this.hasAnyActive(sessionId)) return;
+    this.scheduleWake(sessionId);
+  }
+
+  private enqueueTurn(sessionId: string, agentId: string): void {
+    this.pendingSessions.add(sessionId);
     const prev = this.chains.get(agentId) ?? Promise.resolve();
     const work = async () => {
       try {
-        await this.runTurn(task.id, sessionId, agentId);
+        await this.runTurn(sessionId, agentId);
       } finally {
-        this.pending.delete(task.id);
+        this.pendingSessions.delete(sessionId);
+        // Any events that arrived during the turn requested a wake;
+        // fire it now that the session is free.
+        const state = this.wakeBySession.get(sessionId);
+        if (state?.wakeRequestedDuringTurn) {
+          state.wakeRequestedDuringTurn = false;
+          this.scheduleWake(sessionId);
+        }
       }
     };
     const next = prev.then(work, work);
@@ -220,81 +439,88 @@ export class TaskScheduler {
     );
   }
 
+  /**
+   * Run one autonomous turn in the given session. The agent picks the
+   * task itself; the scheduler is just the wake mechanism here. On
+   * timeout/error we look up whichever task ended up `in_progress`
+   * during the turn and park it as blocked with a `system:scheduler`
+   * comment — that's our failure-attribution hook now that we don't
+   * dispatch a specific task.
+   */
   private async runTurn(
-    taskId: string,
     sessionId: string,
     agentId: string
   ): Promise<void> {
     if (this.stopped) return;
-    const task = this.taskStore.get(taskId);
-    if (!task) return;
-    if (task.status !== "open") return;
-    if (task.session_id !== sessionId) return;
-
-    try {
-      await this.taskStore.update(taskId, { status: "in_progress" });
-    } catch (e) {
-      if (
-        e instanceof TaskStoreError &&
-        (e.code === "session_busy" || e.code === "deps_unsatisfied")
-      ) {
-        return;
-      }
-      throw e;
-    }
 
     let agent;
     try {
       agent = this.agentManager.getAgent(agentId);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
+      // No specific task to attribute this to (the agent never ran). Log
+      // and bail; the next tick will retry. If the agent stays missing
+      // permanently, a human is the right escalation path — auto-blocking
+      // every task assigned to a vanished agent would be too aggressive.
       console.warn(
-        `TaskScheduler: agent ${agentId} not found for task ${taskId}: ${msg} — blocking task`
+        `TaskScheduler: agent ${agentId} not available for session ${sessionId}: ${msg}`
       );
-      const cur = this.taskStore.get(taskId);
-      const note = `\n\n> [scheduler] agent \`${agentId}\` not found at ${this.now().toISOString()}: ${msg}`;
-      await this.safeUpdate(taskId, {
-        status: "blocked",
-        body: (cur?.body ?? "") + note,
-      });
       return;
     }
 
     try {
-      await agent.runAutonomous({ sessionId, taskId });
+      await agent.runAutonomous({ sessionId });
     } catch (e) {
-      if (e instanceof AutonomousTurnTimeout) {
-        const cur = this.taskStore.get(taskId);
-        const note = `\n\n> [scheduler] turn timed out at ${this.now().toISOString()}`;
-        await this.safeUpdate(taskId, {
-          status: "blocked",
-          body: (cur?.body ?? "") + note,
-        });
-        return;
+      const message = e instanceof Error ? e.message : String(e);
+      const isTimeout = e instanceof AutonomousTurnTimeout;
+      if (!isTimeout) {
+        console.warn(
+          `TaskScheduler: turn in session ${sessionId} failed: ${message}`
+        );
       }
-      console.warn(
-        `TaskScheduler: turn for ${taskId} failed: ${e instanceof Error ? e.message : String(e)}`
-      );
-      const cur = this.taskStore.get(taskId);
-      const note = `\n\n> [scheduler] turn errored: ${e instanceof Error ? e.message : String(e)}`;
-      await this.safeUpdate(taskId, {
-        status: "blocked",
-        body: (cur?.body ?? "") + note,
+      await this.parkInProgress(sessionId, {
+        action: isTimeout ? "timeout" : "error",
+        message: isTimeout
+          ? `turn timed out at ${this.now().toISOString()}`
+          : `turn errored at ${this.now().toISOString()}: ${message}`,
       });
-      return;
     }
   }
 
-  private async safeUpdate(
-    id: string,
-    patch: Parameters<TaskStore["update"]>[1]
+  /**
+   * After a failed turn, find the task the agent picked up (if any) and
+   * park it as blocked with a system comment. With agent-driven
+   * selection the scheduler can't pre-attribute failures to a task —
+   * it has to look at the post-failure session state. If the agent
+   * never picked anything (timed out before claiming, errored on
+   * setup), there's nothing to park.
+   */
+  private async parkInProgress(
+    sessionId: string,
+    note: { action: "timeout" | "error"; message: string }
   ): Promise<void> {
-    try {
-      await this.taskStore.update(id, patch);
-    } catch (e) {
-      console.warn(
-        `TaskScheduler: failed safeUpdate for ${id}: ${e instanceof Error ? e.message : String(e)}`
-      );
+    const inProg = this.taskStore.list({
+      session_id: sessionId,
+      status: "in_progress",
+    });
+    for (const task of inProg) {
+      try {
+        await this.taskStore.update(
+          task.id,
+          { status: "blocked" },
+          { actor: "system:scheduler" }
+        );
+        await this.taskStore.addComment({
+          taskId: task.id,
+          author: "system:scheduler",
+          kind: "system",
+          body: `[${note.action}] ${note.message}`,
+        });
+      } catch (e) {
+        console.warn(
+          `TaskScheduler: parkInProgress failed for ${task.id}: ${e instanceof Error ? e.message : String(e)}`
+        );
+      }
     }
   }
 

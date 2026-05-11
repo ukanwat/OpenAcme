@@ -41,6 +41,7 @@
   },
   "dependencies": {
     "@openacme/config": "workspace:*",
+    "@openacme/tasks": "workspace:*",
     "better-sqlite3": "^11.7.0",
     "drizzle-orm": "^0.44.0"
   },

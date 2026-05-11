@@ -42,6 +42,8 @@ export interface Task {
   runs: number;
   last_run_at: string | null;
   body?: string;
+  /** Populated by GET /api/tasks (list); absent on GET /api/tasks/:id. */
+  comment_count?: number;
 }
 
 export const STATUS_ORDER: TaskStatus[] = [
@@ -77,6 +79,43 @@ export function formatDate(iso: string): string {
   } catch {
     return iso;
   }
+}
+
+// Re-exported from the central web mirror so kinds stay typed in one
+// place (lib/types.ts mirrors the canonical defs in @openacme/tasks).
+import type { CommentKind, EventKind } from "@/app/lib/types";
+export type { CommentKind, EventKind } from "@/app/lib/types";
+
+export interface Comment {
+  id: string;
+  taskId: string;
+  author: string;
+  kind: CommentKind | null;
+  body: string;
+  createdAt: number;
+}
+
+export interface TaskEvent {
+  id: string;
+  taskId: string;
+  agentId: string;
+  /** Echo-suppression actor (agent id of causer) — null for
+   *  scheduler / human / auto-effect events. */
+  actor: string | null;
+  kind: EventKind;
+  payload: string | null;
+  createdAt: number;
+}
+
+export function formatRelativeFromUnix(unixSec: number): string {
+  const diffSec = Math.max(0, Math.floor(Date.now() / 1000 - unixSec));
+  if (diffSec < 60) return `${diffSec}s ago`;
+  const m = Math.floor(diffSec / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  return `${d}d ago`;
 }
 
 export function shortRecurrenceLabel(rec: Recurrence): string {

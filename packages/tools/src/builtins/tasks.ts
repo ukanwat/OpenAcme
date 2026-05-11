@@ -1,8 +1,10 @@
 import { z } from "zod";
 import {
+  COMMENT_KINDS,
   TASK_STATUSES,
   TaskStore,
   TaskStoreError,
+  type CommentKind,
   type Recurrence,
   type Task,
   type TaskStatus,
@@ -186,10 +188,14 @@ registry.register({
 // ── task_create ──────────────────────────────────────────────────────
 
 const TASK_CREATE_DESCRIPTION =
-  "Create a task. The current agent is recorded as `created_by`. " +
-  "By default, the task gets a fresh session lazily allocated when the scheduler activates it. " +
-  "Pass `sameSession: true` to bind the task to YOUR current session — only honored when " +
-  "you're also the assignee. Cross-agent tasks always get a new session for the assignee.\n\n" +
+  "Create a task. The current agent is recorded as `created_by`.\n\n" +
+  "`session` (where the work lives):\n" +
+  "- `\"current\"` — bind to YOUR current session. Only valid when assignee == you; otherwise rejected.\n" +
+  "- `\"fresh\"` — explicitly request a brand-new session. The scheduler allocates one when the task becomes ready.\n" +
+  "- A specific session uuid — bind to that session (advanced; you usually don't need this).\n" +
+  "- Omit it — smart default: `\"current\"` when self-assigning, `\"fresh\"` otherwise.\n\n" +
+  "When to choose: pass `\"current\"` for a task you intend to work on RIGHT NOW in this same turn. " +
+  "Pass `\"fresh\"` (or omit) for future work, or any cross-agent delegation. Picking wrong creates session races.\n\n" +
   "Use `start_at` (ISO timestamp) to schedule a future autonomous start. " +
   "Use `depends_on` to gate this task on others (cycle-checked; unmet deps force `blocked`).\n\n" +
   "RECURRING TASKS: pass `recurrence` to fire on a schedule. When you mark a recurring " +
@@ -227,16 +233,22 @@ registry.register({
     start_at: z
       .string()
       .optional()
-      .describe("ISO 8601 timestamp. Task won't activate until this time."),
+      .describe(
+        "ISO 8601 timestamp. LEAVE UNSET unless you have a wall-clock reason " +
+          "(human asked for a specific time, or you're rate-limited and want to " +
+          "back off). Don't set this just to defer normal handoff — leave it " +
+          "null and the assignee will pick up the task as soon as deps allow."
+      ),
     due_at: z
       .string()
       .optional()
       .describe("ISO 8601 soft deadline."),
-    sameSession: z
-      .boolean()
+    session: z
+      .string()
       .optional()
       .describe(
-        "Bind to your current session (only when assignee == you). Default false."
+        "Where the work lives. `\"current\"` (only valid self-assigned), `\"fresh\"`, " +
+          "or a session uuid. Omit for smart default: current for self-assign, fresh otherwise."
       ),
     recurrence: RecurrenceParamsSchema.optional().describe(
       "Schedule the task to fire repeatedly. Marking it done schedules the next fire; cancel to stop."
@@ -256,7 +268,7 @@ registry.register({
       depends_on?: string[];
       start_at?: string;
       due_at?: string;
-      sameSession?: boolean;
+      session?: string;
       recurrence?: Recurrence;
     };
     const agentId = getCurrentAgentId();
@@ -268,10 +280,34 @@ registry.register({
     }
 
     const isSelfAssign = a.assignee === agentId;
-    const sessionId =
-      a.sameSession && isSelfAssign ? getCurrentSessionId() ?? null : null;
 
-    // Subtask: if assignee matches the parent's, inherit parent's session.
+    // Resolve session field to a concrete session_id or null.
+    // - "current" → caller's current session (self-assign only)
+    // - "fresh"   → null (scheduler allocates lazily)
+    // - uuid      → that session id
+    // - undefined → smart default: "current" if self-assign, else "fresh"
+    const callerSession = getCurrentSessionId() || null;
+    let sessionId: string | null;
+    if (a.session === "current") {
+      if (!isSelfAssign) {
+        return JSON.stringify({
+          ok: false,
+          error:
+            'session: "current" is only valid when assignee == you. ' +
+            'Use "fresh" or omit when delegating.',
+        });
+      }
+      sessionId = callerSession;
+    } else if (a.session === "fresh") {
+      sessionId = null;
+    } else if (typeof a.session === "string" && a.session.length > 0) {
+      sessionId = a.session;
+    } else {
+      sessionId = isSelfAssign ? callerSession : null;
+    }
+
+    // Subtask: if assignee matches the parent's and no session was decided,
+    // inherit parent's session.
     let inheritedSession = sessionId;
     if (a.parent_id) {
       const parent = b.store.get(a.parent_id);
@@ -294,11 +330,6 @@ registry.register({
         recurrence: a.recurrence ?? null,
       });
       const warnings: string[] = [];
-      if (a.sameSession && !isSelfAssign) {
-        warnings.push(
-          "sameSession was ignored: only honored when assignee == you."
-        );
-      }
       if (task.status === "blocked") {
         warnings.push(
           "Task created in `blocked` status because depends_on are not yet done."
@@ -328,11 +359,20 @@ registry.register({
 const TASK_UPDATE_DESCRIPTION =
   "Patch a task. Common uses:\n" +
   "- Mark progress: `status: \"in_progress\"`, `\"done\"`, `\"canceled\"`.\n" +
-  "- Append notes to body — pass the FULL replacement body (not a diff).\n" +
+  "- Append notes to body — pass the FULL replacement body (not a diff). Prefer " +
+  "  `task_comment` for discussion / mid-flight notes — body is the spec, " +
+  "  comments are the conversation.\n" +
   "- Reassign: change `assignee`. Clears `session_id` automatically (the new " +
   "  assignee's sessions are different).\n" +
   "- Rebind: pass `session_id` (use null to detach).\n" +
-  "- Set / change / strip `recurrence` (pass null to make a recurring task one-shot).\n\n" +
+  "- Set / change / strip `recurrence` (pass null to make a recurring task one-shot).\n" +
+  "- Snooze: `start_at` to a future ISO timestamp when you need to back off and " +
+  "  re-evaluate later (e.g., world-state isn't ready). Don't set start_at as " +
+  "  part of normal handoff.\n\n" +
+  "BEFORE marking `done`: leave a `task_comment(id, body, kind: \"result\")` with " +
+  "the canonical answer. The next agent that depends on this task reads it from " +
+  "there. (Soft warning if you skip this — some tasks legitimately have no " +
+  "textual result, just an artifact in the world.)\n\n" +
   "When you mark a non-recurring task `done`, dependents auto-flip from blocked to open. " +
   "When you mark a RECURRING task `done`, the task self-resets to `open` with the next " +
   "fire time — the returned status will be `open` (not `done`) and `runs` will increment. " +
@@ -389,23 +429,53 @@ registry.register({
       });
     }
 
+    // Soft-warn check BEFORE the update — if the assignee is closing the
+    // task as `done` without leaving a result comment, hint that they
+    // probably want to leave one. We check before because after, the
+    // recurring-task self-reset path returns status: "open" even for a
+    // legitimate done call, so post-check would mis-fire.
+    const closingDone = a.status === "done";
+    let warnMissingResult = false;
+    if (closingDone) {
+      const existing = b.store.get(a.id);
+      if (existing && existing.assignee === agentId) {
+        const result = b.store.latestResult(a.id);
+        warnMissingResult = result === null;
+      }
+    }
+
     try {
-      const task = await b.store.update(a.id, {
-        title: a.title,
-        body: a.body,
-        status: a.status,
-        assignee: a.assignee,
-        ...(Object.prototype.hasOwnProperty.call(a, "session_id")
-          ? { session_id: a.session_id }
-          : {}),
-        depends_on: a.depends_on,
-        start_at: a.start_at,
-        due_at: a.due_at,
-        ...(Object.prototype.hasOwnProperty.call(a, "recurrence")
-          ? { recurrence: a.recurrence }
-          : {}),
-      });
-      return JSON.stringify({ ok: true, task: frontmatterOnly(task) });
+      const task = await b.store.update(
+        a.id,
+        {
+          title: a.title,
+          body: a.body,
+          status: a.status,
+          assignee: a.assignee,
+          ...(Object.prototype.hasOwnProperty.call(a, "session_id")
+            ? { session_id: a.session_id }
+            : {}),
+          depends_on: a.depends_on,
+          start_at: a.start_at,
+          due_at: a.due_at,
+          ...(Object.prototype.hasOwnProperty.call(a, "recurrence")
+            ? { recurrence: a.recurrence }
+            : {}),
+        },
+        { actor: agentId }
+      );
+      const out: Record<string, unknown> = {
+        ok: true,
+        task: frontmatterOnly(task),
+      };
+      if (warnMissingResult) {
+        out.warning =
+          "Marked done without a result comment. If this task produced output, " +
+          "leave a `task_comment(id, body, kind: \"result\")` so the assigner " +
+          "and dependents can find the answer. Some tasks have no textual " +
+          "result (the artifact is in the world); in that case ignore this warning.";
+      }
+      return JSON.stringify(out);
     } catch (e) {
       return JSON.stringify({
         ok: false,
@@ -417,5 +487,172 @@ registry.register({
               : String(e),
       });
     }
+  },
+});
+
+// ── task_comment ─────────────────────────────────────────────────────
+
+const TASK_COMMENT_DESCRIPTION =
+  "Leave a comment on a task. Comments are the discussion thread — questions " +
+  "between assigner and assignee, mid-flight notes, status check-ins, and the " +
+  "canonical result at completion. The body of the task is the SPEC (one " +
+  "voice); comments are the conversation (multi-voice, append-only).\n\n" +
+  "When you finish an assigned task, leave one final comment with " +
+  "`kind: \"result\"` containing the answer (the doc, the number, the " +
+  "summary, or a pointer to the artifact you produced). The agent or human " +
+  "depending on this task reads the result from there. Only the assignee can " +
+  "leave a `result` comment.\n\n" +
+  "Comments are append-only: no edit, no delete. If a previous comment was " +
+  "wrong, leave a follow-up that corrects it.";
+
+registry.register({
+  name: "task_comment",
+  toolset: "tasks",
+  description: TASK_COMMENT_DESCRIPTION,
+  parameters: z.object({
+    id: z.string().min(1).describe("Task id."),
+    body: z.string().min(1).describe("Comment body (markdown)."),
+    kind: z
+      .enum(["result"])
+      .optional()
+      .describe(
+        '"result" marks this comment as the canonical answer at task completion. ' +
+          "Only the assignee can leave a result comment. Omit for normal discussion."
+      ),
+  }),
+  emoji: "💬",
+  parallelSafe: false,
+  handler: async (args) => {
+    const b = requireBindings();
+    if ("error" in b) return JSON.stringify({ ok: false, error: b.error });
+
+    const a = args as { id: string; body: string; kind?: "result" };
+    const agentId = getCurrentAgentId();
+    if (!agentId) {
+      return JSON.stringify({
+        ok: false,
+        error: "task_comment requires an active agent context.",
+      });
+    }
+
+    // Defensive gate: only "result" or unset is permitted via this tool.
+    // The Zod schema enforces this at the SDK boundary; this re-check
+    // catches any path that bypasses validation (direct handler invocation,
+    // tests, etc.) and prevents agents from forging system-authored entries.
+    if (a.kind !== undefined && a.kind !== "result") {
+      return JSON.stringify({
+        ok: false,
+        error: `Invalid comment kind ${JSON.stringify(a.kind)}: only "result" or unset is allowed.`,
+      });
+    }
+
+    const task = b.store.get(a.id);
+    if (!task) {
+      return JSON.stringify({ ok: false, error: `Task ${a.id} not found.` });
+    }
+
+    if (a.kind === "result" && task.assignee !== agentId) {
+      return JSON.stringify({
+        ok: false,
+        error:
+          `Only the assignee (${task.assignee}) can leave a result comment on this task.`,
+      });
+    }
+
+    try {
+      const comment = await b.store.addComment({
+        taskId: a.id,
+        author: agentId,
+        body: a.body,
+        kind: a.kind ?? null,
+      });
+      if (!comment) {
+        return JSON.stringify({
+          ok: false,
+          error: "Comment storage not configured.",
+        });
+      }
+      return JSON.stringify({ ok: true, comment });
+    } catch (e) {
+      return JSON.stringify({
+        ok: false,
+        error:
+          e instanceof TaskStoreError
+            ? `${e.code}: ${e.message}`
+            : e instanceof Error
+              ? e.message
+              : String(e),
+      });
+    }
+  },
+});
+
+// ── task_comments ────────────────────────────────────────────────────
+
+const TASK_COMMENTS_DESCRIPTION =
+  "Read the discussion thread on a task. Returns comments oldest-first. " +
+  "Use `kinds: [\"result\"]` to fetch only the canonical answer when you " +
+  "depend on this task and want the assignee's final output. Use `sinceTs` " +
+  "to read only what's new since you last looked.";
+
+registry.register({
+  name: "task_comments",
+  toolset: "tasks",
+  description: TASK_COMMENTS_DESCRIPTION,
+  parameters: z.object({
+    id: z.string().min(1).describe("Task id."),
+    limit: z
+      .number()
+      .int()
+      .positive()
+      .max(200)
+      .optional()
+      .describe("Max number of comments. Default 50."),
+    sinceTs: z
+      .number()
+      .int()
+      .nonnegative()
+      .optional()
+      .describe("Only return comments newer than this unix-epoch (seconds)."),
+    kinds: z
+      .array(z.string())
+      .optional()
+      .describe(
+        "Filter by kind. Common: [\"result\"] for just the canonical answer."
+      ),
+  }),
+  emoji: "📜",
+  parallelSafe: true,
+  handler: async (args) => {
+    const b = requireBindings();
+    if ("error" in b) return JSON.stringify({ ok: false, error: b.error });
+
+    const a = args as {
+      id: string;
+      limit?: number;
+      sinceTs?: number;
+      kinds?: string[];
+    };
+
+    if (!b.store.get(a.id)) {
+      return JSON.stringify({ ok: false, error: `Task ${a.id} not found.` });
+    }
+    // Narrow incoming kind strings against the canonical CommentKind
+    // union (single source of truth: `COMMENT_KINDS` in @openacme/tasks).
+    // Unknown values get dropped silently — filter, not validate.
+    const validKindSet = new Set<string>(COMMENT_KINDS);
+    const kinds = a.kinds
+      ? (a.kinds.filter((k) => validKindSet.has(k)) as CommentKind[])
+      : undefined;
+    const comments = b.store.listComments(a.id, {
+      limit: a.limit ?? 50,
+      sinceTs: a.sinceTs,
+      kinds,
+    });
+    return JSON.stringify({
+      ok: true,
+      count: comments.length,
+      comments,
+    });
   },
 });

@@ -31,8 +31,41 @@ export interface OpenAcmeDataParts {
   [key: string]: any;
 }
 
+/**
+ * Mirror of `MessageMetadata` in `@openacme/agent-core/src/types.ts`.
+ * Tags persisted messages so the UI can route or filter them.
+ * `autonomous_event` = scheduler-driven autonomous wake message,
+ * hidden from the chat view (the agent's response renders standalone).
+ */
+export type MessageMetadataKind = "autonomous_event";
+
+export interface MessageMetadata {
+  kind?: MessageMetadataKind;
+  [key: string]: unknown;
+}
+
+// Mirror of COMMENT_KINDS / EVENT_KINDS in @openacme/tasks/ports.ts.
+// The web bundle is static — it can't import from server packages — so
+// these literals must be kept in sync by hand. Adding a new kind:
+// edit the canonical list in tasks/ports.ts THEN extend the matching
+// `as const` array here. The TS error at every reader if you only do
+// one is the safety net.
+
+export const COMMENT_KINDS = ["result", "system"] as const;
+export type CommentKind = (typeof COMMENT_KINDS)[number];
+
+export const EVENT_KINDS = [
+  "task_assigned",
+  "status_changed",
+  "dep_unblocked",
+  "comment_added",
+  "task_deleted",
+  "scheduler_action",
+] as const;
+export type EventKind = (typeof EVENT_KINDS)[number];
+
 export type OpenAcmeUIMessage = UIMessage<
-  Record<string, unknown>,
+  MessageMetadata,
   OpenAcmeDataParts
 >;
 

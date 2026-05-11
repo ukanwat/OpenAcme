@@ -60,26 +60,59 @@ describe("task_create", () => {
     expect(String(r.error)).toMatch(/agent context/);
   });
 
-  it("honors sameSession only for self-assigned tasks", async () => {
+  it("session field: smart default binds self-assign to current session", async () => {
     const r = await call(
       "task_create",
-      { title: "x", assignee: "me", sameSession: true },
+      { title: "x", assignee: "me" },
       { agentId: "me", sessionId: "s1" }
     );
     expect(r.ok).toBe(true);
     expect((r as { task: { session_id: string } }).task.session_id).toBe("s1");
+  });
 
-    const cross = await call(
+  it('session field: explicit "fresh" leaves session_id null on self-assign', async () => {
+    const r = await call(
       "task_create",
-      { title: "y", assignee: "you", sameSession: true },
+      { title: "x", assignee: "me", session: "fresh" },
       { agentId: "me", sessionId: "s1" }
     );
-    expect(cross.ok).toBe(true);
+    expect(r.ok).toBe(true);
     expect(
-      (cross as { task: { session_id: string | null } }).task.session_id
+      (r as { task: { session_id: string | null } }).task.session_id
     ).toBeNull();
-    expect((cross as { warnings?: string[] }).warnings?.[0]).toMatch(
-      /sameSession was ignored/
+  });
+
+  it("session field: smart default for cross-agent is null (fresh)", async () => {
+    const r = await call(
+      "task_create",
+      { title: "y", assignee: "you" },
+      { agentId: "me", sessionId: "s1" }
+    );
+    expect(r.ok).toBe(true);
+    expect(
+      (r as { task: { session_id: string | null } }).task.session_id
+    ).toBeNull();
+  });
+
+  it('session field: rejects "current" when assignee != creator', async () => {
+    const r = await call(
+      "task_create",
+      { title: "y", assignee: "you", session: "current" },
+      { agentId: "me", sessionId: "s1" }
+    );
+    expect(r.ok).toBe(false);
+    expect(String(r.error)).toMatch(/only valid when assignee == you/);
+  });
+
+  it("session field: explicit uuid is passed through", async () => {
+    const r = await call(
+      "task_create",
+      { title: "y", assignee: "you", session: "abc-123-explicit" },
+      { agentId: "me", sessionId: "s1" }
+    );
+    expect(r.ok).toBe(true);
+    expect((r as { task: { session_id: string } }).task.session_id).toBe(
+      "abc-123-explicit"
     );
   });
 
@@ -326,5 +359,233 @@ describe("recurrence via tools", () => {
     );
     expect(r.ok).toBe(false);
     expect(String(r.error)).toMatch(/invalid_input/);
+  });
+});
+
+// ── Comment tools ─────────────────────────────────────────────────────
+
+import type {
+  Comment,
+  CommentInput,
+  CommentListOptions,
+  CommentStorePort,
+  EventInput,
+  EventStorePort,
+} from "@openacme/tasks";
+import { randomUUID } from "node:crypto";
+
+function makeWiredStore(d: string) {
+  const comments: Comment[] = [];
+  const commentStore: CommentStorePort = {
+    add(input: CommentInput): Comment {
+      const c: Comment = {
+        id: randomUUID(),
+        taskId: input.taskId,
+        author: input.author,
+        kind: input.kind ?? null,
+        body: input.body,
+        createdAt: Math.floor(Date.now() / 1000),
+      };
+      comments.push(c);
+      return c;
+    },
+    list(taskId: string, opts: CommentListOptions = {}): Comment[] {
+      let out = comments
+        .filter((c) => c.taskId === taskId)
+        .sort((a, b) => a.createdAt - b.createdAt);
+      if (opts.sinceTs !== undefined)
+        out = out.filter((c) => c.createdAt > opts.sinceTs!);
+      if (opts.kinds && opts.kinds.length > 0)
+        out = out.filter((c) => c.kind && opts.kinds!.includes(c.kind));
+      if (opts.limit !== undefined) out = out.slice(0, opts.limit);
+      return out;
+    },
+    latestResult(taskId: string): Comment | null {
+      const r = comments
+        .filter((c) => c.taskId === taskId && c.kind === "result")
+        .sort((a, b) => b.createdAt - a.createdAt);
+      return r[0] ?? null;
+    },
+    countByTask(): Map<string, number> {
+      return new Map();
+    },
+    deleteByTask(taskId: string): void {
+      for (let i = comments.length - 1; i >= 0; i--)
+        if (comments[i]!.taskId === taskId) comments.splice(i, 1);
+    },
+  };
+  const events: EventInput[] = [];
+  const eventStore: EventStorePort = {
+    append(e: EventInput) {
+      events.push(e);
+      return e;
+    },
+  };
+  const wired = new TaskStore(d, { commentStore, eventStore });
+  bindTaskStore({ store: wired });
+  return { store: wired, comments, events };
+}
+
+describe("task_comment / task_comments", () => {
+  it("rejects with not_found on missing task", async () => {
+    makeWiredStore(dir);
+    const r = await call(
+      "task_comment",
+      { id: "ghost", body: "hi" },
+      { agentId: "me" }
+    );
+    expect(r.ok).toBe(false);
+    expect(String(r.error)).toMatch(/not found/i);
+  });
+
+  it("any agent can leave a generic (untagged) comment", async () => {
+    const { store: s } = makeWiredStore(dir);
+    const t = await s.create({ title: "x", assignee: "alice", created_by: "bob" });
+    const r = await call(
+      "task_comment",
+      { id: t.id, body: "FYI looking into this" },
+      { agentId: "bob" }
+    );
+    expect(r.ok).toBe(true);
+    const c = (r as { comment: Comment }).comment;
+    expect(c.author).toBe("bob");
+    expect(c.kind).toBeNull();
+  });
+
+  it("only the assignee can leave a result comment", async () => {
+    const { store: s } = makeWiredStore(dir);
+    const t = await s.create({ title: "x", assignee: "alice", created_by: "bob" });
+
+    const denied = await call(
+      "task_comment",
+      { id: t.id, body: "the answer", kind: "result" },
+      { agentId: "bob" }
+    );
+    expect(denied.ok).toBe(false);
+    expect(String(denied.error)).toMatch(/Only the assignee/);
+
+    const allowed = await call(
+      "task_comment",
+      { id: t.id, body: "the answer", kind: "result" },
+      { agentId: "alice" }
+    );
+    expect(allowed.ok).toBe(true);
+    expect((allowed as { comment: Comment }).comment.kind).toBe("result");
+  });
+
+  it("system kind is not exposed via the tool schema", async () => {
+    const { store: s } = makeWiredStore(dir);
+    const t = await s.create({ title: "x", assignee: "a", created_by: "a" });
+    // The Zod schema only allows "result"; passing "system" should fail
+    // validation upstream of the handler. Here we go through registry which
+    // passes args through as-is — the handler does not write system kind
+    // because the schema rejects it via the SDK boundary. Verify by direct
+    // attempt: passing kind:"system" lands as undefined post-Zod, so the
+    // resulting comment has kind: null, not system.
+    const r = await call(
+      "task_comment",
+      // @ts-expect-error — deliberately probing the tool's schema gate
+      { id: t.id, body: "shouldn't be system", kind: "system" },
+      { agentId: "a" }
+    );
+    if (r.ok) {
+      const c = (r as { comment: Comment }).comment;
+      expect(c.kind).not.toBe("system");
+    }
+    // Either way: no system-kind comment should exist via this path.
+    const all = s.listComments(t.id);
+    for (const c of all) expect(c.kind).not.toBe("system");
+  });
+
+  it("lists comments oldest-first and supports kinds filter", async () => {
+    const { store: s } = makeWiredStore(dir);
+    const t = await s.create({ title: "x", assignee: "a", created_by: "a" });
+    await call(
+      "task_comment",
+      { id: t.id, body: "first" },
+      { agentId: "a" }
+    );
+    await call(
+      "task_comment",
+      { id: t.id, body: "second" },
+      { agentId: "a" }
+    );
+    await call(
+      "task_comment",
+      { id: t.id, body: "the answer", kind: "result" },
+      { agentId: "a" }
+    );
+
+    const all = await call("task_comments", { id: t.id }, { agentId: "a" });
+    expect(all.ok).toBe(true);
+    const list = (all as { comments: Comment[] }).comments;
+    expect(list).toHaveLength(3);
+    expect(list[0]!.body).toBe("first");
+
+    const onlyResult = await call(
+      "task_comments",
+      { id: t.id, kinds: ["result"] },
+      { agentId: "a" }
+    );
+    const r = (onlyResult as { comments: Comment[] }).comments;
+    expect(r).toHaveLength(1);
+    expect(r[0]!.body).toBe("the answer");
+  });
+});
+
+describe("task_update soft-warn on done-without-result", () => {
+  it("warns when assignee marks done with no result comment", async () => {
+    const { store: s } = makeWiredStore(dir);
+    const t = await s.create({ title: "x", assignee: "a", created_by: "a" });
+    const r = await call(
+      "task_update",
+      { id: t.id, status: "done" },
+      { agentId: "a" }
+    );
+    expect(r.ok).toBe(true);
+    expect(String(r.warning ?? "")).toMatch(/result comment/i);
+  });
+
+  it("does not warn when a result comment exists", async () => {
+    const { store: s } = makeWiredStore(dir);
+    const t = await s.create({ title: "x", assignee: "a", created_by: "a" });
+    await call(
+      "task_comment",
+      { id: t.id, body: "ans", kind: "result" },
+      { agentId: "a" }
+    );
+    const r = await call(
+      "task_update",
+      { id: t.id, status: "done" },
+      { agentId: "a" }
+    );
+    expect(r.ok).toBe(true);
+    expect(r.warning).toBeUndefined();
+  });
+
+  it("does not warn for non-done status changes", async () => {
+    const { store: s } = makeWiredStore(dir);
+    const t = await s.create({ title: "x", assignee: "a", created_by: "a" });
+    const r = await call(
+      "task_update",
+      { id: t.id, status: "in_progress" },
+      { agentId: "a" }
+    );
+    expect(r.ok).toBe(true);
+    expect(r.warning).toBeUndefined();
+  });
+
+  it("does not warn when the closer is not the assignee", async () => {
+    const { store: s } = makeWiredStore(dir);
+    const t = await s.create({ title: "x", assignee: "a", created_by: "b" });
+    // Different agent (not the assignee) marks done — no warn since the
+    // result-comment expectation is on the assignee.
+    const r = await call(
+      "task_update",
+      { id: t.id, status: "done" },
+      { agentId: "b" }
+    );
+    expect(r.ok).toBe(true);
+    expect(r.warning).toBeUndefined();
   });
 });
