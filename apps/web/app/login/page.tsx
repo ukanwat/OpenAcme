@@ -1,13 +1,16 @@
 "use client";
 
 import { useEffect, useState, type FormEvent } from "react";
-import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
+import { LoadingHairline } from "@/app/components/ui/loading-hairline";
+import { ScribedRule } from "@/app/components/ui/scribed-rule";
 import { Logotype } from "@/app/components/Logotype";
 import { API_BASE } from "../lib/api";
+
+const HEADLINE = "OPENACME · DAEMON READY";
 
 export default function LoginPage() {
   const [secret, setSecret] = useState("");
@@ -63,21 +66,47 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-paper px-4">
-      <div className="w-full max-w-sm border border-paper-rule bg-paper">
-        <div className="border-b border-paper-rule px-5 py-4">
+    <main className="paper-surface relative flex min-h-screen items-center justify-center bg-paper px-4">
+      <div className="absolute right-4 top-4 flex items-center gap-1.5">
+        <span aria-hidden className="status-dot pulse-live bg-plot-red" />
+        <span className="label-faceplate text-ink-faint">Daemon · Live</span>
+      </div>
+
+      <div className="section-enter w-full max-w-sm border border-paper-rule bg-paper">
+        <ScribedRule className="bg-ink" />
+
+        <div className="px-5 pt-4 pb-3">
           <Logotype className="h-7 w-auto text-ink" />
-          <div className="mt-3 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
-            Authenticate
+          <div className="mt-3" aria-label={HEADLINE}>
+            <span
+              aria-hidden
+              className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink"
+            >
+              {HEADLINE.split("").map((ch, i) => (
+                <span
+                  key={i}
+                  className="inline-block"
+                  style={{
+                    animation: "section-enter 220ms var(--ease-out-quart) both",
+                    animationDelay: `${60 + i * 30}ms`,
+                  }}
+                >
+                  {ch === " " ? " " : ch}
+                </span>
+              ))}
+            </span>
           </div>
-          <p className="mt-1 text-sm leading-relaxed text-ink-soft">
+          <p className="mt-2 text-sm leading-relaxed text-ink-soft">
             Paste the access secret from{" "}
-            <code className="border border-paper-rule bg-paper-sunk px-1 py-0.5 font-mono text-[11px] text-ink">
+            <code className="px-1 py-0.5 font-mono text-[11px] text-ink">
               openacme secret
             </code>
             .
           </p>
         </div>
+
+        <ScribedRule delay={300} />
+
         <form onSubmit={onSubmit} className="space-y-4 px-5 py-4">
           <div className="space-y-2">
             <Label htmlFor="secret">Secret</Label>
@@ -91,12 +120,16 @@ export default function LoginPage() {
               disabled={submitting}
             />
           </div>
-          <Button type="submit" className="w-full" disabled={submitting || !secret.trim()}>
+          <Button
+            type="submit"
+            className="w-full"
+            disabled={submitting || !secret.trim()}
+          >
             {submitting ? (
-              <>
-                <Loader2 className="mr-2 size-4 animate-spin" />
+              <span className="inline-flex items-center gap-2">
+                <LoadingHairline inline aria-label="Verifying" />
                 Verifying
-              </>
+              </span>
             ) : (
               "Sign in"
             )}

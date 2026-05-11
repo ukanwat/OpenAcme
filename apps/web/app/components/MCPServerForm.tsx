@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Loader2, Plug, Trash2 } from "lucide-react";
+import { Plug, Trash2 } from "lucide-react";
+import { LoadingHairline } from "@/app/components/ui/loading-hairline";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
@@ -377,7 +378,7 @@ export function MCPServerForm({
             onClick={handleTest}
           >
             {testing ? (
-              <Loader2 className="size-4 animate-spin" />
+              <LoadingHairline inline />
             ) : (
               <Plug className="size-4" />
             )}
@@ -388,7 +389,7 @@ export function MCPServerForm({
           Cancel
         </Button>
         <Button type="button" onClick={handleSubmit} disabled={!canSubmit}>
-          {submitting && <Loader2 className="size-4 animate-spin" />}
+          {submitting && <LoadingHairline inline />}
           {initial ? "Save" : "Add server"}
         </Button>
       </div>

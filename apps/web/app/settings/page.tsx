@@ -7,7 +7,6 @@ import {
   Server,
   Cpu,
   Boxes,
-  Loader2,
   Pencil,
   Plug,
   RefreshCw,
@@ -27,6 +26,7 @@ import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
 import { Textarea } from "@/app/components/ui/textarea";
+import { LoadingHairline } from "@/app/components/ui/loading-hairline";
 import { Badge } from "@/app/components/ui/badge";
 import {
   Card,
@@ -505,7 +505,7 @@ export default function SettingsPage() {
                             }
                           >
                             {saving === provider.id && (
-                              <Loader2 className="size-4 animate-spin" />
+                              <LoadingHairline inline />
                             )}
                             Save
                           </Button>
@@ -699,7 +699,7 @@ export default function SettingsPage() {
                                   title="Reconnect"
                                 >
                                   {mcpRefreshing === name ? (
-                                    <Loader2 className="size-4 animate-spin" />
+                                    <LoadingHairline inline />
                                   ) : (
                                     <RefreshCw className="size-4" />
                                   )}
@@ -824,7 +824,7 @@ export default function SettingsPage() {
                         </Button>
                         <Button onClick={saveMcpJson} disabled={mcpJsonSaving}>
                           {mcpJsonSaving && (
-                            <Loader2 className="size-4 animate-spin" />
+                            <LoadingHairline inline />
                           )}
                           Save
                         </Button>

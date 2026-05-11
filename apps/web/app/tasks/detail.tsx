@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
-  Loader2,
   Save,
   Trash2,
   X,
@@ -13,6 +12,7 @@ import {
   Search,
 } from "lucide-react";
 import { Button } from "@/app/components/ui/button";
+import { LoadingHairline } from "@/app/components/ui/loading-hairline";
 import { Input } from "@/app/components/ui/input";
 import { Textarea } from "@/app/components/ui/textarea";
 import { Label } from "@/app/components/ui/label";
@@ -113,7 +113,7 @@ export function TaskDetailPanel({
           </Button>
           <Button size="sm" disabled={!dirty || saving} onClick={onSave}>
             {saving ? (
-              <Loader2 className="size-4 animate-spin" />
+              <LoadingHairline inline />
             ) : (
               <Save className="size-4" />
             )}
