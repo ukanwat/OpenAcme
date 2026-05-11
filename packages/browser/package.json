@@ -1,0 +1,47 @@
+{
+  "name": "@openacme/browser",
+  "version": "0.1.0",
+  "description": "Managed Chrome via CDP for OpenAcme — shared user-data-dir, per-agent tab ownership, transparent reconnect.",
+  "license": "MIT",
+  "author": "Utkarsh Kanwat",
+  "homepage": "https://github.com/ukanwat/OpenAcme/tree/main/packages/browser#readme",
+  "bugs": "https://github.com/ukanwat/OpenAcme/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ukanwat/OpenAcme.git",
+    "directory": "packages/browser"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": false
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc --build",
+    "check-types": "tsc --noEmit",
+    "dev": "tsc --watch",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "playwright-core": "^1.50.0"
+  },
+  "devDependencies": {
+    "@repo/typescript-config": "workspace:*",
+    "@types/node": "^22.15.3",
+    "typescript": "5.9.2",
+    "vitest": "^2.1.9"
+  }
+}

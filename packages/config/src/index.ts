@@ -12,6 +12,7 @@ export {
   ServerConfigSchema,
   AgentBehaviorSchema,
   SkillsConfigSchema,
+  BrowserConfigSchema,
   lookupModelMetadata,
   type Config,
   type Provider,
@@ -24,6 +25,7 @@ export {
   type ServerConfig,
   type AgentBehavior,
   type SkillsConfig,
+  type BrowserConfig,
 } from "./schema.js";
 
 export {

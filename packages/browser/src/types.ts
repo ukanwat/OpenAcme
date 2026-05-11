@@ -1,0 +1,199 @@
+/** Per-agent stable tab alias (`t1`, `t2`, ...). Opaque to the model. */
+export type TabId = string;
+
+export interface BrowserConfig {
+  enabled: boolean;
+  executablePath?: string;
+  port: number;
+  headless: boolean;
+  noSandbox: boolean;
+}
+
+export interface TabInfo {
+  tabId: TabId;
+  url: string;
+  title: string;
+  active: boolean;
+}
+
+export interface ConsoleEntry {
+  type: string;
+  text: string;
+  location?: { url: string; lineNumber: number; columnNumber: number };
+  timestamp: string;
+}
+
+export interface NavigateParams {
+  url: string;
+  tabId?: TabId;
+}
+
+export interface SnapshotParams {
+  tabId?: TabId;
+}
+
+export interface ClickParams {
+  element: string;
+  ref: string;
+  tabId?: TabId;
+}
+
+export interface TypeParams {
+  element: string;
+  ref: string;
+  text: string;
+  submit?: boolean;
+  tabId?: TabId;
+}
+
+export interface PressKeyParams {
+  key: string;
+  tabId?: TabId;
+}
+
+export interface ScreenshotParams {
+  fullPage?: boolean;
+  tabId?: TabId;
+}
+
+export interface WaitForParams {
+  text?: string;
+  textGone?: string;
+  timeMs?: number;
+  tabId?: TabId;
+}
+
+export interface EvaluateParams {
+  function: string;
+  tabId?: TabId;
+}
+
+export interface ConsoleMessagesParams {
+  clear?: boolean;
+  tabId?: TabId;
+}
+
+export interface NavigateResult {
+  tabId: TabId;
+  url: string;
+  title: string;
+  snapshot: string;
+}
+
+export interface SnapshotResult {
+  tabId: TabId;
+  url: string;
+  snapshot: string;
+}
+
+export interface ActionResult {
+  tabId: TabId;
+}
+
+export interface ScreenshotResult {
+  tabId: TabId;
+  pngBase64: string;
+  mediaType: "image/png";
+}
+
+export interface EvaluateResult {
+  tabId: TabId;
+  result: unknown;
+}
+
+export interface ConsoleMessagesResult {
+  tabId: TabId;
+  messages: ConsoleEntry[];
+}
+
+export interface HoverParams {
+  element: string;
+  ref: string;
+  tabId?: TabId;
+}
+
+export interface DragParams {
+  startElement: string;
+  startRef: string;
+  endElement: string;
+  endRef: string;
+  tabId?: TabId;
+}
+
+export interface SelectOptionParams {
+  element: string;
+  ref: string;
+  values: string[];
+  tabId?: TabId;
+}
+
+export interface FillFormField {
+  element: string;
+  ref: string;
+  value: string;
+}
+
+export interface FillFormParams {
+  fields: FillFormField[];
+  tabId?: TabId;
+}
+
+export interface FileUploadParams {
+  ref: string;
+  paths: string[];
+  tabId?: TabId;
+}
+
+export interface HandleDialogParams {
+  accept: boolean;
+  promptText?: string;
+  tabId?: TabId;
+}
+
+export interface ResizeParams {
+  width: number;
+  height: number;
+  tabId?: TabId;
+}
+
+export interface SaveAsPdfParams {
+  filename?: string;
+  tabId?: TabId;
+}
+
+export interface ClickCoordsParams {
+  x: number;
+  y: number;
+  tabId?: TabId;
+}
+
+export interface SelectOptionResult {
+  tabId: TabId;
+  selected: string[];
+}
+
+export interface FillFormResult {
+  tabId: TabId;
+  filled: number;
+}
+
+export interface DialogResult {
+  tabId: TabId;
+  result: "accepted" | "dismissed";
+}
+
+export interface ResizeResult {
+  tabId: TabId;
+  width: number;
+  height: number;
+}
+
+export interface NavHistoryResult {
+  tabId: TabId;
+  url: string;
+}
+
+export interface PdfResult {
+  tabId: TabId;
+  path: string;
+}
