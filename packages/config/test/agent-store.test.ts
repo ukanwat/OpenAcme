@@ -76,7 +76,9 @@ describe("file-based AgentStore (folder + AGENT.md)", () => {
     );
     const raw = fs.readFileSync(path.join(dir, "foo", "AGENT.md"), "utf-8");
     const { data, content } = matter(raw);
-    expect(data.id).toBe("foo");
+    // id lives in the folder name, not the frontmatter — duplicate ids
+    // would be a footgun if hand-edits could drift from the folder.
+    expect(data.id).toBeUndefined();
     expect(data.name).toBe("foo Agent");
     expect(data.model).toMatchObject({ provider: "anthropic" });
     expect(content.trim()).toBe(
@@ -84,6 +86,22 @@ describe("file-based AgentStore (folder + AGENT.md)", () => {
     );
     // Persona must NOT live in the frontmatter when it's in the body.
     expect(data.persona).toBeUndefined();
+  });
+
+  it("ignores frontmatter id; folder name wins", () => {
+    const store = createAgentStore(dir);
+    store.upsert(makeAgent("alice"));
+    // Tamper: write a stale `id: other` into alice's frontmatter.
+    const filePath = path.join(dir, "alice", "AGENT.md");
+    const original = fs.readFileSync(filePath, "utf-8");
+    fs.writeFileSync(filePath, original.replace("---\n", "---\nid: other\n"));
+
+    const loaded = store.get("alice");
+    expect(loaded?.id).toBe("alice");
+    // list() also reports the folder-derived id, not the stale frontmatter one
+    const ids = store.list().map((a) => a.id);
+    expect(ids).toContain("alice");
+    expect(ids).not.toContain("other");
   });
 
   it("get round-trips an agent through disk", () => {
