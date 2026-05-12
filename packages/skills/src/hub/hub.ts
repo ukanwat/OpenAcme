@@ -231,14 +231,24 @@ export class SkillHub {
     const candidateName = sanitizeSkillName(rawName);
     validateSkillName(candidateName);
 
-    const existing = this.lockfile.get(candidateName);
+    let existing = this.lockfile.get(candidateName);
+    const target = skillTargetDir(this.skillsDir, candidateName);
+    // Self-heal: lockfile claims installed but the target dir is gone
+    // (manual `rm -rf`, partial install, restored backup). Drop the
+    // stale entry and proceed with a fresh install.
+    if (existing && !fs.existsSync(target)) {
+      console.warn(
+        `[SkillHub] healing stale lockfile entry for '${candidateName}' — target dir missing`
+      );
+      this.lockfile.remove(candidateName);
+      existing = undefined;
+    }
     if (existing && !opts.force) {
       throw new HubError(
         `skill '${candidateName}' is already installed (use force to overwrite)`,
         "ALREADY_INSTALLED"
       );
     }
-    const target = skillTargetDir(this.skillsDir, candidateName);
     if (!existing && fs.existsSync(target)) {
       // Locally-authored skill (created via `POST /api/skills` or
       // `skills add`) owns this name. Refuse to clobber — even with
