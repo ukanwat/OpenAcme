@@ -17,6 +17,17 @@ const badgeVariants = cva(
         default: "bg-ink text-paper",
         secondary: "bg-paper-sunk text-ink-soft",
         signal: "bg-plot-red text-paper",
+        // WAIT role — blocked / parked / paused. Reads paired with ink text
+        // on a tinted ochre surface so it scans next to `signal` (red) and
+        // `destructive` without being mistaken for either.
+        attention: "bg-warn-ochre/20 text-ink border border-warn-ochre/60",
+        // LATER / ELSEWHERE role — scheduled-future, read-only awareness,
+        // pending-in-transit. Subtle cyan tint; the eye reads it as "not
+        // yours yet" rather than "act on me now."
+        elsewhere: "bg-signal-cyan/15 text-ink border border-signal-cyan/50",
+        // OK / healthy role — daemon up, agent online, MCP connected.
+        // Used sparingly on at-rest indicators, not events.
+        healthy: "bg-signal-green/15 text-ink border border-signal-green/60",
         destructive: "bg-destructive text-paper",
         outline: "border border-paper-rule bg-transparent text-ink-soft",
         ghost: "bg-transparent text-ink-soft [a&]:hover:text-plot-red",

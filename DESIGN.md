@@ -18,6 +18,7 @@ colors:
   plot-red-deep: "oklch(48% 0.18 28)"
   signal-amber: "oklch(78% 0.14 75)"
   signal-cyan: "oklch(72% 0.10 215)"
+  signal-green: "oklch(60% 0.13 150)"
   warn-ochre: "oklch(72% 0.14 75)"
   destructive: "oklch(54% 0.22 28)"
 typography:
@@ -145,7 +146,7 @@ The visual chassis is brutalist (sharp 0px corners, no shadows, hairline 1px rul
 
 ## 2. Colors
 
-The palette is two surface families (warmed paper for light, cool graphite for dark) and one strategic accent. Functional state colors (warning, destructive) exist but are kept narrow; they never appear at rest.
+The palette is two surface families (warmed paper for light, cool graphite for dark) plus four signal colors, each pinned to one orthogonal semantic role. Plot Red carries the system; the other three are narrow but allowed at rest in their assigned role.
 
 ### Primary (Accent)
 - **Plot Red** (`oklch(58% 0.18 28)`): the only chromatic color used at any meaningful coverage. It marks the *active* — the agent currently streaming, the focused control, the selected session, the live indicator. Borrowed visually from plotter pens and mechanical-instrument signal lights, not from "brand red." Reserved for state and focus, never for decoration or category.
@@ -167,18 +168,30 @@ The palette is two surface families (warmed paper for light, cool graphite for d
 - **Bone Soft** (`oklch(75% 0.005 75)`): secondary text.
 - **Bone Faint** (`oklch(58% 0.005 280)`): tertiary text, placeholder, disabled.
 
-### Functional state
-- **Signal Amber** (`oklch(78% 0.14 75)`): pending / building / waiting state on monochrome surfaces. Never used for live activity (that's Plot Red).
-- **Warn Ochre** (`oklch(72% 0.14 75)`): warnings (e.g. config drift, deprecated tool).
-- **Destructive** (`oklch(54% 0.22 28)`): irreversible actions only (delete agent, drop session). Never confused with Plot Red — it sits at higher chroma and is paired with a destructive-action label.
+### Signal roles (the four-color system)
+
+Each signal color is pinned to one semantic role on a different temporal / agency axis. They do not overlap. A surface that doesn't fit one of the four roles stays ink/bone — color is never decorative.
+
+- **Plot Red** — **NOW.** Active, streaming, focused, current selection. The agent generating tokens this second. The input the cursor is in. The sidebar row you've clicked into. Highest urgency. Coverage ≤10% of any screen.
+- **Signal Green** (`oklch(60% 0.13 150)`) — **OK.** Powered / healthy / standing-by. Daemon is up. Agent process is online. MCP server is connected. Long-running process is alive. Ambient condition, not an event. Coverage ≤2%. Never used for "done" — done is terminal and quiet (ink-soft), not a positive signal.
+- **Warn Ochre** (`oklch(72% 0.14 75)`) — **WAIT.** Action blocked or paused. `blocked` task status. Scheduler-parked task. Config drift. Degraded MCP. Distinct from Destructive (irreversible). Coverage ≤2%.
+- **Signal Cyan** (`oklch(72% 0.10 215)`) — **LATER / ELSEWHERE.** Visible but not yours to act on yet. Future-`start_at` task. Read-only awareness of work in another session. Pending file attachment before commit. Inbound delegation tracking. Coverage ≤2%.
+
+**Signal Amber** (`oklch(78% 0.14 75)`) remains declared as a near-cousin of Warn Ochre at higher lightness — used only for transitional micro-states (input-streaming spinner, transient toast) where Ochre would feel too heavy. Treat Ochre as the canonical "wait" color and reach for Amber only when the state is brief enough that a stronger color would be noise.
+
+**Destructive** (`oklch(54% 0.22 28)`) — irreversible actions only (delete agent, drop session). Never confused with Plot Red — higher chroma, paired with a destructive-action label.
 
 ### Named Rules
 
 **The 10% Rule.** Plot Red is forbidden above 10% of any single screen's pixel area. If you find yourself reaching for a fifth red element, the screen is wrong, not the rule.
 
+**The 2% Rule.** Green, Ochre, and Cyan each cap at ~2% of any screen. They're scan-anchors, not surface treatments. If a screen needs more than that for a role, the layout — not the budget — is wrong.
+
 **The Tinted Neutral Rule.** Every neutral has chroma greater than zero. There is no `#000` or `#fff` in this system. Pure greys are forbidden — they read as Material default and break the lab-notebook warmth.
 
-**The State-Color Rule.** Color is a state encoding, never decoration. If a colored element doesn't represent live activity, focus, warning, or destruction, it should be ink/bone instead.
+**The State-Color Rule.** Color is a state encoding, never decoration. If a colored element doesn't represent one of the four signal roles (NOW / OK / WAIT / LATER) or destruction, it should be ink/bone instead.
+
+**The Single-Role Rule.** Each signal color owns exactly one semantic. Green never means "done." Ochre never means "highlight." Cyan never means "link." The mapping is one-to-one and load-bearing — a colored mark unambiguously answers "what kind of attention does this need?"
 
 ## 3. Typography
 

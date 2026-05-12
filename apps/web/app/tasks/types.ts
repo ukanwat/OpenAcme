@@ -64,11 +64,19 @@ export const STATUS_LABEL: Record<TaskStatus, string> = {
 
 export const STATUS_VARIANT: Record<
   TaskStatus,
-  "default" | "secondary" | "outline" | "destructive" | "signal"
+  | "default"
+  | "secondary"
+  | "outline"
+  | "destructive"
+  | "signal"
+  | "attention"
+  | "elsewhere"
+  | "healthy"
 > = {
   in_progress: "signal",
   open: "default",
-  blocked: "outline",
+  // WAIT role — distinct from canceled (which is terminal, outline).
+  blocked: "attention",
   done: "secondary",
   canceled: "outline",
 };
