@@ -574,7 +574,7 @@ function EventRow({
   titleByDepId: Map<string, string>;
 }) {
   const payload = parseEventPayload(event.payload);
-  const actorHandle = event.actor ? resolveAgentHandle(event.actor) : null;
+  const actorHandle = resolveEventActor(event, payload);
   return (
     <div className="grid grid-cols-[12px_1fr] items-center gap-x-3">
       <div aria-hidden className="flex justify-center">
@@ -609,6 +609,22 @@ function resolveAgentHandle(id: string | undefined): string {
   if (id.startsWith("system:"))
     return id.slice("system:".length) || "system";
   return id;
+}
+
+// Leading handle per event row. `event.actor` is the canonical source, but a
+// couple of kinds null it out (task_assigned echo-suppresses; some scheduler
+// emits don't set it). Derive from payload so every row leads with @handle.
+function resolveEventActor(
+  event: TaskEvent,
+  payload: Record<string, unknown> | null
+): string | null {
+  if (event.actor) return resolveAgentHandle(event.actor);
+  if (event.kind === "task_assigned") {
+    const createdBy = payload?.created_by as string | undefined;
+    if (createdBy) return resolveAgentHandle(createdBy);
+  }
+  if (event.kind === "scheduler_action") return "scheduler";
+  return null;
 }
 
 function EventDescription({
@@ -653,11 +669,9 @@ function EventDescription({
     }
     case "task_assigned": {
       const assignee = resolveAgentHandle(payload?.assignee as string | undefined);
-      const createdBy = resolveAgentHandle(payload?.created_by as string | undefined);
       return (
         <span>
-          assigned to <span className="text-ink">@{assignee}</span> by{" "}
-          <span className="text-ink">@{createdBy}</span>
+          assigned to <span className="text-ink">@{assignee}</span>
         </span>
       );
     }
@@ -672,16 +686,8 @@ function EventDescription({
     case "scheduler_action": {
       const action = payload?.action as string | undefined;
       const message = payload?.message as string | undefined;
-      // The message usually restates the action ("turn timed out — parked
-      // as blocked"), so the `[action]` bracket reads as duplication.
-      // Prefer the message when present; fall back to the action label.
-      const text = message ?? action ?? "";
-      return (
-        <span className="italic">
-          <span className="text-ink-faint">scheduler</span>
-          {text && <span className="ml-1 text-ink-soft">{text}</span>}
-        </span>
-      );
+      const text = message ?? action ?? "scheduler action";
+      return <span className="italic text-ink-soft">{text}</span>;
     }
     default:
       return <span className="text-ink">{event.kind}</span>;
