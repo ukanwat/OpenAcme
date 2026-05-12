@@ -244,7 +244,7 @@ export function ChatSetupPanel({ providers, onSetup }: ChatSetupPanelProps) {
         <Logotype className="h-7 w-auto text-ink" />
       </div>
 
-      <div key={step} className="mt-10 flex-1 section-enter">
+      <div key={step} className="section-enter mt-10 flex-1">
         {step === 0 && <ScreenWelcome onNext={() => setStep(1)} />}
         {step === 1 && (
           <ScreenSubstrate
@@ -665,15 +665,39 @@ function TaskCycleDemo() {
  * Plotter-pen draw-in via stroke-dashoffset; pulse-live dots mark active.
  */
 function SchematicTopology() {
-  const agents = [
-    { x: 90, label: "agent 01", live: true },
-    { x: 240, label: "agent 02", live: false },
-    { x: 390, label: "agent 03", live: true },
+  // Four-layer hierarchy: founder → platform → directors → workers.
+  // Tells the "agent workforce, not a chat tool" story by depth.
+  const directors = [
+    {
+      x: 80,
+      label: "marketing",
+      workers: [
+        { x: 35, label: "writer", live: true },
+        { x: 125, label: "designer", live: false },
+      ],
+    },
+    {
+      x: 250,
+      label: "engineering",
+      workers: [
+        { x: 205, label: "backend", live: true },
+        { x: 295, label: "frontend", live: false },
+      ],
+    },
+    {
+      x: 420,
+      label: "operations",
+      workers: [
+        { x: 375, label: "finance", live: false },
+        { x: 465, label: "support", live: true },
+      ],
+    },
   ];
+
   return (
     <svg
-      viewBox="0 0 480 260"
-      className="w-full max-w-[460px] text-ink-soft"
+      viewBox="0 0 500 360"
+      className="w-full max-w-[480px] text-ink-soft"
       aria-hidden
     >
       <style>{`
@@ -688,104 +712,155 @@ function SchematicTopology() {
         }
       `}</style>
 
-      {/* YOU box at top center */}
+      {/* L1 — YOU */}
       <rect
-        x="200" y="14" width="80" height="34"
+        x="210" y="10" width="80" height="34"
         fill="var(--paper)"
         stroke="currentColor" strokeWidth="1"
         className="draw"
         style={{ ["--len" as string]: 228, animationDelay: "100ms" }}
       />
-      <text x="240" y="36" textAnchor="middle"
+      <text x="250" y="32" textAnchor="middle"
         className="fill-ink font-mono"
         style={{ fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase" }}>
         you
       </text>
 
-      {/* You → OpenAcme spine */}
+      {/* L1 → L2 spine */}
       <path
-        d="M240 48 L240 82"
+        d="M250 44 L250 70"
         stroke="currentColor" strokeWidth="1" fill="none"
         className="draw"
-        style={{ ["--len" as string]: 34, animationDelay: "500ms" }}
+        style={{ ["--len" as string]: 26, animationDelay: "440ms" }}
       />
 
-      {/* OpenAcme box — wider, identifies the system between user and workforce */}
+      {/* L2 — OPENACME */}
       <rect
-        x="160" y="82" width="160" height="44"
+        x="170" y="70" width="160" height="42"
         fill="var(--paper)"
         stroke="currentColor" strokeWidth="1"
         className="draw"
-        style={{ ["--len" as string]: 408, animationDelay: "650ms" }}
+        style={{ ["--len" as string]: 404, animationDelay: "580ms" }}
       />
-      <text x="240" y="103" textAnchor="middle"
+      <text x="250" y="90" textAnchor="middle"
         className="fill-ink font-mono"
         style={{ fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase" }}>
         openacme
       </text>
-      <text x="240" y="118" textAnchor="middle"
+      <text x="250" y="104" textAnchor="middle"
         className="fill-ink-faint font-mono"
         style={{ fontSize: 10 }}>
         on your machine
       </text>
 
-      {/* OpenAcme → branch line spine */}
+      {/* L2 → director branch */}
       <path
-        d="M240 126 L240 160"
+        d="M250 112 L250 140"
         stroke="currentColor" strokeWidth="1" fill="none"
         className="draw"
-        style={{ ["--len" as string]: 34, animationDelay: "1000ms" }}
+        style={{ ["--len" as string]: 28, animationDelay: "920ms" }}
       />
-
-      {/* Horizontal branch spanning the three agents */}
       <path
-        d="M90 160 L390 160"
+        d="M80 140 L420 140"
         stroke="currentColor" strokeWidth="1" fill="none"
         className="draw"
-        style={{ ["--len" as string]: 300, animationDelay: "1150ms" }}
+        style={{ ["--len" as string]: 340, animationDelay: "1040ms" }}
       />
-
-      {/* Vertical drops to each agent */}
-      {agents.map((a, i) => (
+      {directors.map((d, i) => (
         <path
-          key={`drop-${i}`}
-          d={`M${a.x} 160 L${a.x} 196`}
+          key={`drop-d-${i}`}
+          d={`M${d.x} 140 L${d.x} 162`}
           stroke="currentColor" strokeWidth="1" fill="none"
           className="draw"
-          style={{ ["--len" as string]: 36, animationDelay: `${1400 + i * 100}ms` }}
+          style={{ ["--len" as string]: 22, animationDelay: `${1240 + i * 80}ms` }}
         />
       ))}
 
-      {/* Agent boxes */}
-      {agents.map((a, i) => (
-        <g key={`agent-${i}`}>
+      {/* L3 — Directors */}
+      {directors.map((d, i) => (
+        <g key={`dir-${i}`}>
           <rect
-            x={a.x - 40} y="196" width="80" height="36"
+            x={d.x - 50} y="162" width="100" height="34"
             fill="var(--paper)"
             stroke="currentColor" strokeWidth="1"
             className="draw"
             style={{
-              ["--len" as string]: 232,
-              animationDelay: `${1650 + i * 120}ms`,
+              ["--len" as string]: 268,
+              animationDelay: `${1380 + i * 100}ms`,
             }}
           />
-          <text x={a.x} y="218" textAnchor="middle"
-            className="fill-ink-soft font-mono"
+          <text x={d.x} y="184" textAnchor="middle"
+            className="fill-ink font-mono"
             style={{ fontSize: 11, letterSpacing: "0.05em" }}>
-            {a.label}
+            {d.label}
           </text>
-          {/* Live pip on active agents */}
-          {a.live && (
-            <circle
-              cx={a.x + 32} cy="204" r="2.5"
-              className="fill-plot-red"
-              style={{
-                animation: `pulse-live var(--duration-pulse) var(--ease-out-quart) infinite ${2200 + i * 200}ms`,
-              }}
-            />
-          )}
         </g>
       ))}
+
+      {/* L3 → worker branches (one mini-branch per director) */}
+      {directors.map((d, i) => (
+        <g key={`branch-w-${i}`}>
+          <path
+            d={`M${d.x} 196 L${d.x} 222`}
+            stroke="currentColor" strokeWidth="1" fill="none"
+            className="draw"
+            style={{ ["--len" as string]: 26, animationDelay: `${1700 + i * 90}ms` }}
+          />
+          <path
+            d={`M${d.workers[0]!.x} 222 L${d.workers[1]!.x} 222`}
+            stroke="currentColor" strokeWidth="1" fill="none"
+            className="draw"
+            style={{
+              ["--len" as string]: Math.abs(d.workers[1]!.x - d.workers[0]!.x),
+              animationDelay: `${1840 + i * 90}ms`,
+            }}
+          />
+          {d.workers.map((w, wi) => (
+            <path
+              key={`drop-w-${i}-${wi}`}
+              d={`M${w.x} 222 L${w.x} 244`}
+              stroke="currentColor" strokeWidth="1" fill="none"
+              className="draw"
+              style={{
+                ["--len" as string]: 22,
+                animationDelay: `${1980 + i * 90 + wi * 60}ms`,
+              }}
+            />
+          ))}
+        </g>
+      ))}
+
+      {/* L4 — Workers */}
+      {directors.flatMap((d, i) =>
+        d.workers.map((w, wi) => (
+          <g key={`worker-${i}-${wi}`}>
+            <rect
+              x={w.x - 32} y="244" width="64" height="32"
+              fill="var(--paper)"
+              stroke="currentColor" strokeWidth="1"
+              className="draw"
+              style={{
+                ["--len" as string]: 192,
+                animationDelay: `${2120 + i * 90 + wi * 60}ms`,
+              }}
+            />
+            <text x={w.x} y="264" textAnchor="middle"
+              className="fill-ink-soft font-mono"
+              style={{ fontSize: 10, letterSpacing: "0.04em" }}>
+              {w.label}
+            </text>
+            {w.live && (
+              <circle
+                cx={w.x + 25} cy="251" r="2.2"
+                className="fill-plot-red"
+                style={{
+                  animation: `pulse-live var(--duration-pulse) var(--ease-out-quart) infinite ${2600 + i * 120 + wi * 80}ms`,
+                }}
+              />
+            )}
+          </g>
+        ))
+      )}
     </svg>
   );
 }

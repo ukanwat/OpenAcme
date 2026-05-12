@@ -137,6 +137,11 @@ export default function SettingsPage() {
   const [apiKeyInputs, setApiKeyInputs] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState<string | null>(null);
 
+  // Subscription paths: state shared by Anthropic Claude Code import + OpenAI
+  // ChatGPT OAuth (both surfaced inline with the API-key field, below).
+  const [claudeCodeAvailable, setClaudeCodeAvailable] = useState(false);
+  const [subAction, setSubAction] = useState<string | null>(null);
+
   // MCP state — global catalog + aggregated per-server status across agents.
   const [mcpServers, setMcpServers] = useState<Record<string, MCPServerConfigDto>>({});
   const [mcpStatus, setMcpStatus] = useState<McpStatusPayload | null>(null);
@@ -211,6 +216,79 @@ export default function SettingsPage() {
       }
     } catch {
       // /api/keys may not exist on older servers — fail silently
+    }
+  };
+
+  // Probe whether the daemon can offer Claude Code keychain import. Cheap
+  // file-existence check on the server, no Touch-ID prompt.
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`${API_BASE}/api/setup/claude-code-available`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!cancelled && data && typeof data.available === "boolean") {
+          setClaudeCodeAvailable(data.available);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // ChatGPT OAuth — long-polls until the daemon's loopback callback completes.
+  const signInWithOpenAI = async () => {
+    setSubAction("openai");
+    toast.message("Opened your browser to sign in", {
+      description: "Complete the flow there. This panel will update when done.",
+    });
+    try {
+      const r = await fetch(`${API_BASE}/api/setup/oauth-start`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ provider: "openai" }),
+      });
+      const data = (await r.json().catch(() => ({}))) as {
+        error?: string;
+        email?: string | null;
+      };
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+      toast.success(
+        data.email ? `Signed in as ${data.email}` : "ChatGPT subscription linked"
+      );
+      setConfiguredKeys((prev) => ({ ...prev, openai: true }));
+    } catch (e) {
+      toast.error("Sign-in failed", {
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setSubAction(null);
+    }
+  };
+
+  // Anthropic — import the credentials Claude Code already wrote on this
+  // machine. On macOS the OS prompts for Touch ID to unlock the keychain.
+  const importClaudeCode = async () => {
+    setSubAction("anthropic");
+    try {
+      const r = await fetch(
+        `${API_BASE}/api/setup/anthropic-claude-code-import`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ importNow: true }),
+        }
+      );
+      const data = (await r.json().catch(() => ({}))) as { error?: string };
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+      toast.success("Imported from Claude Code");
+      setConfiguredKeys((prev) => ({ ...prev, anthropic: true }));
+    } catch (e) {
+      toast.error("Import failed", {
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setSubAction(null);
     }
   };
 
@@ -514,54 +592,87 @@ export default function SettingsPage() {
                         Loading providers…
                       </p>
                     )}
-                    {providersNeedingKeys.map((provider) => (
-                      <div key={provider.id} className="grid gap-2">
-                        <div className="flex items-center gap-2">
-                          <Label htmlFor={`key-${provider.id}`}>
-                            {provider.name}
-                          </Label>
-                          <span className="font-mono text-[10px] text-muted-foreground">
-                            {provider.envVar}
-                          </span>
-                          {configuredKeys[provider.id] && (
-                            <Badge variant="secondary" className="ml-auto gap-1">
-                              <Check className="size-3" />
-                              Configured
-                            </Badge>
+                    {providersNeedingKeys.map((provider) => {
+                      const subscriptionLabel =
+                        provider.id === "openai"
+                          ? "Sign in with ChatGPT"
+                          : provider.id === "anthropic" && claudeCodeAvailable
+                            ? "Import from Claude Code"
+                            : null;
+                      const subHandler =
+                        provider.id === "openai"
+                          ? signInWithOpenAI
+                          : provider.id === "anthropic"
+                            ? importClaudeCode
+                            : null;
+                      const subBusy = subAction === provider.id;
+                      return (
+                        <div key={provider.id} className="grid gap-2">
+                          <div className="flex items-center gap-2">
+                            <Label htmlFor={`key-${provider.id}`}>
+                              {provider.name}
+                            </Label>
+                            <span className="font-mono text-[10px] text-muted-foreground">
+                              {provider.envVar}
+                            </span>
+                            {configuredKeys[provider.id] && (
+                              <Badge variant="secondary" className="ml-auto gap-1">
+                                <Check className="size-3" />
+                                Configured
+                              </Badge>
+                            )}
+                          </div>
+                          <div className="flex gap-2">
+                            <Input
+                              id={`key-${provider.id}`}
+                              type="password"
+                              value={apiKeyInputs[provider.id] || ""}
+                              onChange={(e) =>
+                                setApiKeyInputs({
+                                  ...apiKeyInputs,
+                                  [provider.id]: e.target.value,
+                                })
+                              }
+                              placeholder={
+                                configuredKeys[provider.id]
+                                  ? "Enter new key to update"
+                                  : `Enter ${provider.envVar}`
+                              }
+                            />
+                            <Button
+                              onClick={() => saveApiKey(provider.id)}
+                              disabled={
+                                saving === provider.id ||
+                                !apiKeyInputs[provider.id]?.trim()
+                              }
+                            >
+                              {saving === provider.id && (
+                                <LoadingHairline inline />
+                              )}
+                              Save
+                            </Button>
+                          </div>
+                          {subscriptionLabel && subHandler && (
+                            <div className="flex items-center justify-between gap-3 pt-1 font-mono text-[11px] text-ink-faint">
+                              <span>
+                                {provider.id === "anthropic"
+                                  ? "Or use Claude Code keychain (Touch ID may prompt)"
+                                  : "Or use your existing subscription"}
+                              </span>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={subHandler}
+                                disabled={subBusy}
+                              >
+                                {subBusy && <LoadingHairline inline />}
+                                {subscriptionLabel}
+                              </Button>
+                            </div>
                           )}
                         </div>
-                        <div className="flex gap-2">
-                          <Input
-                            id={`key-${provider.id}`}
-                            type="password"
-                            value={apiKeyInputs[provider.id] || ""}
-                            onChange={(e) =>
-                              setApiKeyInputs({
-                                ...apiKeyInputs,
-                                [provider.id]: e.target.value,
-                              })
-                            }
-                            placeholder={
-                              configuredKeys[provider.id]
-                                ? "Enter new key to update"
-                                : `Enter ${provider.envVar}`
-                            }
-                          />
-                          <Button
-                            onClick={() => saveApiKey(provider.id)}
-                            disabled={
-                              saving === provider.id ||
-                              !apiKeyInputs[provider.id]?.trim()
-                            }
-                          >
-                            {saving === provider.id && (
-                              <LoadingHairline inline />
-                            )}
-                            Save
-                          </Button>
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </CardContent>
                 </Card>
               </TabsContent>
