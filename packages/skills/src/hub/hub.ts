@@ -195,7 +195,6 @@ export class SkillHub {
       );
     }
 
-    // Lockfile collision.
     const existing = this.lockfile.get(candidateName);
     if (existing && !opts.force) {
       throw new HubError(
@@ -203,9 +202,18 @@ export class SkillHub {
         "ALREADY_INSTALLED"
       );
     }
-
-    // Atomic write: stage → rename.
     const target = skillTargetDir(this.skillsDir, candidateName);
+    if (!existing && fs.existsSync(target)) {
+      // Locally-authored skill (created via `POST /api/skills` or
+      // `skills add`) owns this name. Refuse to clobber — even with
+      // --force, since the hub shouldn't take over files it didn't put
+      // there. Operator must remove the local skill first.
+      throw new HubError(
+        `skill '${candidateName}' exists locally (not hub-managed) — remove it first with 'skills remove ${candidateName}'`,
+        "LOCAL_SKILL_EXISTS"
+      );
+    }
+
     const stagingRoot = stagingDir(this.skillsDir);
     fs.mkdirSync(stagingRoot, { recursive: true });
     const staging = path.join(
