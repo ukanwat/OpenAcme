@@ -48,6 +48,10 @@ import {
   memoryStatusCommand,
   memoryLsCommand,
 } from "./commands/memory.js";
+import {
+  agentsCatalogCommand,
+  agentsImportCommand,
+} from "./commands/agents.js";
 import { showBanner } from "./tui/banner.js";
 
 const pkg = JSON.parse(
@@ -335,6 +339,26 @@ memory
   .description("Recursive 2-deep listing of an agent's memory dir (same format the agent sees)")
   .option("-d, --data-dir <path>", "Data directory (default: ~/.openacme)")
   .action(memoryLsCommand);
+
+const agents = program
+  .command("agents")
+  .description("Manage agents in the workforce (browse the catalog, import templates)");
+
+agents
+  .command("catalog")
+  .description("List bundled agent templates that can be imported")
+  .option("-d, --data-dir <path>", "Data directory (default: ~/.openacme)")
+  .action(agentsCatalogCommand);
+
+agents
+  .command("import <templateId>")
+  .description("Import an agent from the bundled catalog. Auto-installs any recommended skills + MCP servers; copies resources into the new agent's folder. The same template can be imported repeatedly — ids auto-increment.")
+  .option("-d, --data-dir <path>", "Data directory (default: ~/.openacme)")
+  .option("--id <id>", "Override the auto-generated agent id (must match safe-id charset)")
+  .option("--name <name>", "Override the template's display name")
+  .action((templateId: string, opts: { dataDir?: string; id?: string; name?: string }) =>
+    agentsImportCommand(templateId, opts)
+  );
 
 // Resolve the data dir once so the LLM provider's OAuth path can find auth.json
 // without us threading the path through every call site.
