@@ -16,8 +16,13 @@ export {
   toolCallContext,
   getCurrentSessionId,
   getCurrentAgentId,
+  getCurrentWorkspaceDir,
   type ToolCallContext,
 } from "./session-context.js";
+export {
+  closeShellSession,
+  closeAllShellSessions,
+} from "./internal/shell-session.js";
 export {
   bindMemory,
   type MemoryBindings,

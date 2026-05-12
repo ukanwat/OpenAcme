@@ -33,7 +33,7 @@ import {
   MODEL_PRESETS,
   detectProviderCredentials,
 } from "@openacme/llm-provider";
-import { registry as toolRegistry } from "@openacme/tools";
+import { registry as toolRegistry, closeShellSession } from "@openacme/tools";
 import { MCPClient } from "@openacme/mcp-client";
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
@@ -199,6 +199,8 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
     if (!session) return c.json({ error: "Session not found" }, 404);
     // messages cascade-delete via FK; FTS triggers keep the index in sync
     manager.sessionStore.delete(id);
+    // Reap the per-session bash subprocess if one was running.
+    closeShellSession(session.agentId, id);
     return c.json({ success: true });
   });
 

@@ -171,6 +171,7 @@ export function createAgentStore(agentsDir: string): AgentStore {
       const filePath = path.join(folder, AGENT_FILE);
       const folderExistedBefore = fs.existsSync(folder);
       ensureDir(folder);
+      ensureDir(path.join(folder, "workspace"));
       try {
         fs.writeFileSync(filePath, serializeAgent(validated), "utf-8");
       } catch (e) {

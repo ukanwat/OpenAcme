@@ -18,6 +18,8 @@ import { AsyncLocalStorage } from "node:async_hooks";
 export interface ToolCallContext {
   sessionId: string;
   agentId: string;
+  /** Default cwd for filesystem/shell tools — the agent's workspace dir. */
+  workspaceDir: string;
 }
 
 export const toolCallContext = new AsyncLocalStorage<ToolCallContext>();
@@ -28,4 +30,8 @@ export function getCurrentSessionId(): string | null {
 
 export function getCurrentAgentId(): string | null {
   return toolCallContext.getStore()?.agentId ?? null;
+}
+
+export function getCurrentWorkspaceDir(): string | null {
+  return toolCallContext.getStore()?.workspaceDir ?? null;
 }

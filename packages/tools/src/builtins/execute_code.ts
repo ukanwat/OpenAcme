@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
 import { registry } from "../registry.js";
+import { getCurrentWorkspaceDir } from "../session-context.js";
 
 /**
  * Persistent Python REPL tool. One sidecar process per agent process —
@@ -58,7 +59,12 @@ class PythonRepl {
     if (!existsSync(SIDECAR_PATH)) {
       throw new Error(`execute_code sidecar not found at ${SIDECAR_PATH}`);
     }
+    // Spawn the sidecar in the agent's workspace dir so relative paths in
+    // Python code (open("notes.txt"), pd.read_csv("data.csv")) land in the
+    // same place as `write_file`. The agent can `os.chdir()` to navigate.
+    const cwd = getCurrentWorkspaceDir() ?? process.cwd();
     const proc = spawn(PYTHON_BIN, ["-u", SIDECAR_PATH], {
+      cwd,
       stdio: ["pipe", "pipe", "pipe"],
     });
     // Don't pin the Node event loop on the sidecar — the host CLI must be

@@ -57,6 +57,15 @@ describe("file-based AgentStore (folder + AGENT.md)", () => {
     expect(fs.existsSync(path.join(agentsDir, "foo", "AGENT.md"))).toBe(true);
   });
 
+  it("upsert also creates the per-agent workspace/ subdirectory", () => {
+    const agentsDir = path.join(dir, "agents");
+    const store = createAgentStore(agentsDir);
+    store.upsert(makeAgent("foo"));
+    const ws = path.join(agentsDir, "foo", "workspace");
+    expect(fs.existsSync(ws)).toBe(true);
+    expect(fs.statSync(ws).isDirectory()).toBe(true);
+  });
+
   it("AGENT.md has frontmatter for structured fields and body for persona", () => {
     const store = createAgentStore(dir);
     store.upsert(

@@ -3,6 +3,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { registry } from "../registry.js";
 import { lock } from "../internal/lock.js";
+import { getCurrentWorkspaceDir } from "../session-context.js";
 
 type Replacer = (content: string, find: string) => Generator<string, void, unknown>;
 
@@ -202,7 +203,8 @@ registry.register({
       });
     }
 
-    const resolved = path.resolve(filePath);
+    const baseCwd = getCurrentWorkspaceDir() ?? process.cwd();
+    const resolved = path.resolve(baseCwd, filePath);
 
     return lock(resolved, async () => {
       let exists = true;

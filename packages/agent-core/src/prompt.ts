@@ -150,6 +150,10 @@ export function buildSystemPrompt(options: {
   platformHints?: string;
   /** Verbatim AGENTS.md contents. Empty/undefined ⇒ section omitted. */
   agentsMd?: string;
+  /** Agent's workspace dir. When set, a short "## Workspace" section is
+   *  injected so the agent knows where its default cwd is and that shell
+   *  state persists across calls. */
+  workspaceDir?: string;
 }): string {
   const parts: string[] = [];
 
@@ -160,6 +164,19 @@ export function buildSystemPrompt(options: {
   if (options.agentsMd && options.agentsMd.trim().length > 0) {
     parts.push(
       `\nShared context (from AGENTS.md):\n\n${options.agentsMd.trim()}`
+    );
+  }
+
+  // Workspace section — tells the agent its default cwd + that shell
+  // state persists across calls within this session.
+  if (options.workspaceDir && options.workspaceDir.length > 0) {
+    parts.push(
+      `\n## Workspace\nYour workspace directory is \`${options.workspaceDir}\`. ` +
+        `Shell commands, file ops, and the Python REPL default to this location. ` +
+        `Your shell maintains state across calls in this session — \`cd\`, ` +
+        `exported environment variables, and shell functions all persist. ` +
+        `Absolute paths are still allowed; the workspace is just the default, ` +
+        `not a sandbox.`
     );
   }
 
