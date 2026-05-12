@@ -59,7 +59,14 @@ export async function setupCommand(opts: { dataDir?: string }) {
   const existingAgents = agentStore.list();
 
   if (existingAgents.length === 0) {
-    return await configureProviderAndCreateAgent(dataDir, agentStore, []);
+    // First-run: bundle provider config with agent creation so the user has
+    // a working setup at the end. The two are still distinct steps inside.
+    return await configureProviderAndCreateAgent(
+      dataDir,
+      agentStore,
+      [],
+      { withAgent: true }
+    );
   }
 
   // Existing install — branch on intent.
@@ -68,13 +75,13 @@ export async function setupCommand(opts: { dataDir?: string }) {
     options: [
       {
         value: "reuse",
-        label: "Add a new agent (reuse an existing provider)",
-        hint: "skips auth — fastest",
+        label: "Add a new agent",
+        hint: "uses a provider you've already configured",
       },
       {
         value: "configure",
-        label: "Configure a new provider and create an agent for it",
-        hint: "OAuth or API key flow",
+        label: "Configure a new provider",
+        hint: "auth setup only — no agent created",
       },
       { value: "cancel", label: "Cancel", hint: "no changes" },
     ],
@@ -84,7 +91,12 @@ export async function setupCommand(opts: { dataDir?: string }) {
   if (intent === "reuse") {
     return await addAgentReusingProvider(agentsDir, agentStore, existingAgents);
   }
-  return await configureProviderAndCreateAgent(dataDir, agentStore, existingAgents);
+  return await configureProviderAndCreateAgent(
+    dataDir,
+    agentStore,
+    existingAgents,
+    { withAgent: false }
+  );
 }
 
 /**
@@ -210,7 +222,8 @@ async function addAgentReusingProvider(
 async function configureProviderAndCreateAgent(
   dataDir: string,
   agentStore: ReturnType<typeof createAgentStore>,
-  existingAgents: AgentDefinition[]
+  existingAgents: AgentDefinition[],
+  opts: { withAgent: boolean } = { withAgent: true }
 ): Promise<void> {
   const agentsDir = path.join(dataDir, "agents");
 
@@ -230,6 +243,25 @@ async function configureProviderAndCreateAgent(
   // 2. Auth
   const auth = await collectAuth(provider, dataDir);
   if (auth === "cancelled") return cancel();
+
+  // Provider-only flow: stop here. The agent-creation step is a separate
+  // concern (different menu choice). Tell the user how to take the next
+  // step explicitly rather than bundling it implicitly.
+  if (!opts.withAgent) {
+    const summaryLines = [
+      `Provider: ${provider.name}`,
+      `Auth: ${auth.mode === "oauth" ? "OAuth subscription" : "API key"}`,
+    ];
+    if (auth.mode === "oauth")
+      summaryLines.push(`Tokens: ${path.join(dataDir, "auth.json")}`);
+    if (auth.mode === "api_key" && provider.envVar)
+      summaryLines.push(`API key: ${path.join(dataDir, ".env")}`);
+    p.note(summaryLines.join("\n"), "Provider configured");
+    p.outro(
+      `Run \`openacme setup\` again and pick "Add a new agent" to create one that uses ${provider.name}.`
+    );
+    return;
+  }
 
   // 3. Model
   const modelId = await pickModel(provider.id);
