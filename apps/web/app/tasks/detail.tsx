@@ -250,7 +250,7 @@ export function TaskDetailPanel({
       </div>
 
       {/* Fixed footer with audit metadata */}
-      <div className="grid shrink-0 grid-cols-[auto_1fr_auto_1fr] items-baseline gap-x-5 gap-y-1 border-t border-paper-rule px-5 py-3 font-mono text-[12px] tabular-nums">
+      <div className="grid shrink-0 grid-cols-[auto_1fr_auto_1fr] items-baseline gap-x-5 gap-y-1 border-t border-paper-rule bg-paper-sunk px-5 py-3 font-mono text-[12px] tabular-nums">
         <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
           By
         </span>
@@ -724,6 +724,16 @@ function EventDescription({
       const text = message ?? action ?? "scheduler action";
       return <span className="italic text-ink-soft">{text}</span>;
     }
+    case "task_completed_run": {
+      const runs = payload?.runs as number | undefined;
+      const next = payload?.next_fire as string | undefined;
+      return (
+        <span>
+          run {runs ?? "?"} complete
+          {next && <span className="text-ink-faint"> — next fire {next}</span>}
+        </span>
+      );
+    }
     default:
       return <span className="text-ink">{event.kind}</span>;
   }
@@ -1078,7 +1088,7 @@ function RecurrenceEditor({
   };
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3 bg-paper-sunk px-4 py-4">
       <SectionEyebrow rule={false}>Recurrence</SectionEyebrow>
       <Select value={kind} onValueChange={(v) => setKind(v as RecurrenceKind)}>
         <SelectTrigger className="w-full">

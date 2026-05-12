@@ -17,7 +17,7 @@ colors:
   plot-red: "oklch(58% 0.18 28)"
   plot-red-deep: "oklch(48% 0.18 28)"
   signal-amber: "oklch(78% 0.14 75)"
-  signal-cyan: "oklch(72% 0.10 215)"
+  signal-blue: "oklch(60% 0.15 250)"
   signal-green: "oklch(60% 0.13 150)"
   warn-ochre: "oklch(72% 0.14 75)"
   destructive: "oklch(54% 0.22 28)"
@@ -175,7 +175,7 @@ Each signal color is pinned to one semantic role on a different temporal / agenc
 - **Plot Red** — **NOW.** Active, streaming, focused, current selection. The agent generating tokens this second. The input the cursor is in. The sidebar row you've clicked into. Highest urgency. Coverage ≤10% of any screen.
 - **Signal Green** (`oklch(60% 0.13 150)`) — **OK.** Powered / healthy / standing-by. Daemon is up. Agent process is online. MCP server is connected. Long-running process is alive. Ambient condition, not an event. Coverage ≤2%. Never used for "done" — done is terminal and quiet (ink-soft), not a positive signal.
 - **Warn Ochre** (`oklch(72% 0.14 75)`) — **WAIT.** Action blocked or paused. `blocked` task status. Scheduler-parked task. Config drift. Degraded MCP. Distinct from Destructive (irreversible). Coverage ≤2%.
-- **Signal Cyan** (`oklch(72% 0.10 215)`) — **LATER / ELSEWHERE.** Visible but not yours to act on yet. Future-`start_at` task. Read-only awareness of work in another session. Pending file attachment before commit. Inbound delegation tracking. Coverage ≤2%.
+- **Signal Blue** (`oklch(60% 0.15 250)`) — **LATER / ELSEWHERE.** Visible but not yours to act on yet. Future-`start_at` task. Read-only awareness of work in another session. Pending file attachment before commit. Inbound delegation tracking. Coverage ≤2%.
 
 **Signal Amber** (`oklch(78% 0.14 75)`) remains declared as a near-cousin of Warn Ochre at higher lightness — used only for transitional micro-states (input-streaming spinner, transient toast) where Ochre would feel too heavy. Treat Ochre as the canonical "wait" color and reach for Amber only when the state is brief enough that a stronger color would be noise.
 
@@ -279,6 +279,10 @@ A 6px circular dot followed by a Geist Mono UPPERCASE label, separated by 6px. T
 
 The label is mandatory — no dot without a label. This satisfies the "no color-only state" accessibility rule.
 
+Pulse is reserved for the chat streaming cursor (above) and the equivalent in-flight assistant indicator. Status dots elsewhere — daemon-up, empty-state previews, sidebar liveness — do **not** pulse. A screen with many simultaneous pulsing dots becomes visual noise; a single bounded pulse on the active stream is the only allowed exception.
+
+This dot+label primitive is **standalone**. It is not nested inside Badge / chip components — those encode state via the badge chassis itself (variant fill or recessed mono), with the label as the encoding. The two primitives stay separate.
+
 ### Command Palette (signature component)
 - Centered, fixed-width modal. `paper-sunk` background, hairline border, 0 radius. No backdrop blur (forbidden by no-shadow / no-glass rules); the overlay dim is a flat 60% `ink` overlay.
 - Geist Mono UPPERCASE 11px labels for section groups (e.g. `AGENTS`, `SESSIONS`, `ACTIONS`). Geist Sans 14px for action labels. Mono 12px for keyboard shortcuts on the right edge.
@@ -309,6 +313,7 @@ The label is mandatory — no dot without a label. This satisfies the "no color-
 - **Don't** use `border-radius` greater than 0 anywhere. No "rounded-md", no "rounded-lg", no "rounded-full" (avatars are a separate primitive).
 - **Don't** introduce a third typeface. Geist Sans + Geist Mono is the system. No serifs for "editorial moments", no display fonts for headers.
 - **Don't** use Plot Red as a brand color, a background fill, a category tag, a hyperlink color, or anything decorative. Plot Red is reserved for *active* state and focus.
+- **Don't** mono-everything as a reflex. The four-color signal system (§2) names each chroma for one role with a 2% budget — Plot Red NOW, Signal Green OK, Warn Ochre WAIT, Signal Blue LATER. Stripping them from BLOCKED badges, daemon-up indicators, future-start_at meta, MCP awaiting-oauth states, or any other surface that maps to one of those roles violates the Single-Role Rule. Mono-by-default applies to non-state surfaces; state surfaces get their assigned signal color.
 - **Don't** use pure greys. Every neutral has chroma > 0. `#000` and `#fff` are forbidden.
 - **Don't** use cards with floating shadows or rounded corners. Don't nest cards. The "card grid" SaaS pattern is forbidden.
 - **Don't** use side-stripe `border-left` on cards or list items as a colored stripe accent. The one allowed exception is the 2px Plot Red marker on the active sidebar / palette row, where the whole item is the affordance.

@@ -25,7 +25,7 @@
 
   /* Functional state */
   --signal-amber: oklch(78% 0.14 75);
-  --signal-cyan: oklch(72% 0.10 215);
+  --signal-blue: oklch(60% 0.15 250);
   --signal-green: oklch(60% 0.13 150);
   --warn-ochre: oklch(72% 0.14 75);
 
@@ -104,10 +104,10 @@
   --plot-red-deep: oklch(54% 0.19 28);
 
   /* Functional state — bumped chroma in dark so they don't read washed
-   * on graphite (signal-amber/cyan/ochre at light-mode chroma desaturate
+   * on graphite (signal-amber/blue/ochre at light-mode chroma desaturate
    * visibly against the cool dark surface). */
   --signal-amber: oklch(80% 0.17 75);
-  --signal-cyan: oklch(74% 0.13 215);
+  --signal-blue: oklch(72% 0.17 250);
   --signal-green: oklch(72% 0.16 150);
   --warn-ochre: oklch(74% 0.17 75);
 
@@ -196,7 +196,7 @@
   --color-plot-red: var(--plot-red);
   --color-plot-red-deep: var(--plot-red-deep);
   --color-signal-amber: var(--signal-amber);
-  --color-signal-cyan: var(--signal-cyan);
+  --color-signal-blue: var(--signal-blue);
   --color-signal-green: var(--signal-green);
   --color-warn-ochre: var(--warn-ochre);
   --color-code-surface: var(--code-surface);

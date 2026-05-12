@@ -249,7 +249,7 @@ function StatusDot({ status }: { status: Status }) {
   }
   const cls =
     status === "running"
-      ? "bg-plot-red pulse-live"
+      ? "bg-plot-red"
       : status === "error"
         ? "bg-destructive"
         : "bg-ink";

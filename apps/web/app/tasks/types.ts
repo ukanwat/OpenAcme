@@ -136,6 +136,22 @@ export function formatRelativeFromUnix(unixSec: number): string {
   return `${d}d ago`;
 }
 
+// Humanized future delta: "in 5m", "in 3h", "in 2d". For past timestamps,
+// falls back to ISO via formatDate so callers don't have to branch.
+export function formatRelativeFutureFromIso(iso: string): string {
+  const ts = new Date(iso).getTime();
+  if (!Number.isFinite(ts)) return iso;
+  const diffSec = Math.floor((ts - Date.now()) / 1000);
+  if (diffSec <= 0) return formatDate(iso);
+  if (diffSec < 60) return "in <1m";
+  const m = Math.floor(diffSec / 60);
+  if (m < 60) return `in ${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `in ${h}h`;
+  const d = Math.floor(h / 24);
+  return `in ${d}d`;
+}
+
 export function shortRecurrenceLabel(rec: Recurrence): string {
   if (rec.kind === "cron") {
     return rec.tz ? `${rec.expr} (${rec.tz})` : rec.expr;
