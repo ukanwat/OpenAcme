@@ -25,16 +25,24 @@ You write the briefs. They do the work. You read the summary when you check in.
 
 ### What's wired
 
-- Multiple agent definitions — per-agent model / tools / skills / MCP / system prompt.
+- Multiple agent definitions — per-agent model / tools / skills / MCP / system prompt / memory / workspace / resources.
+- Each agent has a public **`role`** (third-person paragraph other agents read) on top of its private **`persona`** (its own system prompt). Coworkers look each other up via `agent_list`.
 - Per-agent chat in both web and TUI, backed by the same Hono server.
 - Local SQLite + FTS5 history; no cloud round-trip.
 - ChatGPT / Claude OAuth so subscribers don't double-pay.
 - MCP tools, skills, file attachments.
+- Per-agent workspace — `~/.openacme/agents/<id>/workspace/` is the default cwd; shell state (`cd`, env vars, functions) persists across calls within a session.
+- Per-agent resources — drop files into `~/.openacme/agents/<id>/resources/` and they appear in the agent's prompt with absolute paths.
+- Shared workforce context — `~/.openacme/AGENTS.md` is merged into every agent's prompt (editable in Settings → Context).
+- Per-agent persistent memory — Anthropic memory_20250818 substrate, Claude Code MEMORY.md + per-topic-file convention.
+- Managed Chrome (`@openacme/browser`) — one Chrome process per install, shared user-data-dir (so a human-side login is inherited by every agent), per-agent tab ownership.
+- Skills Hub — install + track skills from GitHub, marketplaces, well-known sources, raw URLs, and local directories with lockfile + audit log + atomic swap.
 - Daemon (launchd / systemd-user) with auto-start and auto-restart.
 - Remote founder access via `--expose` + secret cookie.
 - Autonomous wake-ups — the task scheduler runs `start_at` and recurring tasks (cron + interval) without a user in the loop.
 - Scheduled jobs — `task_create` accepts `start_at` (one-shot) and `recurrence` (cron / interval); deps + auto-blocked/unblocked transitions.
 - Cross-agent assignment — any agent can `task_create({assignee: other})` and the scheduler picks it up under the assignee's queue.
+- Task comments + events — discussion and the signal log live in SQLite, not in the task body.
 
 ---
 
@@ -42,9 +50,11 @@ You write the briefs. They do the work. You read the summary when you check in.
 
 - 🔌 **Six model providers** — Anthropic / OpenAI / Google / OpenRouter / Ollama / any OpenAI-compatible endpoint. Pick per agent.
 - 🔑 **Subscription-aware auth.** OAuth into ChatGPT (Plus/Pro) or Claude (Pro/Max); API keys remain a fallback. Don't pay your provider twice.
-- 🛠 **Tools that compose.** Built-in shell + filesystem + session search; add any MCP server and its tools register automatically.
+- 🛠 **Tools that compose.** Built-in shell + filesystem + browser + session search; add any MCP server and its tools register automatically.
+- 🌐 **Managed Chrome.** Headed by default with a shared user-data-dir — log into accounts once, every agent inherits the session. Per-agent tab ownership so they don't trample each other.
 - 💾 **Local-only state.** SQLite + FTS5 in `~/.openacme/`. No cloud, no telemetry.
-- 🧠 **Skills as progressive context.** `SKILL.md` files indexed as tags; the body is fetched on demand.
+- 🧠 **Skills as progressive context.** `SKILL.md` files indexed as tags; the body is fetched on demand. Skills Hub installs and tracks them from GitHub, marketplaces, and URLs.
+- 📒 **Per-agent memory.** Anthropic memory_20250818 substrate with a Claude Code-style MEMORY.md index + per-topic files.
 - 🖥 **Two interfaces, one runtime.** React-on-Ink TUI and a Next.js web UI, both backed by the same Hono server.
 - 🔄 **Always-on daemon.** launchd (macOS) or systemd-user (Linux); survives reboots and crashes.
 
@@ -239,12 +249,23 @@ behavior:
 
 skills:
   directory: skills
+
+browser:
+  enabled: true
+  port: 9322                # Chrome --remote-debugging-port
+  headless: false           # headed so the user can log into shared accounts
 ```
 
 Per-agent `model` / `tools` / `mcpServers` / `skills` override the root.
 Schema source of truth: `packages/config/src/schema.ts`.
 
-Agents are stored as files under `~/.openacme/agents/<id>/AGENT.md` — editable directly in any text editor.
+Agents are stored as folders under `~/.openacme/agents/<id>/`:
+- `AGENT.md` — YAML frontmatter (`name`, `role`, `persona`, `model`, `tools`, …) + system-prompt body.
+- `workspace/` — the agent's default cwd. Shell state persists across calls within a session.
+- `resources/` — drop files here and they appear in the agent's prompt with absolute paths.
+- `memory/` — `MEMORY.md` index + per-topic files.
+
+Workforce-wide context goes in `~/.openacme/AGENTS.md` (editable from Settings → Context in the web UI) and is merged into every agent's prompt.
 
 ---
 
@@ -261,13 +282,14 @@ Turborepo + pnpm 9. `apps/*` for binaries and UIs, `packages/*` for libraries.
 | `@openacme/server` | Hono HTTP server + `AgentManager` + auth middleware |
 | `@openacme/llm-provider` | Six provider factories with OAuth-aware fetch |
 | `@openacme/mcp-client` | MCP stdio + HTTP/SSE; tool discovery into the registry |
-| `@openacme/tools` | `ToolRegistry` + built-in tools |
-| `@openacme/db` | better-sqlite3 + Drizzle, FTS5-backed message search |
-| `@openacme/memory` | Per-agent persistent `MEMORY.md` store |
-| `@openacme/tasks` | Per-agent task store (filesystem-backed) |
+| `@openacme/tools` | `ToolRegistry` + built-in tools (shell, FS, web, browser, tasks, …) |
+| `@openacme/browser` | Managed Chrome via CDP — shared user-data-dir, per-agent tab ownership |
+| `@openacme/db` | better-sqlite3 + Drizzle; sessions / messages / task comments + events / FTS5 |
+| `@openacme/memory` | Per-agent persistent `MEMORY.md` (Anthropic memory_20250818 + Claude Code convention) |
+| `@openacme/tasks` | Workforce task store (filesystem; isolation by assignee) |
 | `@openacme/config` | Zod schema + YAML/JSON loader + secret helpers |
 | `@openacme/auth` | OAuth (ChatGPT, Claude), token store, body/response transforms |
-| `@openacme/skills` | `SKILL.md` discovery + progressive disclosure |
+| `@openacme/skills` | `SKILL.md` discovery + progressive disclosure + multi-source Skills Hub |
 | `@repo/*` | Internal tooling (ui, eslint-config, typescript-config) |
 
 ---
@@ -276,22 +298,24 @@ Turborepo + pnpm 9. `apps/*` for binaries and UIs, `packages/*` for libraries.
 
 | Tool | What it does |
 |---|---|
-| `shell` | Run a shell command (timeout · 50KB output cap · destructive-pattern warning) |
+| `shell` | Run a shell command in the agent's workspace; persistent shell per session (`cd` / env / functions stick). 50KB output cap, destructive-pattern warning |
 | `read_file` | Read a file, optionally `maxLines` |
 | `write_file` | Write a file, creating parent dirs |
 | `edit` | In-place find/replace edits |
 | `apply_patch` | Apply a V4A-format multi-file patch |
 | `list_files` | List a directory |
 | `search_files` | Grep across files |
-| `session_search` | FTS5 search across past conversations |
-| `skill_view` | Fetch a skill's full body on demand |
+| `session_search` | FTS5 search across past conversations (system tool) |
+| `skill_view` | Fetch a skill's full body on demand (system tool) |
 | `web_search` / `web_extract` | Tavily / Exa / Brave search + page extraction |
 | `execute_code` | Sandboxed code execution (Python REPL) |
 | `process` | Background process management |
-| `memory` | Read/write the agent's `MEMORY.md` |
-| `task_list` / `task_view` / `task_create` / `task_update` | Per-agent task store — `start_at`, `depends_on`, `recurrence` (cron / interval) all execute via the scheduler |
+| `memory` | Read/write the agent's `MEMORY.md` and per-topic memory files (system tool) |
+| `agent_list` | Look up coworkers — id, name, role, peer-notes (system tool) |
+| `browser_*` | Managed Chrome via CDP — `navigate`, `snapshot`, `click`, `type`, `press_key`, `take_screenshot`, `wait_for`, `evaluate`, `console_messages`, `tabs`, `act` |
+| `task_list` / `task_view` / `task_create` / `task_update` / `task_comment` / `task_comments` | Workforce task store (system tools) — `start_at`, `depends_on`, `recurrence` (cron / interval) all execute via the scheduler; comments + events live alongside in SQLite |
 
-Plus any MCP-server tool, namespaced as `mcp-<server>__<tool>`.
+System tools are always on and not user-configurable. Plus any MCP-server tool, namespaced as `mcp-<server>__<tool>`.
 
 ---
 

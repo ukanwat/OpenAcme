@@ -2,9 +2,9 @@
 
 TypeScript agent platform. Multi-provider LLM with streaming tool-calls, SQLite-backed sessions, MCP integration, OAuth (ChatGPT / Claude subscriptions), an Ink-based CLI TUI, and a Next.js web UI served by the Hono server.
 
-**Design lens.** This is an *AI workforce* platform — a structured set of role-specialized agents working for a small human team — not a single-agent assistant. Each agent carries a `name`, a `role` (third-person paragraph for coworkers), and a `persona` (second-person system prompt), and owns its own config, model, tools, skills, MCP servers, sessions, and tasks. When designing new state or behavior, the question is "does this hold for N agents working in parallel under different roles?" — not "does this work for the agent." Anywhere you'd reach for a global table or a singleton, default to scoping by `agent_id` instead. Cross-agent work — one agent assigning a task to another, one agent looking up coworkers via `agent_list` — is a first-class primitive, so anything you add should be addressable by agent.
+**Design lens.** This is an *AI workforce* platform — a structured set of role-specialized agents working for a small human team — not a single-agent assistant. Each agent carries a `name`, a `role` (third-person paragraph for coworkers), and a `persona` (second-person system prompt), and owns its own config, model, tools, skills, MCP servers, sessions, tasks, memory, workspace, and resources. When designing new state or behavior, the question is "does this hold for N agents working in parallel under different roles?" — not "does this work for the agent." Anywhere you'd reach for a global table or a singleton, default to scoping by `agent_id` instead. Cross-agent work — one agent assigning a task to another, one agent looking up coworkers via `agent_list` — is a first-class primitive, so anything you add should be addressable by agent.
 
-The task subsystem runs end-to-end today: per-agent file-backed `TaskStore` (`packages/tasks`), `task_*` system tools (`packages/tools/src/builtins/tasks.ts`), and `TaskScheduler` (`packages/server/src/task-scheduler.ts`) that lazily allocates sessions, arms future `start_at`s via croner, runs the agent autonomously through `Agent.runAutonomous`, and self-resets recurring tasks (cron + interval) on `done`. Any agent can `task_create({assignee: other})`.
+The task subsystem runs end-to-end today: filesystem `TaskStore` (`packages/tasks`, shared across the workforce; isolation by `assignee`), `task_*` system tools (`packages/tools/src/builtins/tasks.ts`), task comments + events in SQLite, and `TaskScheduler` (`packages/server/src/task-scheduler.ts`) that lazily allocates sessions, arms future `start_at`s via croner, runs the agent autonomously through `Agent.runAutonomous`, and self-resets recurring tasks (cron + interval) on `done`. Any agent can `task_create({assignee: other})`.
 
 ---
 
@@ -26,20 +26,25 @@ packages/
   mcp-client/   # MCP stdio + HTTP/SSE transports; tool discovery into registry
   tools/        # ToolRegistry + built-ins (shell, read_file, write_file, edit,
                 #   apply_patch, list_files, search_files, session_search, skill_view,
-                #   web_search, web_extract, execute_code, process, memory, task_*)
-  db/           # better-sqlite3 + Drizzle; sessions/messages/user_profiles + FTS5
-                #   (agents are filesystem-backed under <dataDir>/agents/, not in the DB)
-  memory/       # Per-agent persistent MEMORY.md store
-  tasks/        # Per-agent task store (filesystem-backed)
+                #   web_search, web_extract, execute_code, process, memory, task_*,
+                #   agent_list, browser_*)
+  browser/      # Managed Chrome via CDP — shared user-data-dir, per-agent tab ownership
+  db/           # better-sqlite3 + Drizzle; sessions/messages/user_profiles +
+                #   task_comments/task_events + FTS5 (agents are filesystem-backed
+                #   under <dataDir>/agents/, not in the DB)
+  memory/       # Per-agent persistent MEMORY.md store (Anthropic memory_20250818 +
+                #   Claude Code index/topic-file convention)
+  tasks/        # Workforce task store (filesystem; isolation by assignee)
   config/       # Zod schema + YAML/JSON loader (~/.openacme/config.yaml)
   auth/         # OAuth (ChatGPT subscription, Claude Pro), token store, body/response
                 #   transforms, refresh
-  skills/       # SKILL.md discovery, progressive disclosure (index → full content)
+  skills/       # SKILL.md discovery, progressive disclosure + multi-source hub
+                #   (GitHub, marketplaces, URL, well-known, local) under hub/
   ui/           # Shared React components (minimal)
   eslint-config, typescript-config   # @repo/* internal
 ```
 
-Default data dir: `~/.openacme/` (`config.yaml`, `auth.json` mode 0600, `state.db`).
+Default data dir: `~/.openacme/` (`config.yaml`, `auth.json` mode 0600, `state.db`, `AGENTS.md`, `agents/<id>/{AGENT.md,workspace/,resources/,memory/}`, `tasks/<id>.md`, `skills/`, `browser-profile/`).
 Default server: `127.0.0.1:3210`. Default model: `openrouter` + `anthropic/claude-sonnet-4-20250514`.
 
 ---
@@ -160,7 +165,8 @@ Subcommands (`apps/cli/src/commands/`):
 - `chat` — terminal chat. **In-process**: instantiates `AgentManager` directly, calls `agent.runStream()`, and consumes `result.fullStream` — no HTTP, no SSE wire format.
 - `login [--provider] [--device]`, `logout` — OAuth flows in `@openacme/auth`.
 - `secret show|rotate` — manage the access secret used for non-loopback web access.
-- `skills list|view|add|remove` — manage installed skills.
+- `skills list|view|add|remove` — manage locally-authored skills.
+- `skills install|search|inspect|update|uninstall|audit|tap …` — Skills Hub: install + track skills from GitHub, marketplaces, URLs, etc. (see `apps/cli/src/commands/skills-hub.ts`).
 - `mcp list|status|remove|test` — manage MCP servers (add/edit happens by editing `<dataDir>/mcp.json` directly).
 - `memory status|show <agentId>` — inspect per-agent persistent MEMORY.md.
 
@@ -170,7 +176,7 @@ TUI (`apps/cli/src/tui/`) is React-on-Ink. `render.tsx` mounts the app; `state.t
 
 ## Web
 
-`apps/web/` — Next.js 16 App Router. Pages: `/` (chat), `/agents`, `/settings`, `/skills`. Tailwind + Radix primitives + react-markdown.
+`apps/web/` — Next.js 16 App Router. Pages: `/` (chat), `/agents`, `/tasks`, `/skills` (Browse + Sources tabs for the Skills Hub), `/settings` (model/auth/MCP/Context — the **Context** tab edits `<dataDir>/AGENTS.md`). Tailwind + Radix primitives + react-markdown. First-run wizard at `/setup` handles provider credentials when no auth is configured.
 
 **One URL, dev and published: `http://127.0.0.1:3210`.** In dev, Hono fronts both API and UI — `/api/*` is handled in-process; everything else (including `_next/*` HMR over WebSocket) is proxied to a Next dev server bound to a private loopback port. In published installs, the static export at `packages/server/web/` (copied in by `prepack`) is served by Hono on the same `:3210`. `next.config.js`'s rewrites are gone — same-origin works because the browser only ever talks to `:3210`.
 
@@ -207,9 +213,9 @@ Never log raw tokens. Never write tokens anywhere except via `store.ts`.
 
 ## Config
 
-`packages/config/src/schema.ts` is the source of truth. Top-level keys: `dataDir`, `model` (`ModelConfigSchema`), `server` (`port`, `host`), `behavior` (`AgentBehaviorSchema` — `maxSteps: 1000` + compression knobs), `skills` (`directory`, `autoGenerate`), `web` (`searchProvider`, `searchApiKey`). **Agents are not in `config.yaml`** — each lives at `<dataDir>/agents/<id>/AGENT.md` (YAML frontmatter + system-prompt body) and is read/written by `AgentStore`.
+`packages/config/src/schema.ts` is the source of truth. Top-level keys: `dataDir`, `model` (`ModelConfigSchema`), `server` (`port`, `host`), `behavior` (`AgentBehaviorSchema` — `maxSteps: 1000` + compression knobs), `skills` (`directory`, `autoGenerate`), `web` (`searchProvider`, `searchApiKey`), `browser` (`BrowserConfigSchema` — managed Chrome). **Agents are not in `config.yaml`** — each lives at `<dataDir>/agents/<id>/AGENT.md` (YAML frontmatter + system-prompt body) and is read/written by `AgentStore`. Shared workforce-wide context lives at `<dataDir>/AGENTS.md` and is merged into every agent's prompt.
 
-`AgentDefinitionSchema` defaults `tools` to `[shell, read_file, write_file, edit, apply_patch, list_files, search_files, session_search, skill_view, web_search, web_extract, execute_code, process, memory, task_list, task_view, task_create, task_update]`. Per-agent `model` overrides the root `model`. Other agent fields: `persona`, `mcpServers` (private), `mcpDisabled` (excludes from global catalog), `skills`, `memoryCharLimit` (default 2200).
+`AgentDefinitionSchema` defaults `tools` to environment-touching tools only: `[shell, read_file, write_file, edit, apply_patch, list_files, search_files, web_search, web_extract, execute_code, process, browser_*]`. The introspection / self-management tools (`memory`, `session_search`, `skill_view`, `task_*`, `agent_list`) are **always-on system tools** merged in by `AgentManager` — do not list them under `tools`. Per-agent `model` overrides the root `model`. Other agent fields: `role` (third-person paragraph for coworkers), `persona` (second-person system prompt), `mcpServers` (private), `mcpDisabled` (excludes from global catalog), `skills`, `memoryCharLimit` (default 2200).
 
 `loader.ts:loadConfig(dataDirOverride?)` resolves the data dir, reads `config.yaml` (or `.json`), merges with defaults, validates with Zod. **Always go through the schema** — don't read raw config elsewhere.
 
@@ -227,11 +233,40 @@ Progressive disclosure:
 
 Per-agent `skills` array filters which skills are exposed; empty/missing means all.
 
+### Skills Hub
+
+`packages/skills/src/hub/` — multi-source installer that writes into the same `<dataDir>/skills/<name>/` directory the registry reads from. Sources today: GitHub repos, generic Git URLs, raw URL / archive, Claude marketplace (`.claude-plugin/marketplace.json`), `.well-known/skills.json`, LobeHub, Skills.sh, ClawHub, and local directories. `SkillHub` (`hub.ts`) owns search/inspect/install/update/uninstall; bytes are staged under `<skillsDir>/_hub/staging/`, validated (`MAX_TOTAL_BYTES = 10MB`, `MAX_FILES = 200`, name + path traversal checks), then atomically swapped into `<skillsDir>/<name>/`.
+
+State: `lockfile.ts` (per-skill source + content hash + trust level), `audit.ts` (append-only install/update/uninstall log), `taps.ts` (user-added GitHub repos that act as extra "search this too" feeds), `index-cache.ts`. HTTP routes at `/api/skills/hub/*` in `routes/skills-hub.ts`; CLI at `apps/cli/src/commands/skills-hub.ts`; web UI in `apps/web/app/skills/`.
+
+Two install-time invariants worth remembering: (1) **refuse to clobber a locally-authored skill** — if `<skillsDir>/<name>/` has no lockfile entry, install fails with a conflict the user has to resolve; (2) name validation rejects collisions with reserved paths (`_hub`, `..`) so the hub can never overwrite its own state.
+
+---
+
+## AGENTS.md, workspace, resources
+
+Three filesystem surfaces that shape what an agent sees and where it works. All flow through `buildSystemPrompt` in `packages/agent-core/src/prompt.ts`.
+
+- **`<dataDir>/AGENTS.md`** — single shared context file injected into every agent's system prompt under `Shared context (from AGENTS.md):`. Loaded once at AgentManager start and on explicit save via `setAgentsMd()` (which evicts all cached Agents so the next chat rebuilds prompts). Web editor lives in Settings → Context. Empty/missing → section omitted. Restart-free updates because the manager evicts; CLI / external edits need a restart.
+- **`<dataDir>/agents/<id>/workspace/`** — per-agent default `cwd`. `AgentManager` mkdirs it idempotently on every agent build, threads it through `AgentConfig.workspaceDir`, and the prompt advertises it under `## Workspace`. **Per-session persistent shell:** the `shell` tool keeps a long-lived process per session so `cd`, exported env vars, and shell functions stick across calls. Absolute paths are still allowed; workspace is the default, not a sandbox.
+- **`<dataDir>/agents/<id>/resources/`** — user-supplied files (style guides, templates, sample data). `agentStore.listResources(id)` walks the dir; the prompt lists each entry under `## Resources` as `relPath (size) — absPath` so persona references like "use template.json" resolve to a real path. Cap of 50 lines in the prompt with a `... and N more` tail; agents can still `read_file` anything. Mutations go through `/api/agents/:id/resources` which calls `evictAgent` so the next prompt sees fresh listings.
+
+---
+
+## Browser (`@openacme/browser`)
+
+Managed Chrome via CDP for the whole workforce. **One Chrome process, shared user-data-dir (`<dataDir>/browser-profile/`), per-agent tab ownership.** Why shared: the human logs into accounts once and every agent inherits the session. Why per-tab ownership: agents don't trample each other's tabs.
+
+- `BrowserManager` (`packages/browser/src/manager.ts`) launches Chrome with `--remote-debugging-port` (default 9322, configurable via `browser.port`), reconnects transparently if the user closes the window. Headed by default (`browser.headless: false`) so the user can see what's happening and log in; flip to headless for CI.
+- Connects via `playwright-core`'s `connectOverCDP`. `refs.ts` maintains the agent-id → owned tab-ids map; `snapshot.ts` produces the accessibility tree the LLM acts on; `cdp.ts` wraps the low-level CDP calls.
+- Tools register from `packages/tools/src/builtins/browser/`: `browser_navigate`, `browser_snapshot`, `browser_click`, `browser_type`, `browser_press_key`, `browser_take_screenshot`, `browser_wait_for`, `browser_evaluate`, `browser_console_messages`, `browser_tabs`, `browser_act` (high-level scripted action). All bound to a live `BrowserManager` in `AgentManager` via `bindBrowserTools`.
+- Config under `browser` in `config.yaml`: `enabled` (default true), `executablePath`, `port`, `headless`, `noSandbox` (for Docker-as-root).
+
 ---
 
 ## Tasks & the scheduler
 
-`@openacme/tasks` is one filesystem store under `<dataDir>/tasks/<id>.md` (YAML frontmatter + markdown body), shared by all agents. Per-agent isolation is by `assignee`, not by store. `task_list` / `task_view` / `task_create` / `task_update` / `task_comment` / `task_comments` are **system tools** (always on, hidden from the picker; see `SYSTEM_TOOLS` in `packages/tools/src/system.ts`).
+`@openacme/tasks` is one filesystem store under `<dataDir>/tasks/<id>.md` (YAML frontmatter + markdown body), shared by all agents. Per-agent isolation is by `assignee`, not by store. `task_list` / `task_view` / `task_create` / `task_update` / `task_comment` / `task_comments` are **system tools** (always on, hidden from the picker; see `SYSTEM_TOOLS` in `packages/tools/src/system.ts`). `agent_list` is also a system tool — every agent can look up its coworkers (id, name, role) without it being a configurable choice.
 
 Tasks are documents (filesystem). **Comments and events live in SQLite** (`task_comments`, `task_events`) — they're message-shaped (high-frequency, append-only, queryable) and don't belong inside the task body. Body is the spec; comments are the discussion; events are the signal log.
 
@@ -403,3 +438,7 @@ Manual via Changesets — see `CONTRIBUTING.md`. Workflow `.github/workflows/rel
 | Change task state model / recurrence | `packages/tasks/src/{store,recurrence,types}.ts` |
 | Change autonomous wake / scheduling | `packages/server/src/task-scheduler.ts` (+ `Agent.runAutonomous` in `packages/agent-core/src/agent.ts`) |
 | Add a task tool | `packages/tools/src/builtins/tasks.ts` — register, add to `SYSTEM_TOOLS` in `packages/tools/src/system.ts` |
+| Add a browser tool | `packages/tools/src/builtins/browser/` + `BrowserManager` in `packages/browser/src/manager.ts` |
+| Add a Skills Hub source | `packages/skills/src/hub/sources/<name>.ts` + register in `packages/skills/src/hub/hub.ts` |
+| Edit shared workforce context | `<dataDir>/AGENTS.md` (web: Settings → Context) — restart-free; AgentManager evicts cached Agents on save |
+| Add an always-on system tool | register handler in `packages/tools/src/builtins/`, add name to `SYSTEM_TOOLS` in `packages/tools/src/system.ts` |
