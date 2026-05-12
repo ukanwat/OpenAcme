@@ -4,6 +4,7 @@ import { Suspense, useState, useEffect, useMemo, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Plus, Search, Trash2, Upload } from "lucide-react";
 import { LoadingHairline } from "@/app/components/ui/loading-hairline";
+import { ActiveMarker } from "@/app/components/ui/active-marker";
 import { toast } from "sonner";
 import { Sidebar } from "../components/Sidebar";
 import { API_BASE } from "../lib/api";
@@ -367,13 +368,7 @@ function SkillsPageInner() {
                           : "text-ink-soft hover:bg-paper-sunk hover:text-ink"
                       )}
                     >
-                      <span
-                        className={cn(
-                          "absolute inset-y-0 left-0 w-[2px] bg-plot-red transition-opacity",
-                          isActive ? "opacity-100" : "opacity-0"
-                        )}
-                        aria-hidden
-                      />
+                      <ActiveMarker active={isActive} />
                       <span className="truncate font-mono text-[13px] text-ink w-full">
                         {skill.name}
                       </span>

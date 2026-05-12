@@ -18,6 +18,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { Repeat2 } from "lucide-react";
 import { cn } from "@/app/lib/utils";
 import { Badge } from "@/app/components/ui/badge";
+import { TabularTick } from "@/app/components/ui/tabular-tick";
 import {
   STATUS_LABEL,
   STATUS_ORDER,
@@ -104,9 +105,10 @@ function BoardColumn({
         <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
           {STATUS_LABEL[status]}
         </span>
-        <span className="font-mono text-[11px] tabular-nums text-ink-soft">
-          {tasks.length}
-        </span>
+        <TabularTick
+          value={tasks.length}
+          className="text-[11px] text-ink-soft"
+        />
       </div>
       <div className="flex flex-1 flex-col gap-2 overflow-y-auto p-2">
         <SortableContext items={ids} strategy={verticalListSortingStrategy}>

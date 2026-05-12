@@ -8,8 +8,10 @@ import { Sidebar } from "../components/Sidebar";
 import { API_BASE } from "../lib/api";
 import { Button } from "@/app/components/ui/button";
 import { Badge } from "@/app/components/ui/badge";
-import { Skeleton } from "@/app/components/ui/skeleton";
 import { SectionEyebrow } from "@/app/components/ui/section-eyebrow";
+import { TabularTick } from "@/app/components/ui/tabular-tick";
+import { LoadingHairline } from "@/app/components/ui/loading-hairline";
+import { ActiveMarker } from "@/app/components/ui/active-marker";
 import {
   Dialog,
   DialogContent,
@@ -263,8 +265,8 @@ function TasksPageInner() {
               Tasks
             </span>
             <span className="h-3 w-px bg-paper-rule" aria-hidden />
-            <span className="font-mono text-[12px] tabular-nums text-ink-soft">
-              {tasks.length} filed
+            <span className="font-mono text-[12px] text-ink-soft">
+              <TabularTick value={tasks.length} /> filed
             </span>
             <span className="font-mono text-[11px] text-ink-faint">
               · agents file and complete; you observe
@@ -299,10 +301,11 @@ function TasksPageInner() {
         </header>
 
         {loading ? (
-          <div className="space-y-px p-4">
-            <Skeleton className="h-12 w-full" />
-            <Skeleton className="h-12 w-full" />
-            <Skeleton className="h-12 w-full" />
+          <div className="relative flex flex-1 items-end px-6 py-12 section-enter">
+            <span className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-faint">
+              Reading task store
+            </span>
+            <LoadingHairline />
           </div>
         ) : tasks.length === 0 ? (
           <EmptyTasksState />
@@ -357,7 +360,7 @@ function TasksPageInner() {
                   <div key={status}>
                     <div className="flex items-center justify-between border-b border-paper-rule px-4 py-2 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
                       <span>{STATUS_LABEL[status]}</span>
-                      <span className="tabular-nums">{items.length}</span>
+                      <TabularTick value={items.length} />
                     </div>
                     <div className="flex flex-col">
                       {items.map((t) => {
@@ -373,13 +376,7 @@ function TasksPageInner() {
                                 : "text-ink-soft hover:bg-paper-sunk hover:text-ink"
                             )}
                           >
-                            <span
-                              className={cn(
-                                "absolute inset-y-0 left-0 w-[2px] bg-plot-red transition-opacity",
-                                isActive ? "opacity-100" : "opacity-0"
-                              )}
-                              aria-hidden
-                            />
+                            <ActiveMarker active={isActive} />
                             <div className="flex w-full items-center gap-2">
                               <Badge
                                 variant={STATUS_VARIANT[t.status]}
