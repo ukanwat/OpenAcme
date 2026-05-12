@@ -10,8 +10,8 @@ import {
   AgentTemplateMetaFrontmatterSchema,
   type AgentTemplate,
   type AgentTemplateMeta,
-  type RecommendedMcpServer,
-  type RecommendedSkill,
+  type BundledMcpServer,
+  type BundledSkill,
   type ResourceFile,
 } from "./types.js";
 
@@ -25,8 +25,8 @@ const TEMPLATE_META_KEYS = new Set([
   "template_description",
   "template_tags",
   "default_id_hint",
-  "recommended_skills",
-  "recommended_mcp_servers",
+  "bundled_skills",
+  "bundled_mcp_servers",
 ]);
 
 /**
@@ -123,10 +123,9 @@ function loadTemplate(templateDir: string): AgentTemplate | null {
 
   const resources = listResources(templateDir);
 
-  const recommendedSkills: RecommendedSkill[] =
-    metaParsed.data.recommended_skills;
-  const recommendedMcpServers: RecommendedMcpServer[] =
-    metaParsed.data.recommended_mcp_servers;
+  const bundledSkills: BundledSkill[] = metaParsed.data.bundled_skills;
+  const bundledMcpServers: BundledMcpServer[] =
+    metaParsed.data.bundled_mcp_servers;
 
   const meta: AgentTemplateMeta = {
     id: metaParsed.data.template_id,
@@ -136,8 +135,8 @@ function loadTemplate(templateDir: string): AgentTemplate | null {
     defaultIdHint: metaParsed.data.default_id_hint,
     counts: {
       resources: resources.length,
-      skills: recommendedSkills.length,
-      mcpServers: recommendedMcpServers.length,
+      skills: bundledSkills.length,
+      mcpServers: bundledMcpServers.length,
     },
   };
 
@@ -150,8 +149,8 @@ function loadTemplate(templateDir: string): AgentTemplate | null {
     meta,
     agentFields: agentFields as Omit<AgentDefinition, "id">,
     resources,
-    recommendedSkills,
-    recommendedMcpServers,
+    bundledSkills,
+    bundledMcpServers,
   };
 }
 

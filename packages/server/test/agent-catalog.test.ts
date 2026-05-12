@@ -9,9 +9,10 @@ import { AgentManager } from "../src/agent-manager.js";
  * Full end-to-end import flow against a real (temp) data directory and a
  * real AgentManager. Exercises:
  *   - bundled-skill auto-install via the `builtin` SkillHub source
- *   - MCP server adds to the global mcp.json (uses Coder's recommended_mcp_servers — currently empty, so behavior is tested with a synthetic template-id-collision case)
+ *   - bundled-MCP add to global mcp.json (Coder bundles `filesystem`)
  *   - agent folder materialization (AGENT.md + workspace/ + resources/)
  *   - id auto-increment across repeated imports
+ *   - id derives from folder, not frontmatter
  */
 describe("AgentManager.importAgentFromTemplate (bundled Coder)", () => {
   let dataDir: string;
@@ -61,8 +62,21 @@ describe("AgentManager.importAgentFromTemplate (bundled Coder)", () => {
     );
     expect(agentMd).not.toContain("template_id:");
     expect(agentMd).not.toContain("default_id_hint:");
-    expect(agentMd).not.toContain("recommended_skills:");
-    expect(agentMd).not.toContain("recommended_mcp_servers:");
+    expect(agentMd).not.toContain("bundled_skills:");
+    expect(agentMd).not.toContain("bundled_mcp_servers:");
+    // id lives in the folder name, not the frontmatter
+    expect(agentMd).not.toMatch(/^id:\s/m);
+    // memoryCharLimit is a platform constant, not a per-agent field
+    expect(agentMd).not.toContain("memoryCharLimit:");
+
+    // MCP server installed into global mcp.json
+    const mcp = loadGlobalMcpServers(dataDir);
+    expect(mcp.filesystem).toBeDefined();
+    expect(mcp.filesystem?.command).toBe("npx");
+    const mcpAdded = result.manifest.workforce.mcpServers.find(
+      (m) => m.name === "filesystem"
+    );
+    expect(mcpAdded?.action).toBe("added");
 
     // Resource file is a byte-for-byte copy of the template
     const dst = readFileSync(
@@ -85,6 +99,11 @@ describe("AgentManager.importAgentFromTemplate (bundled Coder)", () => {
     expect(a.manifest.workforce.skills[0]?.action).toBe("installed");
     expect(b.manifest.workforce.skills[0]?.action).toBe("kept");
     expect(c.manifest.workforce.skills[0]?.action).toBe("kept");
+
+    // Same for MCP — added once, kept on repeats.
+    expect(a.manifest.workforce.mcpServers[0]?.action).toBe("added");
+    expect(b.manifest.workforce.mcpServers[0]?.action).toBe("kept");
+    expect(c.manifest.workforce.mcpServers[0]?.action).toBe("kept");
 
     // Each instance has its own resources copied fresh
     expect(b.manifest.agent.resourceFiles).toHaveLength(1);
@@ -136,11 +155,24 @@ describe("AgentManager.importAgentFromTemplate (bundled Coder)", () => {
     expect(stored?.role).toBe("Backend specialist");
   });
 
-  it("does not modify global mcp.json when the template has no MCP servers", async () => {
+  it("id derives from folder name, ignoring frontmatter id drift", async () => {
     await manager.importAgentFromTemplate("coder", {});
-    // Coder v1 ships with recommended_mcp_servers: [], so the file
-    // should remain absent.
-    expect(existsSync(path.join(dataDir, "mcp.json"))).toBe(false);
-    expect(Object.keys(loadGlobalMcpServers(dataDir))).toHaveLength(0);
+    // Tamper: prepend a stale `id: imposter` to the AGENT.md frontmatter.
+    const filePath = path.join(dataDir, "agents", "coder", "AGENT.md");
+    const orig = readFileSync(filePath, "utf-8");
+    const tampered = orig.replace("---\n", "---\nid: imposter\n");
+    require("node:fs").writeFileSync(filePath, tampered);
+
+    // Re-list — the agent should still report id "coder" from its folder,
+    // not the bogus frontmatter id.
+    const fresh = new AgentManager(ConfigSchema.parse({ dataDir }));
+    try {
+      const agents = fresh.listAgents();
+      const coder = agents.find((a) => a.id === "coder");
+      expect(coder).toBeDefined();
+      expect(agents.find((a) => a.id === "imposter")).toBeUndefined();
+    } finally {
+      await fresh.close();
+    }
   });
 });

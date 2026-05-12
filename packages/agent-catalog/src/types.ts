@@ -26,18 +26,18 @@ export const SKILL_SOURCE_IDS = [
 ] as const;
 export type SkillSourceId = (typeof SKILL_SOURCE_IDS)[number];
 
-export const RecommendedSkillSchema = z.object({
+export const BundledSkillSchema = z.object({
   name: z.string().min(1).max(64),
   source: z.enum(SKILL_SOURCE_IDS),
   identifier: z.string().min(1).max(512),
 });
-export type RecommendedSkill = z.infer<typeof RecommendedSkillSchema>;
+export type BundledSkill = z.infer<typeof BundledSkillSchema>;
 
-export const RecommendedMcpServerSchema = z.object({
+export const BundledMcpServerSchema = z.object({
   name: z.string().min(1).max(64),
   config: MCPServerConfigSchema,
 });
-export type RecommendedMcpServer = z.infer<typeof RecommendedMcpServerSchema>;
+export type BundledMcpServer = z.infer<typeof BundledMcpServerSchema>;
 
 /**
  * Template-only frontmatter keys. Validated separately from the
@@ -63,8 +63,12 @@ export const AgentTemplateMetaFrontmatterSchema = z.object({
     .regex(/^[A-Za-z0-9][A-Za-z0-9_.-]*$/, {
       message: "default_id_hint must match the agent-id charset",
     }),
-  recommended_skills: z.array(RecommendedSkillSchema).default([]),
-  recommended_mcp_servers: z.array(RecommendedMcpServerSchema).default([]),
+  // If listed here, the skill gets installed workforce-wide on import —
+  // no "recommendation" connotation; the catalog promises to install it.
+  bundled_skills: z.array(BundledSkillSchema).default([]),
+  // If listed here, the MCP server gets added to <dataDir>/mcp.json on
+  // import. Skipped silently if a server with the same name already exists.
+  bundled_mcp_servers: z.array(BundledMcpServerSchema).default([]),
 });
 
 export type AgentTemplateMetaFrontmatter = z.infer<
@@ -107,8 +111,8 @@ export interface AgentTemplate {
   /** AgentDefinition fields (frontmatter + persona body), minus `id`. */
   agentFields: Omit<AgentDefinition, "id">;
   resources: ResourceFile[];
-  recommendedSkills: RecommendedSkill[];
-  recommendedMcpServers: RecommendedMcpServer[];
+  bundledSkills: BundledSkill[];
+  bundledMcpServers: BundledMcpServer[];
 }
 
 export type { MCPServerConfig };
