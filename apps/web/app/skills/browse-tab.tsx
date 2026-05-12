@@ -240,6 +240,11 @@ export function BrowseTab({
                   No GitHub tap is configured. Add one in the{" "}
                   <span className="font-mono">Sources</span> tab.
                 </>
+              ) : source === "skills-sh" && query.trim().length < 2 ? (
+                <>
+                  Type a search query (at least 2 characters) to browse
+                  skills.sh.
+                </>
               ) : (
                 <>
                   No matches. Try a broader query or add a tap in the{" "}

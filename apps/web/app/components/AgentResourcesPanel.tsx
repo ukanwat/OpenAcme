@@ -247,10 +247,7 @@ export function AgentResourcesPanel({ agentId }: { agentId: string }) {
         </p>
       ) : resources.length === 0 ? (
         <p className="border border-paper-rule bg-paper-sunk px-3 py-2 font-mono text-[12px] text-ink-soft">
-          No resources. Drop files here or use the buttons above. They land
-          under{" "}
-          <span className="text-ink">{"<agent>/resources/"}</span> and become
-          visible to the agent in its system prompt.
+          No resources. Drop files here or use the buttons above.
         </p>
       ) : (
         <ul className="border-y border-paper-rule font-mono text-[12px]">

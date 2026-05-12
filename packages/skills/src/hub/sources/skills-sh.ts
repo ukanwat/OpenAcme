@@ -5,9 +5,11 @@ import type {
   TrustLevel,
 } from "../types.js";
 import type { IndexCache } from "../index-cache.js";
+import type { GitHubAuth } from "../github-auth.js";
 import type { GitHubSource } from "./github.js";
 
 const API_BASE = "https://skills.sh/api";
+const GH_API = "https://api.github.com";
 const TRUSTED_REPOS = new Set<string>(["anthropics/skills"]);
 
 interface SearchHit {
@@ -34,7 +36,8 @@ export class SkillsShSource implements SkillSource {
 
   constructor(
     private readonly github: GitHubSource,
-    private readonly cache: IndexCache
+    private readonly cache: IndexCache,
+    private readonly auth: GitHubAuth
   ) {}
 
   trustLevelFor(identifier: string): TrustLevel {
@@ -50,7 +53,12 @@ export class SkillsShSource implements SkillSource {
   ): Promise<SkillMeta[]> {
     const limit = opts.limit ?? 25;
     const q = query.trim();
-    const cacheKey = `skills-sh:search:${q || "__featured__"}:${limit}`;
+    // skills.sh's /api/search rejects queries shorter than 2 chars and
+    // exposes no "list all" / "trending" endpoint, so an empty Browse
+    // tab on this source is just blank by design. Short-circuit instead
+    // of generating a useless network error.
+    if (q.length < 2) return [];
+    const cacheKey = `skills-sh:search:${q}:${limit}`;
     const cached = this.cache.read<SearchHit[]>(cacheKey);
     const hits = cached ?? (await this.callSearch(q, limit, opts.signal));
     if (!cached && hits.length > 0) this.cache.write(cacheKey, hits);
@@ -84,7 +92,9 @@ export class SkillsShSource implements SkillSource {
     opts: { signal?: AbortSignal } = {}
   ): Promise<SkillMeta | null> {
     if (!this.canHandle(identifier)) return null;
-    const meta = await this.github.inspect(identifier, opts);
+    const resolved = await this.resolveGithubId(identifier, opts.signal);
+    if (!resolved) return null;
+    const meta = await this.github.inspect(resolved, opts);
     if (!meta) return null;
     return { ...meta, source: "skills-sh" };
   }
@@ -94,9 +104,81 @@ export class SkillsShSource implements SkillSource {
     opts: { signal?: AbortSignal } = {}
   ): Promise<SkillBundle | null> {
     if (!this.canHandle(identifier)) return null;
-    const bundle = await this.github.fetch(identifier, opts);
+    const resolved = await this.resolveGithubId(identifier, opts.signal);
+    if (!resolved) return null;
+    const bundle = await this.github.fetch(resolved, opts);
     if (!bundle) return null;
     return { ...bundle, source: "skills-sh" };
+  }
+
+  /**
+   * skills.sh's `id` field is logical (`<repo>/<skillId>`); the actual
+   * GitHub path is usually `<repo>/skills/<skillId>` or similar. Try the
+   * literal identifier first; on miss, walk the repo's git tree once to
+   * find any path ending in `<skillId>/SKILL.md` and use that. Cached.
+   */
+  private async resolveGithubId(
+    identifier: string,
+    signal?: AbortSignal
+  ): Promise<string | null> {
+    const cacheKey = `skills-sh:resolve:${identifier}`;
+    const cached = this.cache.read<string | null>(cacheKey);
+    if (cached !== null && cached !== undefined) return cached;
+
+    // First try the literal identifier — works for repos with skills at root.
+    const direct = await this.github.inspect(identifier, { signal });
+    if (direct) {
+      this.cache.write(cacheKey, identifier);
+      return identifier;
+    }
+
+    // Otherwise walk the tree.
+    const repo = this.repoOf(identifier);
+    const slug = this.pathOf(identifier);
+    if (!repo || !slug) return null;
+    const path = await this.findSkillPathInRepo(repo, slug, signal);
+    if (!path) {
+      this.cache.write(cacheKey, null);
+      return null;
+    }
+    const resolved = `${repo}/${path}`;
+    this.cache.write(cacheKey, resolved);
+    return resolved;
+  }
+
+  private async findSkillPathInRepo(
+    repo: string,
+    skillSlug: string,
+    signal?: AbortSignal
+  ): Promise<string | null> {
+    const treeKey = `gh-tree:${repo}:`;
+    let tree = this.cache.read<Array<{ path: string; type: string }>>(treeKey);
+    if (!tree) {
+      try {
+        const r1 = await fetch(`${GH_API}/repos/${repo}`, {
+          headers: this.auth.headers(),
+          signal,
+        });
+        if (!r1.ok) return null;
+        const branch = (await r1.json() as { default_branch?: string })
+          .default_branch ?? "main";
+        const r2 = await fetch(
+          `${GH_API}/repos/${repo}/git/trees/${branch}?recursive=1`,
+          { headers: this.auth.headers(), signal }
+        );
+        if (!r2.ok) return null;
+        const body = (await r2.json()) as { tree?: Array<{ path: string; type: string }> };
+        tree = body.tree ?? [];
+        this.cache.write(treeKey, tree);
+      } catch {
+        return null;
+      }
+    }
+    const candidate = tree.find(
+      (e) => e.type === "blob" && e.path.endsWith(`/${skillSlug}/SKILL.md`)
+    );
+    if (!candidate) return null;
+    return candidate.path.slice(0, -"/SKILL.md".length);
   }
 
   // -------------------------------------------------------------------------

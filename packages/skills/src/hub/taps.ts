@@ -7,15 +7,6 @@ import type { Tap, TapSource } from "./types.js";
 
 type TapsFileShape = z.infer<typeof TapsFileSchema>;
 
-const DEFAULT_TAPS: Tap[] = [
-  {
-    source: "github",
-    repo: "anthropics/skills",
-    path: "skills/",
-    addedAt: "2026-01-01T00:00:00.000Z",
-  },
-];
-
 function defaultPathFor(source: TapSource): string {
   return source === "github" ? "skills/" : "";
 }
@@ -29,12 +20,12 @@ export class TapsManager {
     return tapsFile(this.skillsDir);
   }
 
-  /** Loads from disk, or returns defaults (anthropics/skills) if absent. */
+  /** Loads from disk, or returns an empty list if absent. */
   load(): Tap[] {
     if (this.cache) return this.cache.taps;
     const fp = this.filePath();
     if (!fs.existsSync(fp)) {
-      this.cache = { version: 1, taps: [...DEFAULT_TAPS] };
+      this.cache = { version: 1, taps: [] };
       return this.cache.taps;
     }
     const raw = JSON.parse(fs.readFileSync(fp, "utf-8")) as {

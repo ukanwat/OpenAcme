@@ -105,7 +105,7 @@ export function registerSkillsHubRoutes(
       if (err instanceof HubError) {
         if (err.code === "ALREADY_INSTALLED" || err.code === "LOCAL_SKILL_EXISTS")
           return c.json({ error: err.message }, 409);
-        if (err.code === "NO_SOURCE" || err.code === "NAME_MISMATCH")
+        if (err.code === "NO_SOURCE" || err.code === "NAME_MISMATCH" || err.code === "FRONTMATTER_INVALID")
           return c.json({ error: err.message }, 400);
         if (err.code === "FETCH_FAILED" || err.code === "EMPTY_BUNDLE")
           return c.json({ error: err.message }, 502);

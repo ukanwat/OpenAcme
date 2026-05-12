@@ -104,7 +104,7 @@ export class SkillHub {
     this.local = new LocalSource(() => this.taps.list());
     this.gitUrl = new GitUrlSource();
     this.lobehub = new LobeHubSource(this.cache);
-    this.skillsSh = new SkillsShSource(this.github, this.cache);
+    this.skillsSh = new SkillsShSource(this.github, this.cache, this.auth);
     this.clawhub = new ClawHubSource(this.cache);
   }
 
@@ -197,31 +197,36 @@ export class SkillHub {
     // Validate bundle shape.
     this.validateBundle(bundle);
 
-    // Resolve canonical name.
-    const rawName = opts.nameOverride ?? bundle.name;
-    const candidateName = sanitizeSkillName(rawName);
-    validateSkillName(candidateName);
-
     const skillMd = bundle.files.find((f) => f.relPath === "SKILL.md")!;
-    const { data: fmRaw } = matter(new TextDecoder().decode(skillMd.bytes));
-    const fm = fmRaw as Record<string, unknown>;
-    const fmStr = (k: string): string | undefined =>
-      typeof fm[k] === "string" ? (fm[k] as string) : undefined;
-
-    const fmNameRaw = fmStr("name");
-    const fmName = fmNameRaw ? sanitizeSkillName(fmNameRaw) : null;
-    if (fmName && !opts.nameOverride && fmName !== candidateName) {
+    let fmRaw: unknown;
+    try {
+      fmRaw = matter(new TextDecoder().decode(skillMd.bytes)).data;
+    } catch (err) {
+      // Third-party SKILL.md may ship malformed YAML — catch and surface
+      // a clean error instead of crashing the install path.
       this.audit("INSTALL_FAILED", {
         source: source.id,
         identifier,
         outcome: "error",
-        reason: `bundle name ${candidateName} doesn't match frontmatter ${fmName}`,
+        reason: err instanceof Error ? err.message : String(err),
       });
       throw new HubError(
-        `bundle name '${candidateName}' doesn't match SKILL.md frontmatter name '${fmName}'`,
-        "NAME_MISMATCH"
+        `SKILL.md frontmatter could not be parsed: ${err instanceof Error ? err.message.split("\n")[0] : String(err)}`,
+        "FRONTMATTER_INVALID"
       );
     }
+    const fm = (fmRaw ?? {}) as Record<string, unknown>;
+    const fmStr = (k: string): string | undefined =>
+      typeof fm[k] === "string" ? (fm[k] as string) : undefined;
+    const fmNameRaw = fmStr("name");
+
+    // Name precedence: explicit override → frontmatter → catalog/bundle name.
+    // Frontmatter wins over the catalog handle because the SKILL.md is the
+    // skill's identity (catalog slugs are often kebab-cased / branded
+    // variants that don't match what the author chose).
+    const rawName = opts.nameOverride ?? fmNameRaw ?? bundle.name;
+    const candidateName = sanitizeSkillName(rawName);
+    validateSkillName(candidateName);
 
     const existing = this.lockfile.get(candidateName);
     if (existing && !opts.force) {
