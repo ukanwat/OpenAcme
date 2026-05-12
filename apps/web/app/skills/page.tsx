@@ -312,7 +312,7 @@ function SkillsPageInner() {
           onValueChange={(v) => setActiveTab(v as "skills" | "browse" | "sources")}
           className="flex flex-1 flex-col overflow-hidden"
         >
-          <div className="border-b border-paper-rule px-6 py-2">
+          <div className="px-6 py-2">
             <TabsList>
               <TabsTrigger value="skills">
                 <BookOpen className="size-3.5" />
@@ -329,7 +329,7 @@ function SkillsPageInner() {
             </TabsList>
           </div>
 
-          <TabsContent value="skills" className="flex flex-1 overflow-hidden m-0">
+          <TabsContent value="skills" className="flex flex-1 overflow-hidden m-0 pt-0">
           <aside className="flex w-80 shrink-0 flex-col border-r border-paper-rule">
             <div className="border-b border-paper-rule px-4 py-2 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
               Index
@@ -564,11 +564,11 @@ function SkillsPageInner() {
           </div>
           </TabsContent>
 
-          <TabsContent value="browse" className="flex-1 overflow-y-auto m-0">
+          <TabsContent value="browse" className="flex-1 overflow-y-auto m-0 pt-0">
             <BrowseTab onInstalled={() => loadSkills()} />
           </TabsContent>
 
-          <TabsContent value="sources" className="flex-1 overflow-y-auto m-0">
+          <TabsContent value="sources" className="flex-1 overflow-y-auto m-0 pt-0">
             <SourcesTab />
           </TabsContent>
         </Tabs>

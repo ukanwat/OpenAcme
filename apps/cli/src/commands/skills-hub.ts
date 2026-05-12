@@ -29,11 +29,15 @@ function makeHub(opts: SkillsHubOptions): SkillHub {
 }
 
 function sourceId(v: unknown): SkillSourceId | undefined {
+  if (v === undefined || v === null || v === "") return undefined;
   if (v === "github" || v === "url" || v === "claude-marketplace") return v;
-  return undefined;
+  throw new Error(
+    `--source must be one of: github, url, claude-marketplace (got '${String(v)}')`
+  );
 }
 
 function sourceFilter(v: unknown): "all" | SkillSourceId | undefined {
+  if (v === undefined || v === null || v === "") return undefined;
   if (v === "all") return "all";
   return sourceId(v);
 }

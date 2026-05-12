@@ -13,8 +13,6 @@ import { API_BASE } from "@/app/lib/api";
 import type { ProviderInfo } from "../lib/types";
 import { cn } from "@/app/lib/utils";
 
-const WELCOME_SEEN_KEY = "openacme.onboarding.welcome.seen";
-
 const PROVIDER_INFO: Record<string, { tagline: string; docsUrl: string }> = {
   openrouter: {
     tagline: "one key, many models",
@@ -53,17 +51,6 @@ export interface ChatSetupPanelProps {
 }
 
 export function ChatSetupPanel({ providers, onSetup }: ChatSetupPanelProps) {
-  // Returning users skip the welcome cascade and land directly on the
-  // provider screen. Wizard mode is exclusively first-run.
-  const [seen, setSeen] = useState<boolean | null>(null);
-  useEffect(() => {
-    try {
-      setSeen(window.localStorage.getItem(WELCOME_SEEN_KEY) === "1");
-    } catch {
-      setSeen(false);
-    }
-  }, []);
-
   const [step, setStep] = useState<Step>(0);
 
   const offered = useMemo(
@@ -102,14 +89,6 @@ export function ChatSetupPanel({ providers, onSetup }: ChatSetupPanelProps) {
     pickedProvider?.id === "openai" ||
     (pickedProvider?.id === "anthropic" && claudeCodeAvailable);
 
-  function markSeen() {
-    try {
-      window.localStorage.setItem(WELCOME_SEEN_KEY, "1");
-    } catch {
-      /* ignore */
-    }
-  }
-
   async function save() {
     if (!pickedProvider) {
       toast.error("Pick a provider above first");
@@ -131,7 +110,6 @@ export function ChatSetupPanel({ providers, onSetup }: ChatSetupPanelProps) {
         const body = (await r.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error || `HTTP ${r.status}`);
       }
-      markSeen();
       toast.success(`${pickedProvider.name} configured`);
       await onSetup();
     } catch (e) {
@@ -161,7 +139,6 @@ export function ChatSetupPanel({ providers, onSetup }: ChatSetupPanelProps) {
       if (!r.ok) {
         throw new Error(data.error || `HTTP ${r.status}`);
       }
-      markSeen();
       toast.success(
         data.email ? `Signed in as ${data.email}` : "ChatGPT subscription linked"
       );
@@ -190,7 +167,6 @@ export function ChatSetupPanel({ providers, onSetup }: ChatSetupPanelProps) {
       if (!r.ok) {
         throw new Error(data.error || `HTTP ${r.status}`);
       }
-      markSeen();
       toast.success("Imported from Claude Code");
       await onSetup();
     } catch (e) {
@@ -200,40 +176,6 @@ export function ChatSetupPanel({ providers, onSetup }: ChatSetupPanelProps) {
     } finally {
       setCcImporting(false);
     }
-  }
-
-  // Don't render the wizard until we know whether the user has seen it.
-  // Avoids a one-frame flash of the welcome screen for returning users.
-  if (seen === null) {
-    return null;
-  }
-
-  // Returning users (cleared keys, came back) skip the cascade entirely.
-  if (seen) {
-    return (
-      <div className="mx-auto max-w-2xl px-6 py-16">
-        <div
-          style={{ animation: "section-enter 220ms var(--ease-out-quart) both" }}
-        >
-          <Logotype className="h-7 w-auto text-ink" />
-        </div>
-        <div className="mt-12">
-          <ProviderForm
-            offered={offered}
-            picked={picked}
-            onPick={(id) => {
-              setPicked(id);
-              setApiKey("");
-            }}
-            apiKey={apiKey}
-            onApiKeyChange={setApiKey}
-            submitting={submitting}
-            onSave={save}
-            pickedProvider={pickedProvider}
-          />
-        </div>
-      </div>
-    );
   }
 
   return (

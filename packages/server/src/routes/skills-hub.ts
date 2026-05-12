@@ -30,10 +30,16 @@ export function registerSkillsHubRoutes(
       return c.json({ error: "Invalid JSON" }, 400);
     }
     const query = String(body.query ?? "").slice(0, 256);
-    const source = sanitizeSourceFilter(body.source);
+    const src = sanitizeSourceFilter(body.source);
+    if (!src.ok) {
+      return c.json(
+        { error: `source must be one of: github, url, claude-marketplace, all (got '${src.bad}')` },
+        400
+      );
+    }
     const limit = clampInt(body.limit, 1, 100, 25);
     try {
-      const results = await hub.search(query, { source, limit });
+      const results = await hub.search(query, { source: src.value, limit });
       return c.json(results);
     } catch (err) {
       return c.json({ error: errMsg(err) }, 502);
@@ -50,9 +56,15 @@ export function registerSkillsHubRoutes(
     }
     const identifier = String(body.identifier ?? "").trim();
     if (!identifier) return c.json({ error: "identifier required" }, 400);
-    const source = sanitizeSourceId(body.source);
+    const src = sanitizeSourceId(body.source);
+    if (!src.ok) {
+      return c.json(
+        { error: `source must be one of: github, url, claude-marketplace (got '${src.bad}')` },
+        400
+      );
+    }
     try {
-      const meta = await hub.inspect(identifier, { source: source ?? undefined });
+      const meta = await hub.inspect(identifier, { source: src.value });
       if (!meta) return c.json({ error: "not found" }, 404);
       return c.json(meta);
     } catch (err) {
@@ -75,17 +87,24 @@ export function registerSkillsHubRoutes(
     }
     const identifier = String(body.identifier ?? "").trim();
     if (!identifier) return c.json({ error: "identifier required" }, 400);
-    const source = sanitizeSourceId(body.source);
+    const src = sanitizeSourceId(body.source);
+    if (!src.ok) {
+      return c.json(
+        { error: `source must be one of: github, url, claude-marketplace (got '${src.bad}')` },
+        400
+      );
+    }
     try {
       const result = await hub.install(identifier, {
-        source: source ?? undefined,
+        source: src.value,
         nameOverride: body.nameOverride,
         force: Boolean(body.force),
       });
       return c.json(result, 201);
     } catch (err) {
       if (err instanceof HubError) {
-        if (err.code === "ALREADY_INSTALLED") return c.json({ error: err.message }, 409);
+        if (err.code === "ALREADY_INSTALLED" || err.code === "LOCAL_SKILL_EXISTS")
+          return c.json({ error: err.message }, 409);
         if (err.code === "NO_SOURCE" || err.code === "NAME_MISMATCH")
           return c.json({ error: err.message }, 400);
         if (err.code === "FETCH_FAILED" || err.code === "EMPTY_BUNDLE")
@@ -210,18 +229,27 @@ function isAuditAction(
   return typeof v === "string" && VALID_AUDIT_ACTIONS.has(v);
 }
 
+type SourceId = "github" | "url" | "claude-marketplace";
+
+// Returns the source if valid or unset, or a {bad} sentinel so the caller
+// can 400 — silently mapping invalid values to undefined turns "--source bogus"
+// into a quiet auto-detect, which is wrong.
 function sanitizeSourceFilter(
   v: unknown
-): "all" | "github" | "url" | "claude-marketplace" | undefined {
-  if (v === "github" || v === "url" || v === "claude-marketplace" || v === "all") return v;
-  return undefined;
+): { ok: true; value: "all" | SourceId | undefined } | { ok: false; bad: string } {
+  if (v === undefined || v === null || v === "") return { ok: true, value: undefined };
+  if (v === "github" || v === "url" || v === "claude-marketplace" || v === "all") {
+    return { ok: true, value: v };
+  }
+  return { ok: false, bad: String(v) };
 }
 
 function sanitizeSourceId(
   v: unknown
-): "github" | "url" | "claude-marketplace" | null {
-  if (v === "github" || v === "url" || v === "claude-marketplace") return v;
-  return null;
+): { ok: true; value: SourceId | undefined } | { ok: false; bad: string } {
+  if (v === undefined || v === null || v === "") return { ok: true, value: undefined };
+  if (v === "github" || v === "url" || v === "claude-marketplace") return { ok: true, value: v };
+  return { ok: false, bad: String(v) };
 }
 
 function clampInt(v: unknown, min: number, max: number, fallback: number): number {
