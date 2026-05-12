@@ -17,6 +17,7 @@ import { GitUrlSource } from "./sources/git-url.js";
 import { LobeHubSource } from "./sources/lobehub.js";
 import { SkillsShSource } from "./sources/skills-sh.js";
 import { ClawHubSource } from "./sources/clawhub.js";
+import { BuiltinSource } from "./sources/builtin.js";
 import {
   hubDir,
   skillTargetDir,
@@ -83,6 +84,7 @@ export class SkillHub {
   private readonly lobehub: LobeHubSource;
   private readonly skillsSh: SkillsShSource;
   private readonly clawhub: ClawHubSource;
+  private readonly builtin: BuiltinSource;
 
   constructor(
     private readonly skillsDir: string,
@@ -106,6 +108,7 @@ export class SkillHub {
     this.lobehub = new LobeHubSource(this.cache);
     this.skillsSh = new SkillsShSource(this.github, this.cache, this.auth);
     this.clawhub = new ClawHubSource(this.cache);
+    this.builtin = new BuiltinSource();
   }
 
   // ---------------- Public surface ----------------
@@ -477,6 +480,7 @@ export class SkillHub {
     if (!filter || filter === "all") {
       // Order matters for dedup-by-identifier in search().
       return [
+        this.builtin,
         this.github,
         this.marketplace,
         this.wellKnown,
@@ -502,6 +506,7 @@ export class SkillHub {
       case "lobehub": return this.lobehub;
       case "skills-sh": return this.skillsSh;
       case "clawhub": return this.clawhub;
+      case "builtin": return this.builtin;
     }
   }
 
@@ -526,6 +531,11 @@ export class SkillHub {
       if (m) return this.github;
       const m2 = await this.marketplace.inspect(identifier, { signal });
       if (m2) return this.marketplace;
+    }
+    // Bare slug: try builtin (the only source that resolves bare names).
+    if (!identifier.includes("/")) {
+      const m = await this.builtin.inspect(identifier);
+      if (m) return this.builtin;
     }
     return null;
   }

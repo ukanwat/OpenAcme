@@ -242,7 +242,8 @@ type SourceId =
   | "git-url"
   | "lobehub"
   | "skills-sh"
-  | "clawhub";
+  | "clawhub"
+  | "builtin";
 
 const SOURCE_IDS: SourceId[] = [
   "github",
@@ -254,6 +255,7 @@ const SOURCE_IDS: SourceId[] = [
   "lobehub",
   "skills-sh",
   "clawhub",
+  "builtin",
 ];
 
 type TapSourceId = "github" | "claude-marketplace" | "well-known" | "local";
