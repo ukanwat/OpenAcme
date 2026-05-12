@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState, useEffect, useMemo } from "react";
+import { Suspense, useState, useEffect, useMemo, useRef } from "react";
 import {
   Bot,
   Plus,
@@ -170,6 +170,10 @@ function AgentsPageInner() {
 
   const [formData, setFormData] = useState<FormState>(FALLBACK_FORM);
   const [isCustomModel, setIsCustomModel] = useState(false);
+  // Tracks the urlImportTemplate the form has already been hydrated for, so
+  // post-mount refreshes of `agents`/`providers` (which re-fire the URL effect)
+  // can't race against the user's in-flight selections and reset the form.
+  const importHydratedFor = useRef<string | null>(null);
   const [mcpDialog, setMcpDialog] = useState<
     | { mode: "add" }
     | { mode: "edit"; initial: MCPServerFormValue }
@@ -279,6 +283,13 @@ function AgentsPageInner() {
   };
 
   const onModelSelect = (value: string) => {
+    // Radix Select auto-fires `onValueChange("")` when the current value is
+    // no longer in the option set — which happens during the same render
+    // we're updating both provider + model. Our SelectItems never carry
+    // an empty value, so an empty here means Radix's stale-clear, not a
+    // real user pick. Ignoring it preserves the model we set in
+    // `onProviderChange`.
+    if (!value) return;
     if (value === CUSTOM_MODEL) {
       setFormData((prev) => ({ ...prev, model: "" }));
       setIsCustomModel(true);
@@ -542,6 +553,15 @@ function AgentsPageInner() {
   // create-from-scratch; ?import=<templateId> starts catalog-import.
   useEffect(() => {
     if (urlImportTemplate) {
+      // Wait for providers to load before seeding defaults — otherwise
+      // `provPresets[0]?.id` is undefined and we'd seed model="", then a
+      // later re-fire would race the user's selections.
+      if (providers.length === 0) return;
+      // Hydrate the form once per template. Subsequent re-fires triggered by
+      // `agents`/`providers` identity changes must NOT overwrite the user's
+      // in-flight edits with template defaults.
+      if (importHydratedFor.current === urlImportTemplate) return;
+      importHydratedFor.current = urlImportTemplate;
       // Catalog-import flow: fetch the full template + preview, prefill form.
       void (async () => {
         try {
@@ -599,7 +619,9 @@ function AgentsPageInner() {
       return;
     }
     // Leaving the import flow → drop the cached template + preview so the
-    // "will install" block doesn't render on the scratch / edit paths.
+    // "will install" block doesn't render on the scratch / edit paths. Also
+    // clear the hydration guard so re-entering import mode re-populates.
+    importHydratedFor.current = null;
     if (importTemplate || importPreview) {
       setImportTemplate(null);
       setImportPreview(null);
