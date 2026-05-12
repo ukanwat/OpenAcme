@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Save,
   Trash2,
@@ -16,6 +16,7 @@ import { LoadingHairline } from "@/app/components/ui/loading-hairline";
 import { Input } from "@/app/components/ui/input";
 import { Textarea } from "@/app/components/ui/textarea";
 import { Label } from "@/app/components/ui/label";
+import { Badge } from "@/app/components/ui/badge";
 import {
   Select,
   SelectContent,
@@ -24,10 +25,12 @@ import {
   SelectValue,
 } from "@/app/components/ui/select";
 import { DateTimePicker } from "@/app/components/ui/date-time-picker";
+import { Markdown } from "@/app/components/Markdown";
 import { cn } from "@/app/lib/utils";
 import {
   STATUS_LABEL,
   STATUS_ORDER,
+  STATUS_VARIANT,
   formatDate,
   formatRelativeFromUnix,
   type Comment,
@@ -230,7 +233,7 @@ export function TaskDetailPanel({
           />
         </div>
 
-        <CommentsAndEvents taskId={selected.id} assignee={selected.assignee} />
+        <ActivityTimeline taskId={selected.id} agents={agents} />
       </div>
 
       {/* Fixed footer with audit metadata */}
@@ -282,29 +285,31 @@ export function TaskDetailPanel({
 }
 
 /**
- * Discussion thread + event log for a task. Comments are append-only;
- * the human always posts as `system:user`. Result-kind is offered only
- * when the human happens to be the assignee (rare, but supported).
- * Polls every 5s for fresh entries while the panel is open — small
- * tasks change infrequently, no need for SSE.
+ * Unified activity feed for a task: comments (markdown) + signal events
+ * interleaved chronologically. `comment_added` events are dropped because
+ * they duplicate the comment row itself. The composer posts as
+ * `system:user` — the route locks author/kind regardless of body, so we
+ * don't expose forge-as-agent UI here.
  */
-function CommentsAndEvents({
+function ActivityTimeline({
   taskId,
-  assignee,
+  agents,
 }: {
   taskId: string;
-  assignee: string;
+  agents: AgentOption[];
 }) {
   const [comments, setComments] = useState<Comment[]>([]);
   const [events, setEvents] = useState<TaskEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [draftBody, setDraftBody] = useState("");
-  const [postingResult, setPostingResult] = useState(false);
   const [posting, setPosting] = useState(false);
+  // Only items newer than the panel's first paint animate in — keeps the
+  // initial render from animating the whole stack.
+  const mountedAtRef = useRef<number>(Math.floor(Date.now() / 1000));
 
   useEffect(() => {
     let cancelled = false;
-    async function load() {
+    async function load(initial: boolean) {
       try {
         const [c, e] = await Promise.all([
           fetch(`${API_BASE}/api/tasks/${taskId}/comments`).then((r) =>
@@ -318,11 +323,11 @@ function CommentsAndEvents({
       } catch {
         // Network burp — leave stale data on screen, retry on next poll.
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled && initial) setLoading(false);
       }
     }
-    load();
-    const id = setInterval(load, 5000);
+    void load(true);
+    const id = setInterval(() => void load(false), 5000);
     return () => {
       cancelled = true;
       clearInterval(id);
@@ -336,135 +341,390 @@ function CommentsAndEvents({
       const r = await fetch(`${API_BASE}/api/tasks/${taskId}/comments`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          body: draftBody,
-          kind: postingResult ? "result" : null,
-          author: postingResult ? assignee : "system:user",
-        }),
+        body: JSON.stringify({ body: draftBody }),
       });
       if (r.ok) {
         const { comment } = (await r.json()) as { comment: Comment };
         setComments((prev) => [...prev, comment]);
         setDraftBody("");
-        setPostingResult(false);
       }
     } finally {
       setPosting(false);
     }
   }
 
-  return (
-    <div className="space-y-6 border-t border-paper-rule pt-5">
-      <section className="space-y-2">
-        <div className="flex items-baseline justify-between">
-          <h3 className="label-faceplate">Comments</h3>
-          {comments.length > 0 && (
-            <span className="font-mono text-[11px] tabular-nums text-ink-faint">
-              {comments.length}
-            </span>
-          )}
-        </div>
-        {loading && comments.length === 0 ? (
-          <p className="font-mono text-[11px] text-ink-faint">Loading…</p>
-        ) : comments.length === 0 ? (
-          <p className="font-mono text-[11px] text-ink-faint">No comments yet.</p>
-        ) : (
-          <ul className="space-y-2">
-            {comments.map((c) => (
-              <li
-                key={c.id}
-                className={cn(
-                  "border border-paper-rule bg-paper-sunk px-3 py-2 text-sm",
-                  c.kind === "result" && "bg-paper",
-                  c.kind === "system" && "italic text-ink-soft"
-                )}
-              >
-                <div className="mb-1 flex items-center gap-2 font-mono text-[11px] text-ink-faint">
-                  <span>{c.author}</span>
-                  {c.kind && (
-                    <span className="border border-paper-rule px-1.5 py-px text-[10px] uppercase tracking-[0.08em]">
-                      {c.kind}
-                    </span>
-                  )}
-                  <span>·</span>
-                  <span>{formatRelativeFromUnix(c.createdAt)}</span>
-                </div>
-                <div className="whitespace-pre-wrap break-words text-ink">
-                  {c.body}
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-        <div className="space-y-2 pt-1">
-          <Textarea
-            value={draftBody}
-            onChange={(e) => setDraftBody(e.target.value)}
-            placeholder="Leave a comment"
-            rows={3}
-          />
-          <div className="flex items-center justify-between gap-3">
-            <label className="flex items-center gap-2 font-mono text-[11px] text-ink-soft">
-              <input
-                type="checkbox"
-                checked={postingResult}
-                onChange={(e) => setPostingResult(e.target.checked)}
-              />
-              <span>
-                Post as <code>result</code>
-                <span className="ml-1 text-ink-faint">
-                  (assignee only)
-                </span>
-              </span>
-            </label>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={postComment}
-              disabled={!draftBody.trim() || posting}
-            >
-              {posting ? "Posting" : "Comment"}
-            </Button>
-          </div>
-        </div>
-      </section>
+  const agentMap = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const a of agents) m.set(a.id, a.name);
+    return m;
+  }, [agents]);
 
-      <section className="space-y-2">
-        <div className="flex items-baseline justify-between">
-          <h3 className="label-faceplate">Activity</h3>
-          {events.length > 0 && (
-            <span className="font-mono text-[11px] tabular-nums text-ink-faint">
-              {events.length}
-            </span>
-          )}
-        </div>
-        {events.length === 0 ? (
-          <p className="font-mono text-[11px] text-ink-faint">No activity yet.</p>
-        ) : (
-          <ul className="space-y-1 font-mono text-[12px] tabular-nums">
-            {events.map((e) => (
-              <li key={e.id} className="text-ink-soft">
-                <span className="text-ink-faint">
-                  {formatRelativeFromUnix(e.createdAt)}
-                </span>
-                <span className="mx-1.5 text-ink-faint">·</span>
-                <span className="text-ink">{e.kind}</span>
-                {e.agentId !== "system:scheduler" && (
-                  <>
-                    <span className="mx-1.5 text-ink-faint">by</span>
-                    <span>{e.agentId}</span>
-                  </>
-                )}
-                {e.payload && (
-                  <span className="ml-2 text-ink-faint">{e.payload}</span>
+  const items = useMemo(() => mergeActivity(comments, events), [comments, events]);
+
+  return (
+    <section className="space-y-3 border-t border-paper-rule pt-5">
+      <div className="flex items-baseline justify-between">
+        <h3 className="label-faceplate">Activity</h3>
+        {items.length > 0 && (
+          <span className="font-mono text-[11px] tabular-nums text-ink-faint">
+            {items.length}
+          </span>
+        )}
+      </div>
+
+      {loading && items.length === 0 ? (
+        <p className="font-mono text-[11px] text-ink-faint">Loading…</p>
+      ) : items.length === 0 ? (
+        <p className="font-mono text-[11px] text-ink-faint">No activity yet.</p>
+      ) : (
+        <ol className="space-y-3">
+          {items.map((it) => {
+            const isFresh = it.ts > mountedAtRef.current;
+            const key =
+              it.kind === "comment" ? `c:${it.comment.id}` : `e:${it.event.id}`;
+            return (
+              <li key={key} className={isFresh ? "section-enter" : undefined}>
+                {it.kind === "comment" ? (
+                  it.comment.kind === "result" ? (
+                    <ResultRow
+                      comment={it.comment}
+                      author={resolveAuthor(it.comment.author, agentMap)}
+                    />
+                  ) : it.comment.kind === "system" ? (
+                    <SystemCommentRow comment={it.comment} />
+                  ) : (
+                    <CommentRow
+                      comment={it.comment}
+                      author={resolveAuthor(it.comment.author, agentMap)}
+                    />
+                  )
+                ) : (
+                  <EventRow event={it.event} agentMap={agentMap} />
                 )}
               </li>
-            ))}
-          </ul>
+            );
+          })}
+        </ol>
+      )}
+
+      <Composer
+        draftBody={draftBody}
+        onChange={setDraftBody}
+        onPost={postComment}
+        posting={posting}
+      />
+    </section>
+  );
+}
+
+// ── Activity row variants ──────────────────────────────────────────
+
+type ResolvedAuthor =
+  | { kind: "agent"; label: string; tail: string }
+  | { kind: "user"; label: "User" }
+  | { kind: "system"; label: string }
+  | { kind: "unknown"; label: string };
+
+function resolveAuthor(
+  id: string,
+  agentMap: Map<string, string>
+): ResolvedAuthor {
+  if (id === "system:user") return { kind: "user", label: "User" };
+  if (id.startsWith("system:")) {
+    const sub = id.slice("system:".length);
+    return {
+      kind: "system",
+      label: sub.length > 0 ? sub.charAt(0).toUpperCase() + sub.slice(1) : "System",
+    };
+  }
+  const name = agentMap.get(id);
+  if (name) return { kind: "agent", label: name, tail: id.slice(0, 8) };
+  return { kind: "unknown", label: id.slice(0, 8) };
+}
+
+function AuthorChip({ author }: { author: ResolvedAuthor }) {
+  return (
+    <span className="flex items-baseline gap-1.5">
+      <span
+        className={cn(
+          "font-mono text-[11px]",
+          author.kind === "system" ? "italic text-ink-soft" : "text-ink"
         )}
-      </section>
+      >
+        {author.label}
+      </span>
+      {author.kind === "agent" && (
+        <span className="font-mono text-[11px] tabular-nums text-ink-faint">
+          {author.tail}
+        </span>
+      )}
+      {author.kind === "unknown" && (
+        <span className="font-mono text-[11px] text-ink-faint">(unknown)</span>
+      )}
+    </span>
+  );
+}
+
+function CommentRow({
+  comment,
+  author,
+}: {
+  comment: Comment;
+  author: ResolvedAuthor;
+}) {
+  return (
+    <div className="grid grid-cols-[12px_1fr] gap-x-3">
+      <div aria-hidden className="relative flex justify-center">
+        <span className="mt-[10px] inline-block size-[5px] bg-paper-rule" />
+      </div>
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+          <AuthorChip author={author} />
+          <span className="text-ink-faint">·</span>
+          <span className="font-mono text-[11px] tabular-nums text-ink-faint">
+            {formatRelativeFromUnix(comment.createdAt)}
+          </span>
+        </div>
+        <div className="mt-1 border-l border-paper-rule pl-3 text-sm text-ink">
+          <Markdown>{comment.body}</Markdown>
+        </div>
+      </div>
     </div>
   );
+}
+
+function ResultRow({
+  comment,
+  author,
+}: {
+  comment: Comment;
+  author: ResolvedAuthor;
+}) {
+  return (
+    <div className="grid grid-cols-[12px_1fr] gap-x-3">
+      <div aria-hidden className="flex justify-center">
+        <span className="w-[2px] self-stretch bg-plot-red" />
+      </div>
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+          <Badge variant="signal">Result</Badge>
+          <AuthorChip author={author} />
+          <span className="text-ink-faint">·</span>
+          <span className="font-mono text-[11px] tabular-nums text-ink-faint">
+            {formatRelativeFromUnix(comment.createdAt)}
+          </span>
+        </div>
+        <div className="mt-1.5 text-sm text-ink">
+          <Markdown>{comment.body}</Markdown>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SystemCommentRow({ comment }: { comment: Comment }) {
+  return (
+    <div className="grid grid-cols-[12px_1fr] gap-x-3">
+      <div aria-hidden className="flex justify-center">
+        <span className="mt-[10px] inline-block size-[3px] bg-ink-faint" />
+      </div>
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-baseline gap-x-2 font-mono text-[11px] italic">
+          <span className="text-ink-soft">Scheduler</span>
+          <span className="text-ink-faint">·</span>
+          <span className="tabular-nums text-ink-faint">
+            {formatRelativeFromUnix(comment.createdAt)}
+          </span>
+        </div>
+        <div className="mt-0.5 whitespace-pre-wrap break-words font-mono text-[12px] italic text-ink-soft">
+          {comment.body}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EventRow({
+  event,
+  agentMap,
+}: {
+  event: TaskEvent;
+  agentMap: Map<string, string>;
+}) {
+  const payload = parseEventPayload(event.payload);
+  return (
+    <div className="grid grid-cols-[12px_1fr] items-center gap-x-3">
+      <div aria-hidden className="flex justify-center">
+        <span className="font-mono text-[11px] leading-none text-ink-faint">›</span>
+      </div>
+      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[12px] tabular-nums text-ink-soft">
+        <span className="text-ink-faint">
+          {formatRelativeFromUnix(event.createdAt)}
+        </span>
+        <span className="text-ink-faint">·</span>
+        <EventDescription event={event} payload={payload} agentMap={agentMap} />
+      </div>
+    </div>
+  );
+}
+
+function EventDescription({
+  event,
+  payload,
+  agentMap,
+}: {
+  event: TaskEvent;
+  payload: Record<string, unknown> | null;
+  agentMap: Map<string, string>;
+}) {
+  const agentName = (id: string | undefined): string => {
+    if (!id) return "?";
+    if (id.startsWith("system:"))
+      return id.slice("system:".length) || "system";
+    return agentMap.get(id) ?? id.slice(0, 8);
+  };
+
+  switch (event.kind) {
+    case "status_changed": {
+      const from = (payload?.from as TaskStatus | undefined) ?? undefined;
+      const to = (payload?.to as TaskStatus | undefined) ?? undefined;
+      if (!from || !to)
+        return <span className="text-ink">status changed</span>;
+      return (
+        <span className="flex flex-wrap items-center gap-1.5">
+          <span className="text-[10px] uppercase tracking-[0.08em] text-ink-faint">
+            status
+          </span>
+          <Badge variant={STATUS_VARIANT[from]}>{STATUS_LABEL[from]}</Badge>
+          <span className="text-ink-faint">→</span>
+          <Badge variant={STATUS_VARIANT[to]}>{STATUS_LABEL[to]}</Badge>
+        </span>
+      );
+    }
+    case "dep_unblocked": {
+      const depId = payload?.blocked_by_task_id as string | undefined;
+      return (
+        <span>
+          dep{" "}
+          <span className="text-ink">
+            {depId ? depId.slice(0, 8) : "?"}
+          </span>{" "}
+          done — now runnable
+        </span>
+      );
+    }
+    case "task_assigned": {
+      const assignee = agentName(payload?.assignee as string | undefined);
+      const createdBy = agentName(payload?.created_by as string | undefined);
+      return (
+        <span>
+          assigned to <span className="text-ink">{assignee}</span> by{" "}
+          <span className="text-ink">{createdBy}</span>
+        </span>
+      );
+    }
+    case "task_deleted": {
+      const forced = payload?.forced === true;
+      return (
+        <span className="italic text-ink-faint">
+          {forced ? "deleted (cascaded)" : "deleted"}
+        </span>
+      );
+    }
+    case "scheduler_action": {
+      const action = payload?.action as string | undefined;
+      const message = payload?.message as string | undefined;
+      // The message usually restates the action ("turn timed out — parked
+      // as blocked"), so the `[action]` bracket reads as duplication.
+      // Prefer the message when present; fall back to the action label.
+      const text = message ?? action ?? "";
+      return (
+        <span className="italic">
+          <span className="text-ink-faint">scheduler</span>
+          {text && <span className="ml-1 text-ink-soft">{text}</span>}
+        </span>
+      );
+    }
+    default:
+      return <span className="text-ink">{event.kind}</span>;
+  }
+}
+
+function Composer({
+  draftBody,
+  onChange,
+  onPost,
+  posting,
+}: {
+  draftBody: string;
+  onChange: (v: string) => void;
+  onPost: () => void;
+  posting: boolean;
+}) {
+  const onKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+      e.preventDefault();
+      if (draftBody.trim() && !posting) onPost();
+    }
+  };
+  return (
+    <div className="space-y-2 border-t border-paper-rule pt-4">
+      <Textarea
+        value={draftBody}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={onKey}
+        placeholder="Leave a comment — markdown supported"
+        rows={3}
+      />
+      <div className="flex items-center justify-between gap-3">
+        <span className="font-mono text-[11px] text-ink-faint">
+          ⌘ + ↵ to send
+        </span>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={onPost}
+          disabled={!draftBody.trim() || posting}
+        >
+          {posting ? "Posting" : "Comment"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// ── Activity helpers ───────────────────────────────────────────────
+
+type ActivityItem =
+  | { kind: "comment"; ts: number; comment: Comment }
+  | { kind: "event"; ts: number; event: TaskEvent };
+
+function mergeActivity(
+  comments: Comment[],
+  events: TaskEvent[]
+): ActivityItem[] {
+  const items: ActivityItem[] = [];
+  for (const c of comments) {
+    items.push({ kind: "comment", ts: c.createdAt, comment: c });
+  }
+  for (const e of events) {
+    if (e.kind === "comment_added") continue;
+    items.push({ kind: "event", ts: e.createdAt, event: e });
+  }
+  items.sort((a, b) => a.ts - b.ts);
+  return items;
+}
+
+function parseEventPayload(
+  payload: string | null
+): Record<string, unknown> | null {
+  if (!payload) return null;
+  try {
+    const v = JSON.parse(payload);
+    return v && typeof v === "object" ? (v as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
 }
 
 function AgentCombobox({
