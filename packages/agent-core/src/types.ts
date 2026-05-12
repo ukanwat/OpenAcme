@@ -107,6 +107,15 @@ export interface AgentConfig {
    *  to `<dataDir>/agents/<id>/workspace`. AgentManager ensures it
    *  exists before constructing the Agent. */
   workspaceDir: string;
+  /** User-supplied files under `<dataDir>/agents/<id>/resources/`,
+   *  discovered at AgentConfig build time. Surfaced in the system
+   *  prompt's `## Resources` section so the agent knows what's there
+   *  and can `read_file` them by absolute path. */
+  resources?: ReadonlyArray<{
+    relPath: string;
+    size: number;
+    absPath: string;
+  }>;
 }
 
 export interface CompressionConfig {

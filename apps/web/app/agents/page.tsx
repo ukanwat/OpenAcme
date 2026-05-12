@@ -10,6 +10,7 @@ import {
   Pencil,
   Boxes,
   ExternalLink,
+  BookOpen,
 } from "lucide-react";
 import { toast } from "sonner";
 import Link from "next/link";
@@ -53,6 +54,8 @@ import { SectionEyebrow } from "@/app/components/ui/section-eyebrow";
 import { TabularTick } from "@/app/components/ui/tabular-tick";
 import { ActiveMarker } from "@/app/components/ui/active-marker";
 import { cn } from "@/app/lib/utils";
+import { Markdown } from "@/app/components/Markdown";
+import { AgentResourcesPanel } from "@/app/components/AgentResourcesPanel";
 
 interface Agent {
   id: string;
@@ -64,6 +67,13 @@ interface Agent {
   skills: string[];
   mcpServers?: Record<string, MCPServerConfigDto>;
   mcpDisabled?: string[];
+  memoryCharLimit?: number;
+}
+
+interface SkillIndexEntry {
+  name: string;
+  description: string;
+  tags?: string[];
 }
 
 interface FormState {
@@ -74,11 +84,14 @@ interface FormState {
   model: string;
   persona: string;
   tools: string[];
+  skills: string[];
+  memoryCharLimit: number;
   mcpServers: Record<string, MCPServerConfigDto>;
   mcpDisabled: string[];
 }
 
 const CUSTOM_MODEL = "__custom__";
+const DEFAULT_MEMORY_CHAR_LIMIT = 2200;
 
 const FALLBACK_FORM: FormState = {
   id: "",
@@ -88,6 +101,8 @@ const FALLBACK_FORM: FormState = {
   model: "",
   persona: "You are a helpful AI assistant.",
   tools: [],
+  skills: [],
+  memoryCharLimit: DEFAULT_MEMORY_CHAR_LIMIT,
   mcpServers: {},
   mcpDisabled: [],
 };
@@ -110,9 +125,11 @@ function AgentsPageInner() {
   const [tools, setTools] = useState<ToolInfo[]>([]);
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [globalMcp, setGlobalMcp] = useState<Record<string, MCPServerConfigDto>>({});
+  const [allSkills, setAllSkills] = useState<SkillIndexEntry[]>([]);
 
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
   const [formData, setFormData] = useState<FormState>(FALLBACK_FORM);
@@ -132,12 +149,14 @@ function AgentsPageInner() {
 
   const loadAll = async (signal?: AbortSignal) => {
     try {
-      const [agentsRes, toolsRes, providersRes, mcpRes] = await Promise.all([
-        fetch(`${API_BASE}/api/agents`, { signal }),
-        fetch(`${API_BASE}/api/tools`, { signal }),
-        fetch(`${API_BASE}/api/models`, { signal }),
-        fetch(`${API_BASE}/api/mcp/global`, { signal }),
-      ]);
+      const [agentsRes, toolsRes, providersRes, mcpRes, skillsRes] =
+        await Promise.all([
+          fetch(`${API_BASE}/api/agents`, { signal }),
+          fetch(`${API_BASE}/api/tools`, { signal }),
+          fetch(`${API_BASE}/api/models`, { signal }),
+          fetch(`${API_BASE}/api/mcp/global`, { signal }),
+          fetch(`${API_BASE}/api/skills`, { signal }),
+        ]);
       if (agentsRes.ok) setAgents(await agentsRes.json());
       if (toolsRes.ok) {
         const data = (await toolsRes.json()) as { tools: ToolInfo[] };
@@ -151,6 +170,9 @@ function AgentsPageInner() {
           mcpServers: Record<string, MCPServerConfigDto>;
         };
         setGlobalMcp(data.mcpServers ?? {});
+      }
+      if (skillsRes.ok) {
+        setAllSkills((await skillsRes.json()) as SkillIndexEntry[]);
       }
     } catch (e) {
       if ((e as Error).name === "AbortError") return;
@@ -227,9 +249,20 @@ function AgentsPageInner() {
     model: { provider: formData.provider, model: formData.model },
     persona: formData.persona,
     tools: formData.tools,
+    skills: formData.skills,
+    memoryCharLimit: formData.memoryCharLimit,
     mcpServers: formData.mcpServers,
     mcpDisabled: formData.mcpDisabled,
   });
+
+  const toggleSkill = (name: string) => {
+    setFormData((prev) => ({
+      ...prev,
+      skills: prev.skills.includes(name)
+        ? prev.skills.filter((s) => s !== name)
+        : [...prev.skills, name],
+    }));
+  };
 
   // ── MCP form helpers ────────────────────────────────────────────────────
 
@@ -314,6 +347,7 @@ function AgentsPageInner() {
       if (res.ok) {
         const updated = (await res.json()) as Agent;
         setSelectedAgent(updated);
+        setIsEditing(false);
         toast.success("Agent updated");
         reloadAgents();
       } else {
@@ -323,6 +357,32 @@ function AgentsPageInner() {
     } catch {
       toast.error("Failed to update agent");
     }
+  };
+
+  const cancelEdit = () => {
+    if (!selectedAgent) return;
+    setIsEditing(false);
+    // Restore form to the saved agent's state so re-opening the editor
+    // doesn't surface in-progress edits the user said "cancel" to.
+    const provPresets =
+      providers.find((p) => p.id === selectedAgent.model.provider)?.models ?? [];
+    const matchedPreset = provPresets.some(
+      (m) => m.id === selectedAgent.model.model
+    );
+    setIsCustomModel(!matchedPreset);
+    setFormData({
+      id: selectedAgent.id,
+      name: selectedAgent.name,
+      role: selectedAgent.role ?? "",
+      provider: selectedAgent.model.provider,
+      model: selectedAgent.model.model,
+      persona: selectedAgent.persona,
+      tools: selectedAgent.tools,
+      skills: selectedAgent.skills ?? [],
+      memoryCharLimit: selectedAgent.memoryCharLimit ?? DEFAULT_MEMORY_CHAR_LIMIT,
+      mcpServers: selectedAgent.mcpServers ?? {},
+      mcpDisabled: selectedAgent.mcpDisabled ?? [],
+    });
   };
 
   const handleDelete = async (id: string) => {
@@ -360,6 +420,7 @@ function AgentsPageInner() {
     if (urlCreate) {
       setSelectedAgent(null);
       setIsCreating(true);
+      setIsEditing(false);
       const defaultProvider = providers[0]?.id ?? FALLBACK_FORM.provider;
       const defaultModel =
         providers.find((p) => p.id === defaultProvider)?.models[0]?.id ?? "";
@@ -381,6 +442,9 @@ function AgentsPageInner() {
         );
         setSelectedAgent(found);
         setIsCreating(false);
+        // View-first: don't auto-open into edit mode. The user clicks the
+        // "Edit" button when they want to change something.
+        setIsEditing(false);
         setIsCustomModel(!matchedPreset);
         setFormData({
           id: found.id,
@@ -390,6 +454,8 @@ function AgentsPageInner() {
           model: found.model.model,
           persona: found.persona,
           tools: found.tools,
+          skills: found.skills ?? [],
+          memoryCharLimit: found.memoryCharLimit ?? DEFAULT_MEMORY_CHAR_LIMIT,
           mcpServers: found.mcpServers ?? {},
           mcpDisabled: found.mcpDisabled ?? [],
         });
@@ -400,13 +466,18 @@ function AgentsPageInner() {
     }
     setSelectedAgent(null);
     setIsCreating(false);
+    setIsEditing(false);
   }, [urlId, urlCreate, agents, providers, router]);
 
   const selectAgent = (agent: Agent) =>
     router.push(`/agents?id=${encodeURIComponent(agent.id)}`);
   const startCreate = () => router.push("/agents?create=1");
 
-  const showForm = selectedAgent || isCreating;
+  // View vs edit: existing agents open in a read-only detail view; the
+  // user clicks "Edit" to switch into the form. Creating an agent goes
+  // straight to the form (there's nothing to view yet).
+  const showForm = isCreating || (selectedAgent !== null && isEditing);
+  const showView = selectedAgent !== null && !isEditing && !isCreating;
 
   // Select value: when in custom mode show CUSTOM_MODEL, otherwise the model id.
   // Empty string would disable the trigger's "selected" state, so guard against it.
@@ -486,7 +557,15 @@ function AgentsPageInner() {
           </aside>
 
           <div className="flex-1 overflow-y-auto p-6">
-            {showForm ? (
+            {showView && selectedAgent ? (
+              <AgentDetail
+                agent={selectedAgent}
+                globalServers={globalMcp}
+                allSkills={allSkills}
+                onEdit={() => setIsEditing(true)}
+                onDelete={() => setConfirmDelete(selectedAgent.id)}
+              />
+            ) : showForm ? (
               <form
                 onSubmit={isCreating ? handleCreate : handleUpdate}
                 className="mx-auto max-w-2xl"
@@ -642,6 +721,41 @@ function AgentsPageInner() {
                       }
                       onRemove={handleMcpRemove}
                     />
+
+                    <SkillsPicker
+                      all={allSkills}
+                      selected={formData.skills}
+                      onToggle={toggleSkill}
+                    />
+
+                    <div className="grid gap-2">
+                      <Label htmlFor="memory-char-limit">
+                        Memory char limit
+                        <span className="ml-2 font-normal text-ink-faint">
+                          write-cap on MEMORY.md
+                        </span>
+                      </Label>
+                      <Input
+                        id="memory-char-limit"
+                        type="number"
+                        min={500}
+                        max={50000}
+                        step={100}
+                        value={formData.memoryCharLimit}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            memoryCharLimit:
+                              Number(e.target.value) || DEFAULT_MEMORY_CHAR_LIMIT,
+                          })
+                        }
+                        className="font-mono text-xs max-w-[12rem]"
+                      />
+                    </div>
+
+                    {selectedAgent && (
+                      <AgentResourcesPanel agentId={selectedAgent.id} />
+                    )}
                   </CardContent>
                 </Card>
 
@@ -659,10 +773,21 @@ function AgentsPageInner() {
                       </Button>
                     )}
                   </div>
-                  <Button type="submit">
-                    <Save className="size-4" />
-                    {isCreating ? "Create" : "Save changes"}
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    {selectedAgent && isEditing && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={cancelEdit}
+                      >
+                        Cancel
+                      </Button>
+                    )}
+                    <Button type="submit">
+                      <Save className="size-4" />
+                      {isCreating ? "Create" : "Save changes"}
+                    </Button>
+                  </div>
                 </div>
               </form>
             ) : agents.length === 0 ? (
@@ -1008,7 +1133,7 @@ function EmptyWorkforceState({ onCreate }: { onCreate: () => void }) {
     <div className="mx-auto max-w-2xl">
       <SectionEyebrow meta="0 agents">The workforce is empty</SectionEyebrow>
 
-      <div className="mt-6 border border-paper-rule paper-surface">
+      <div className="mt-6 border border-dashed border-paper-rule paper-surface opacity-80">
         {/* Faux dossier — visual demonstration of an AGENT.md. Every row
          * is real mono with real metadata shape so the operator reads
          * the format off the page, not off external docs. */}
@@ -1019,10 +1144,11 @@ function EmptyWorkforceState({ onCreate }: { onCreate: () => void }) {
             animationDelay: `${rowDelay(0)}ms`,
           }}
         >
+          <div className="label-faceplate mb-2 text-ink-faint">Preview</div>
           <div className="font-mono text-[12px] uppercase tracking-[0.06em] text-ink">
-            triage-bot
+            example-agent
           </div>
-          <div className="mt-1 meta-row">agent_8f3a2b</div>
+          <div className="mt-1 meta-row">your agent · not yet created</div>
         </div>
 
         <div
@@ -1045,7 +1171,8 @@ function EmptyWorkforceState({ onCreate }: { onCreate: () => void }) {
         >
           <div className="label-faceplate mb-1">Persona</div>
           <div className="text-[13px] leading-snug text-ink-soft">
-            Triages incoming github issues and routes them to the right repo.
+            A short paragraph describing what this coworker does, the tone
+            they take, and what they shouldn&apos;t touch.
           </div>
         </div>
 
@@ -1120,9 +1247,275 @@ function NoAgentPicked() {
     <div className="mx-auto max-w-2xl">
       <SectionEyebrow>Select an agent</SectionEyebrow>
       <p className="mt-3 text-[13px] leading-relaxed text-ink-soft">
-        Pick a row from the roster on the left to edit its model, persona,
-        tools, and MCP servers.
+        Pick a row from the roster on the left to view its model, persona,
+        tools, and resources.
       </p>
+    </div>
+  );
+}
+
+// ─── Read-only detail view ───────────────────────────────────────────────────
+function AgentDetail({
+  agent,
+  globalServers,
+  allSkills,
+  onEdit,
+  onDelete,
+}: {
+  agent: Agent;
+  globalServers: Record<string, MCPServerConfigDto>;
+  allSkills: SkillIndexEntry[];
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const disabledSet = new Set(agent.mcpDisabled ?? []);
+  const privateServers = Object.entries(agent.mcpServers ?? {});
+  const inheritedServers = Object.entries(globalServers).filter(
+    ([name]) => !disabledSet.has(name)
+  );
+  const skillEntries = (agent.skills ?? [])
+    .map((name) => allSkills.find((s) => s.name === name) ?? { name, description: "" })
+    .filter(Boolean);
+
+  return (
+    <div className="mx-auto max-w-2xl space-y-4">
+      <Card>
+        <CardHeader className="flex flex-row items-start justify-between gap-4">
+          <div className="min-w-0">
+            <CardTitle className="text-xl">{agent.name}</CardTitle>
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              <span className="font-mono text-[11px] tabular-nums text-ink-faint">
+                {agent.id}
+              </span>
+              <span className="text-ink-faint">·</span>
+              <span className="font-mono text-[11px] tabular-nums text-ink-soft">
+                {agent.model.provider}/{agent.model.model}
+              </span>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <Button size="sm" onClick={onEdit}>
+              <Pencil className="size-4" />
+              Edit
+            </Button>
+            <Button
+              variant="ghost-destructive"
+              size="sm"
+              onClick={onDelete}
+            >
+              <Trash2 className="size-4" />
+              Delete
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          {agent.role && (
+            <div>
+              <Label className="mb-1.5 block">
+                Role
+                <span className="ml-2 font-normal text-ink-faint">
+                  visible to other agents
+                </span>
+              </Label>
+              <p className="text-[13px] leading-relaxed text-ink-soft">
+                {agent.role}
+              </p>
+            </div>
+          )}
+
+          <div>
+            <Label className="mb-1.5 block">Persona</Label>
+            <div className="border border-paper-rule bg-paper-sunk px-4 py-3 text-[13px] leading-relaxed text-ink">
+              <Markdown>{agent.persona}</Markdown>
+            </div>
+          </div>
+
+          <div>
+            <Label className="mb-1.5 block">
+              Tools
+              <span className="ml-2 font-normal text-ink-faint">
+                {agent.tools.length} configurable
+              </span>
+            </Label>
+            {agent.tools.length === 0 ? (
+              <p className="font-mono text-[12px] text-ink-faint">
+                None.
+              </p>
+            ) : (
+              <div className="flex flex-wrap gap-1.5">
+                {agent.tools.map((t) => (
+                  <Badge key={t} variant="outline" className="font-mono text-[11px]">
+                    {t}
+                  </Badge>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {skillEntries.length > 0 && (
+            <div>
+              <Label className="mb-1.5 block flex items-center gap-2">
+                <BookOpen className="size-3.5 text-ink-soft" />
+                Skills
+                <span className="font-normal text-ink-faint">
+                  {skillEntries.length} enabled
+                </span>
+              </Label>
+              <div className="flex flex-wrap gap-1.5">
+                {skillEntries.map((s) => (
+                  <Badge key={s.name} variant="outline" className="font-mono text-[11px]">
+                    {s.name}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div>
+            <Label className="mb-1.5 block flex items-center gap-2">
+              <Boxes className="size-3.5 text-ink-soft" />
+              MCP servers
+            </Label>
+            {inheritedServers.length === 0 && privateServers.length === 0 ? (
+              <p className="font-mono text-[12px] text-ink-faint">
+                None.
+              </p>
+            ) : (
+              <ul className="border-y border-paper-rule">
+                {inheritedServers.map(([name, cfg]) => (
+                  <li
+                    key={`g-${name}`}
+                    className="flex items-center gap-3 border-b border-paper-rule last:border-b-0 px-3 py-1.5"
+                  >
+                    <Badge variant="outline" className="font-mono text-[10px]">
+                      inherited
+                    </Badge>
+                    <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-ink">
+                      {name}
+                    </span>
+                    <span className="shrink-0 truncate font-mono text-[11px] text-ink-faint max-w-[40%]">
+                      {cfg.command
+                        ? `${cfg.command}${cfg.args && cfg.args.length > 0 ? " " + cfg.args.join(" ") : ""}`
+                        : cfg.url ?? ""}
+                    </span>
+                  </li>
+                ))}
+                {privateServers.map(([name, cfg]) => (
+                  <li
+                    key={`p-${name}`}
+                    className="flex items-center gap-3 border-b border-paper-rule last:border-b-0 px-3 py-1.5"
+                  >
+                    <Badge variant="outline" className="font-mono text-[10px]">
+                      private
+                    </Badge>
+                    <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-ink">
+                      {name}
+                    </span>
+                    <span className="shrink-0 truncate font-mono text-[11px] text-ink-faint max-w-[40%]">
+                      {cfg.command
+                        ? `${cfg.command}${cfg.args && cfg.args.length > 0 ? " " + cfg.args.join(" ") : ""}`
+                        : cfg.url ?? ""}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <AgentResourcesPanel agentId={agent.id} />
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// ─── Skills picker (form) ─────────────────────────────────────────────────────
+function SkillsPicker({
+  all,
+  selected,
+  onToggle,
+}: {
+  all: SkillIndexEntry[];
+  selected: string[];
+  onToggle: (name: string) => void;
+}) {
+  if (all.length === 0) {
+    return (
+      <div className="grid gap-2">
+        <Label className="flex items-center gap-2">
+          <BookOpen className="size-3.5 text-ink-soft" />
+          Skills
+        </Label>
+        <p className="border border-paper-rule bg-paper-sunk px-3 py-2 font-mono text-[12px] text-ink-soft">
+          No skills installed.{" "}
+          <Link href="/skills" className="text-plot-red hover:underline">
+            Add some
+          </Link>{" "}
+          and they&apos;ll appear here.
+        </p>
+      </div>
+    );
+  }
+  // Selected empty == inherit-all. Surface that explicitly so the picker
+  // doesn't look broken when the agent's set is "unconfigured" but
+  // every skill still applies.
+  const inheritAll = selected.length === 0;
+  return (
+    <div className="grid gap-2">
+      <div className="flex items-center justify-between">
+        <Label className="flex items-center gap-2">
+          <BookOpen className="size-3.5 text-ink-soft" />
+          Skills
+        </Label>
+        <span className="font-mono text-[11px] tabular-nums text-ink-soft">
+          {inheritAll ? `all (${all.length})` : `${selected.length} / ${all.length}`}
+        </span>
+      </div>
+      {inheritAll && (
+        <p className="font-mono text-[11px] text-ink-faint">
+          Empty selection means the agent sees every installed skill.
+          Pick one or more to scope it down.
+        </p>
+      )}
+      <div className="grid grid-cols-1 gap-px md:grid-cols-2">
+        {all.map((skill) => {
+          const checked = selected.includes(skill.name);
+          return (
+            <button
+              key={skill.name}
+              type="button"
+              onClick={() => onToggle(skill.name)}
+              aria-pressed={checked}
+              className={cn(
+                "group relative flex items-start gap-3 border border-paper-rule px-3 py-2 text-left transition-colors",
+                checked
+                  ? "bg-paper text-ink"
+                  : "bg-paper-sunk text-ink-soft hover:bg-paper hover:text-ink"
+              )}
+            >
+              <ActiveMarker active={checked} />
+              <div
+                className={cn(
+                  "mt-0.5 flex size-4 shrink-0 items-center justify-center border transition-colors",
+                  checked
+                    ? "border-plot-red bg-plot-red text-paper"
+                    : "border-paper-rule bg-paper"
+                )}
+              >
+                {checked && <Check className="size-3" strokeWidth={3} />}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="truncate font-mono text-[12px] text-ink">
+                  {skill.name}
+                </div>
+                <div className="line-clamp-2 text-[11px] text-ink-faint">
+                  {skill.description}
+                </div>
+              </div>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }

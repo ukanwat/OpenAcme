@@ -256,6 +256,11 @@ function SkillsPageInner() {
     return Array.from(tagSet).sort();
   }, [skills]);
 
+  const installedNames = useMemo(
+    () => new Set(skills.map((s) => s.name)),
+    [skills]
+  );
+
   return (
     <div className="flex h-screen w-screen overflow-hidden">
       <Sidebar />
@@ -565,7 +570,7 @@ function SkillsPageInner() {
           </TabsContent>
 
           <TabsContent value="browse" className="flex-1 overflow-y-auto m-0 pt-0">
-            <BrowseTab onInstalled={() => loadSkills()} />
+            <BrowseTab installedNames={installedNames} onInstalled={() => loadSkills()} />
           </TabsContent>
 
           <TabsContent value="sources" className="flex-1 overflow-y-auto m-0 pt-0">

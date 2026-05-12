@@ -6,7 +6,16 @@
  * speaks: search, inspect, fetch.
  */
 
-export type SkillSourceId = "github" | "url" | "claude-marketplace";
+export type SkillSourceId =
+  | "github"
+  | "url"
+  | "claude-marketplace"
+  | "well-known"
+  | "local"
+  | "git-url"
+  | "lobehub"
+  | "skills-sh"
+  | "clawhub";
 
 export type TrustLevel = "trusted" | "community";
 
@@ -57,11 +66,24 @@ export interface SkillSource {
   trustLevelFor(identifier: string): TrustLevel;
 }
 
+export type TapSource = "github" | "claude-marketplace" | "well-known" | "local";
+
 export interface Tap {
-  source: "github" | "claude-marketplace";
-  /** "owner/repo" */
+  source: TapSource;
+  /**
+   * Per-source location:
+   *   github / claude-marketplace → "owner/repo"
+   *   well-known                  → "https://host" (base URL, no trailing slash)
+   *   local                       → absolute filesystem path
+   */
   repo: string;
-  /** Subpath inside the repo where skills live (default: "skills/"). */
+  /**
+   * Subpath inside the source:
+   *   github                      → "skills/" (or similar)
+   *   claude-marketplace          → "" (ignored — marketplace.json lives at repo root)
+   *   well-known                  → "" (ignored — /.well-known/skills is fixed)
+   *   local                       → optional subdir, defaults to ""
+   */
   path: string;
   addedAt: string;
 }

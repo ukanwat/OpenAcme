@@ -1,6 +1,16 @@
 import { z } from "zod";
 
-const SkillSourceIdSchema = z.enum(["github", "url", "claude-marketplace"]);
+const SkillSourceIdSchema = z.enum([
+  "github",
+  "url",
+  "claude-marketplace",
+  "well-known",
+  "local",
+  "git-url",
+  "lobehub",
+  "skills-sh",
+  "clawhub",
+]);
 const TrustLevelSchema = z.enum(["trusted", "community"]);
 
 const ContentHashSchema = z
@@ -10,6 +20,17 @@ const ContentHashSchema = z
 const RepoSchema = z
   .string()
   .regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/, "must be owner/repo");
+const HttpUrlSchema = z
+  .string()
+  .regex(/^https?:\/\//i, "must be an http(s) URL")
+  .max(1024);
+const AbsolutePathSchema = z
+  .string()
+  .min(1)
+  .max(1024)
+  .refine((s) => s.startsWith("/") || /^[A-Za-z]:[\\/]/.test(s), {
+    message: "must be an absolute path",
+  });
 
 export const HubLockEntrySchema = z.object({
   version: z.string().max(50).optional(),
@@ -28,12 +49,17 @@ export const HubLockFileSchema = z.object({
   installed: z.record(z.string(), HubLockEntrySchema),
 });
 
-export const TapSchema = z.object({
-  source: z.enum(["github", "claude-marketplace"]),
-  repo: RepoSchema,
-  path: z.string().min(1).max(256).default("skills/"),
+const TapBase = {
+  path: z.string().max(256).default(""),
   addedAt: z.string().datetime(),
-});
+};
+
+export const TapSchema = z.discriminatedUnion("source", [
+  z.object({ source: z.literal("github"), repo: RepoSchema, ...TapBase }),
+  z.object({ source: z.literal("claude-marketplace"), repo: RepoSchema, ...TapBase }),
+  z.object({ source: z.literal("well-known"), repo: HttpUrlSchema, ...TapBase }),
+  z.object({ source: z.literal("local"), repo: AbsolutePathSchema, ...TapBase }),
+]);
 
 export const TapsFileSchema = z.object({
   version: z.literal(1),

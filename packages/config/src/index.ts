@@ -39,6 +39,13 @@ export {
 
 export { createAgentStore, type AgentStore } from "./agent-store.js";
 
+export {
+  listAgentResources,
+  resolveResourcePath,
+  MAX_RESOURCES_PER_AGENT,
+  type AgentResource,
+} from "./resources.js";
+
 export { loadGlobalMcpServers, saveGlobalMcpServers } from "./mcp-store.js";
 
 export { writeAtomic0600 } from "./atomic.js";

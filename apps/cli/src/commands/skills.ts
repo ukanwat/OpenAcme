@@ -2,7 +2,11 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as p from "@clack/prompts";
 import { loadConfig } from "@openacme/config";
-import { SkillRegistry, parseSkillDirectory } from "@openacme/skills";
+import {
+  SkillRegistry,
+  SkillHub,
+  HubError,
+} from "@openacme/skills";
 
 export interface SkillsOptions {
   dataDir?: string;
@@ -111,51 +115,38 @@ export async function skillsAddCommand(
     return;
   }
 
-  // Parse the source skill so we know its canonical name (from frontmatter,
-  // not the source folder).
-  let parsed;
-  try {
-    parsed = parseSkillDirectory(
-      path.join(srcDir, "SKILL.md"),
-      path.basename(srcDir)
-    );
-  } catch (e) {
-    p.cancel(
-      `Failed to parse SKILL.md: ${e instanceof Error ? e.message : String(e)}`
-    );
-    process.exitCode = 1;
-    return;
-  }
-
-  const safeName = parsed.name
-    .toLowerCase()
-    .replace(/[^a-z0-9-]/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "");
-
-  if (!safeName) {
-    p.cancel(`Skill has an invalid name: ${parsed.name}`);
-    process.exitCode = 1;
-    return;
-  }
-
   const { dir: skillsDir } = resolveSkillsDir(opts);
-  const dest = path.join(skillsDir, safeName);
+  const hub = new SkillHub(skillsDir, loadRegistry(skillsDir));
 
-  if (fs.existsSync(dest)) {
-    const overwrite = await p.confirm({
-      message: `Skill '${safeName}' already exists at ${dest}. Overwrite?`,
-      initialValue: false,
-    });
-    if (p.isCancel(overwrite) || !overwrite) {
-      p.cancel("Aborted.");
-      return;
+  try {
+    const result = await hub.install(srcDir, { source: "local" });
+    p.outro(`Installed '${result.name}' from ${srcDir}`);
+  } catch (e) {
+    if (e instanceof HubError && e.code === "ALREADY_INSTALLED") {
+      const overwrite = await p.confirm({
+        message: `${e.message}. Overwrite?`,
+        initialValue: false,
+      });
+      if (p.isCancel(overwrite) || !overwrite) {
+        p.cancel("Aborted.");
+        return;
+      }
+      try {
+        const result = await hub.install(srcDir, {
+          source: "local",
+          force: true,
+        });
+        p.outro(`Reinstalled '${result.name}' from ${srcDir}`);
+        return;
+      } catch (err) {
+        p.cancel(`Install failed: ${err instanceof Error ? err.message : String(err)}`);
+        process.exitCode = 1;
+        return;
+      }
     }
-    fs.rmSync(dest, { recursive: true, force: true });
+    p.cancel(`Install failed: ${e instanceof Error ? e.message : String(e)}`);
+    process.exitCode = 1;
   }
-
-  fs.cpSync(srcDir, dest, { recursive: true, dereference: true });
-  p.outro(`Installed '${safeName}' from ${srcDir} → ${dest}`);
 }
 
 export async function skillsRemoveCommand(
@@ -180,6 +171,11 @@ export async function skillsRemoveCommand(
     return;
   }
 
-  fs.rmSync(skill.dirPath, { recursive: true, force: true });
+  const hub = new SkillHub(dir, reg);
+  // Try hub uninstall first — covers lockfile + audit. Falls through to a
+  // direct rm for skills that pre-date the hub.
+  if (!hub.uninstall(name)) {
+    fs.rmSync(skill.dirPath, { recursive: true, force: true });
+  }
   p.outro(`Removed '${name}'.`);
 }

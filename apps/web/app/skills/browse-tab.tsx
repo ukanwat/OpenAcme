@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, FormEvent } from "react";
-import { Search, Download, ShieldCheck } from "lucide-react";
+import { Search, Download, ShieldCheck, Check } from "lucide-react";
 import { toast } from "sonner";
 import { API_BASE } from "../lib/api";
 import { Button } from "@/app/components/ui/button";
@@ -24,10 +24,21 @@ import {
   SelectValue,
 } from "@/app/components/ui/select";
 
+type SkillSource =
+  | "github"
+  | "url"
+  | "claude-marketplace"
+  | "well-known"
+  | "local"
+  | "git-url"
+  | "lobehub"
+  | "skills-sh"
+  | "clawhub";
+
 interface SkillMeta {
   name: string;
   description: string;
-  source: "github" | "url" | "claude-marketplace";
+  source: SkillSource;
   identifier: string;
   trustLevel: "trusted" | "community";
   tags: string[];
@@ -35,16 +46,50 @@ interface SkillMeta {
   path?: string;
 }
 
-type SourceFilter = "all" | "github" | "claude-marketplace";
+type SourceFilter = "all" | SkillSource;
 
-export function BrowseTab({ onInstalled }: { onInstalled?: () => void }) {
+type TapSource = "github" | "claude-marketplace" | "well-known" | "local";
+
+interface Tap {
+  source: TapSource;
+  repo: string;
+}
+
+const FILTER_LABELS: Record<SourceFilter, string> = {
+  all: "All sources",
+  github: "GitHub",
+  "claude-marketplace": "Claude marketplace",
+  "well-known": "Well-known",
+  local: "Local",
+  "git-url": "Git URL",
+  lobehub: "LobeHub",
+  "skills-sh": "skills.sh",
+  clawhub: "ClawHub",
+  url: "Direct URL",
+};
+
+export function BrowseTab({
+  installedNames,
+  onInstalled,
+}: {
+  installedNames: Set<string>;
+  onInstalled?: () => void;
+}) {
   const [query, setQuery] = useState("");
   const [source, setSource] = useState<SourceFilter>("all");
   const [results, setResults] = useState<SkillMeta[]>([]);
   const [loading, setLoading] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const [installing, setInstalling] = useState<Set<string>>(new Set());
+  const [taps, setTaps] = useState<Tap[]>([]);
+  // Locally-optimistic installs so the button flips before the parent's
+  // /api/skills refetch lands. Cleared whenever installedNames updates.
+  const [justInstalled, setJustInstalled] = useState<Set<string>>(new Set());
   const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    setJustInstalled(new Set());
+  }, [installedNames]);
 
   // First mount: pull a default empty-query browse so the user sees
   // something immediately. Also re-fetch whenever the source filter
@@ -55,6 +100,19 @@ export function BrowseTab({ onInstalled }: { onInstalled?: () => void }) {
     return () => abortRef.current?.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [source]);
+
+  // Taps are loaded once so the empty-state can tell the user *why*
+  // they're seeing nothing (no marketplace tap configured vs. real "no
+  // matches"). Cheap GET — refetched on mount only.
+  useEffect(() => {
+    fetch(`${API_BASE}/api/skills/hub/taps`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((t: Tap[]) => setTaps(t))
+      .catch(() => setTaps([]));
+  }, []);
+
+  const hasMarketplaceTap = taps.some((t) => t.source === "claude-marketplace");
+  const hasGithubTap = taps.some((t) => t.source === "github");
 
   async function doSearch(q: string) {
     abortRef.current?.abort();
@@ -106,9 +164,11 @@ export function BrowseTab({ onInstalled }: { onInstalled?: () => void }) {
       const body = await res.json();
       if (res.ok) {
         toast.success(`Installed '${body.name}'`);
+        setJustInstalled((s) => new Set(s).add(body.name));
         onInstalled?.();
       } else if (res.status === 409) {
         toast.message(`'${meta.name}' is already installed`);
+        setJustInstalled((s) => new Set(s).add(meta.name));
       } else {
         toast.error("Install failed", { description: body.error });
       }
@@ -142,9 +202,14 @@ export function BrowseTab({ onInstalled }: { onInstalled?: () => void }) {
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All sources</SelectItem>
-            <SelectItem value="github">GitHub</SelectItem>
-            <SelectItem value="claude-marketplace">Claude marketplace</SelectItem>
+            <SelectItem value="all">{FILTER_LABELS.all}</SelectItem>
+            <SelectItem value="github">{FILTER_LABELS.github}</SelectItem>
+            <SelectItem value="claude-marketplace">{FILTER_LABELS["claude-marketplace"]}</SelectItem>
+            <SelectItem value="well-known">{FILTER_LABELS["well-known"]}</SelectItem>
+            <SelectItem value="local">{FILTER_LABELS.local}</SelectItem>
+            <SelectItem value="lobehub">{FILTER_LABELS.lobehub}</SelectItem>
+            <SelectItem value="skills-sh">{FILTER_LABELS["skills-sh"]}</SelectItem>
+            <SelectItem value="clawhub">{FILTER_LABELS.clawhub}</SelectItem>
           </SelectContent>
         </Select>
         <Button type="submit" disabled={loading}>
@@ -164,8 +229,23 @@ export function BrowseTab({ onInstalled }: { onInstalled?: () => void }) {
         <Card>
           <CardContent className="py-8 text-center">
             <p className="text-[13px] text-ink-soft">
-              No matches. Try a broader query or add a tap in the{" "}
-              <span className="font-mono">Sources</span> tab.
+              {source === "claude-marketplace" && !hasMarketplaceTap ? (
+                <>
+                  No Claude marketplace tap is configured. Add one in the{" "}
+                  <span className="font-mono">Sources</span> tab to browse
+                  marketplace catalogs.
+                </>
+              ) : source === "github" && !hasGithubTap ? (
+                <>
+                  No GitHub tap is configured. Add one in the{" "}
+                  <span className="font-mono">Sources</span> tab.
+                </>
+              ) : (
+                <>
+                  No matches. Try a broader query or add a tap in the{" "}
+                  <span className="font-mono">Sources</span> tab.
+                </>
+              )}
             </p>
           </CardContent>
         </Card>
@@ -174,6 +254,7 @@ export function BrowseTab({ onInstalled }: { onInstalled?: () => void }) {
       {results.map((r) => {
         const key = `${r.source}:${r.identifier}`;
         const isInstalling = installing.has(key);
+        const isInstalled = installedNames.has(r.name) || justInstalled.has(r.name);
         return (
           <Card key={key} className="paper-surface">
             <CardHeader className="flex flex-row items-start justify-between gap-4">
@@ -199,15 +280,18 @@ export function BrowseTab({ onInstalled }: { onInstalled?: () => void }) {
               </div>
               <Button
                 size="sm"
+                variant={isInstalled ? "outline" : "default"}
                 onClick={() => void install(r)}
-                disabled={isInstalling}
+                disabled={isInstalling || isInstalled}
               >
                 {isInstalling ? (
                   <LoadingHairline inline />
+                ) : isInstalled ? (
+                  <Check className="size-3.5" />
                 ) : (
                   <Download className="size-3.5" />
                 )}
-                Install
+                {isInstalled ? "Installed" : "Install"}
               </Button>
             </CardHeader>
             {r.tags.length > 0 && (

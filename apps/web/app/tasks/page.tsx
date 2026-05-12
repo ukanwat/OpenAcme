@@ -506,9 +506,9 @@ function explainAutoCorrect(actual: TaskStatus, requested: TaskStatus): string {
 
 type TaskState = "open" | "in_progress" | "done";
 const TASK_STATE_CYCLE: { state: TaskState; label: string; ms: number }[] = [
-  { state: "open",        label: "OPEN",        ms: 1400 },
-  { state: "in_progress", label: "IN PROGRESS", ms: 1400 },
-  { state: "done",        label: "DONE",        ms: 1400 },
+  { state: "open",        label: "OPEN",        ms: 2200 },
+  { state: "in_progress", label: "IN PROGRESS", ms: 2200 },
+  { state: "done",        label: "DONE",        ms: 2200 },
 ];
 
 function EmptyTasksState() {
@@ -524,20 +524,21 @@ function EmptyTasksState() {
     current.state === "open"
       ? "bg-signal-amber"
       : current.state === "in_progress"
-        ? "bg-plot-red pulse-live"
+        ? "bg-plot-red"
         : "bg-ink";
   return (
     <div className="mx-auto w-full max-w-2xl px-6 pt-12">
       <SectionEyebrow meta="0 tasks">Empty board</SectionEyebrow>
 
-      <div className="mt-6 border border-paper-rule paper-surface px-4 py-4 section-enter">
+      <div className="mt-6 border border-dashed border-paper-rule paper-surface px-4 py-4 section-enter opacity-80">
+        <div className="label-faceplate mb-3 text-ink-faint">Preview</div>
         <div className="flex items-center justify-between gap-4">
           <div className="min-w-0 flex-1">
-            <div className="font-mono text-[13px] text-ink truncate">
-              investigate failing build on main
+            <div className="text-[13px] text-ink truncate">
+              Draft the weekly status note
             </div>
             <div className="mt-1 meta-row">
-              agent_8f3a2b · filed 2m ago
+              @your-agent · filed just now
             </div>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">

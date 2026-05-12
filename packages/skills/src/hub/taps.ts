@@ -3,7 +3,7 @@ import { z } from "zod";
 import { TapsFileSchema, TapSchema } from "./schemas.js";
 import { tapsFile } from "./paths.js";
 import { atomicWriteSync } from "./atomic-write.js";
-import type { Tap } from "./types.js";
+import type { Tap, TapSource } from "./types.js";
 
 type TapsFileShape = z.infer<typeof TapsFileSchema>;
 
@@ -15,6 +15,10 @@ const DEFAULT_TAPS: Tap[] = [
     addedAt: "2026-01-01T00:00:00.000Z",
   },
 ];
+
+function defaultPathFor(source: TapSource): string {
+  return source === "github" ? "skills/" : "";
+}
 
 export class TapsManager {
   private cache: TapsFileShape | null = null;
@@ -33,7 +37,22 @@ export class TapsManager {
       this.cache = { version: 1, taps: [...DEFAULT_TAPS] };
       return this.cache.taps;
     }
-    const raw = JSON.parse(fs.readFileSync(fp, "utf-8"));
+    const raw = JSON.parse(fs.readFileSync(fp, "utf-8")) as {
+      version?: unknown;
+      taps?: unknown[];
+    };
+    // Legacy taps.json files (pre-discriminated-union) may have entries
+    // without a recognized `source`. Coerce to "github" so the schema
+    // doesn't reject the whole file.
+    if (Array.isArray(raw.taps)) {
+      raw.taps = raw.taps.map((t) => {
+        if (t && typeof t === "object") {
+          const obj = t as Record<string, unknown>;
+          if (typeof obj["source"] !== "string") obj["source"] = "github";
+        }
+        return t;
+      });
+    }
     const parsed = TapsFileSchema.safeParse(raw);
     if (!parsed.success) {
       throw new Error(`invalid taps.json: ${parsed.error.message}`);
@@ -46,20 +65,33 @@ export class TapsManager {
     return this.load();
   }
 
-  has(repo: string): boolean {
-    return this.load().some((t) => t.repo === repo);
+  has(repo: string, source?: TapSource): boolean {
+    return this.load().some(
+      (t) => t.repo === repo && (!source || t.source === source)
+    );
   }
 
-  add(input: { source: Tap["source"]; repo: string; path?: string }): Tap {
-    // Validate via TapSchema so input shape matches what we persist.
-    const candidate = TapSchema.parse({
+  add(input: { source: TapSource; repo: string; path?: string }): Tap {
+    const parsed = TapSchema.safeParse({
       source: input.source,
       repo: input.repo,
-      path: input.path ?? "skills/",
+      path: input.path ?? defaultPathFor(input.source),
       addedAt: new Date().toISOString(),
     });
+    if (!parsed.success) {
+      // First issue is enough — Zod's default `.message` stringifies all
+      // issues as JSON and looks awful in a toast.
+      const first = parsed.error.issues[0];
+      const where = first?.path.join(".") || "input";
+      throw new Error(`${where}: ${first?.message ?? "invalid"}`);
+    }
+    const candidate = parsed.data;
     const taps = this.load();
-    if (taps.some((t) => t.repo === candidate.repo && t.source === candidate.source)) {
+    if (
+      taps.some(
+        (t) => t.source === candidate.source && t.repo === candidate.repo
+      )
+    ) {
       throw new Error(`tap already exists: ${candidate.source} ${candidate.repo}`);
     }
     taps.push(candidate);
@@ -67,9 +99,11 @@ export class TapsManager {
     return candidate;
   }
 
-  remove(repo: string): boolean {
+  remove(repo: string, source?: TapSource): boolean {
     const taps = this.load();
-    const idx = taps.findIndex((t) => t.repo === repo);
+    const idx = taps.findIndex(
+      (t) => t.repo === repo && (!source || t.source === source)
+    );
     if (idx === -1) return false;
     taps.splice(idx, 1);
     this.save();
@@ -77,7 +111,7 @@ export class TapsManager {
   }
 
   /** Filter taps by source for adapters that only consume their own kind. */
-  forSource(source: Tap["source"]): Tap[] {
+  forSource(source: TapSource): Tap[] {
     return this.load().filter((t) => t.source === source);
   }
 
