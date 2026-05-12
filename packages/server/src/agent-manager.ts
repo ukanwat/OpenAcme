@@ -148,19 +148,14 @@ export class AgentManager {
       resolveRoot: (sessionId) => this.sessionStore.getRoot(sessionId),
     });
 
-    // Wire the per-agent MEMORY.md root + char-limit lookup into the
-    // `memory` tool. Same bind pattern as session_search; memory tool
-    // resolves the active agentId from AsyncLocalStorage at handler call
-    // time and uses these closures to find the file and the cap.
+    // Wire the per-agent MEMORY.md root into the `memory` tool. Same bind
+    // pattern as session_search; the tool resolves the active agentId from
+    // AsyncLocalStorage at handler call time and uses the store closure to
+    // find the file. The index char cap is a platform constant
+    // (`DEFAULT_MEMORY_CHAR_LIMIT`) — not per-agent — so the tool reads it
+    // directly from `@openacme/memory`.
     bindMemory({
       store: this.memoryStore,
-      getCharLimit: (agentId) => {
-        const def = this.agentStore.get(agentId);
-        if (!def) {
-          throw new Error(`Agent not found: ${agentId}`);
-        }
-        return def.memoryCharLimit;
-      },
     });
 
     // Tasks: one shared TaskStore, bound to the task tools and driven
@@ -728,7 +723,6 @@ export class AgentManager {
       ),
       maxSteps: b.maxSteps,
       skillsIndex,
-      memoryCharLimit: def.memoryCharLimit,
       compression: {
         thresholdTokens: b.compressionThresholdTokens,
         thresholdPercent: b.compressionThresholdPercent,

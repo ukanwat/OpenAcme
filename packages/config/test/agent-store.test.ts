@@ -29,7 +29,6 @@ function makeAgent(
     mcpServers: {},
     mcpDisabled: [],
     skills: [],
-    memoryCharLimit: 2200,
   };
 }
 

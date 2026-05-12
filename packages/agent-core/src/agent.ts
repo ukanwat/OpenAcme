@@ -13,6 +13,7 @@ import * as path from "node:path";
 import { getModel } from "@openacme/llm-provider";
 import { toolCallContext, type ToolRegistry } from "@openacme/tools";
 import {
+  DEFAULT_MEMORY_CHAR_LIMIT,
   MemoryStore,
   memoryAge,
   memoryFreshnessText,
@@ -796,7 +797,7 @@ export class Agent {
     try {
       memorySnapshot = this.memoryStore.readIndex(
         this.config.id,
-        this.config.memoryCharLimit
+        DEFAULT_MEMORY_CHAR_LIMIT
       );
     } catch (e) {
       console.warn(

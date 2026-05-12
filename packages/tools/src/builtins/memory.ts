@@ -1,13 +1,15 @@
 import { z } from "zod";
-import { MemoryStore, scanMemoryContent } from "@openacme/memory";
+import {
+  DEFAULT_MEMORY_CHAR_LIMIT,
+  MemoryStore,
+  scanMemoryContent,
+} from "@openacme/memory";
 import { registry } from "../registry.js";
 import { getCurrentAgentId } from "../session-context.js";
 
 export interface MemoryBindings {
   /** Per-agent memory store, constructed by AgentManager against `<dataDir>/agents/`. */
   store: MemoryStore;
-  /** Per-agent index char cap, lifted from `AgentDefinition.memoryCharLimit`. */
-  getCharLimit: (agentId: string) => number;
 }
 
 // Bound by AgentManager at construction time. Until then the tool returns
@@ -158,15 +160,7 @@ registry.register({
       });
     }
 
-    let charLimit: number;
-    try {
-      charLimit = bindings.getCharLimit(agentId);
-    } catch (e) {
-      return JSON.stringify({
-        error: `Could not resolve memory char limit: ${e instanceof Error ? e.message : String(e)}`,
-      });
-    }
-
+    const charLimit = DEFAULT_MEMORY_CHAR_LIMIT;
     const { store } = bindings;
 
     // After superRefine, the per-command required fields are guaranteed

@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as p from "@clack/prompts";
 import { createAgentStore, loadConfig } from "@openacme/config";
-import { MemoryStore, memoryAge } from "@openacme/memory";
+import { DEFAULT_MEMORY_CHAR_LIMIT, MemoryStore, memoryAge } from "@openacme/memory";
 
 export interface MemoryOptions {
   dataDir?: string;
@@ -27,7 +27,7 @@ export async function memoryShowCommand(
     return;
   }
   const memory = new MemoryStore(agentsDir);
-  const snapshot = memory.readIndex(agentId, def.memoryCharLimit);
+  const snapshot = memory.readIndex(agentId, DEFAULT_MEMORY_CHAR_LIMIT);
 
   // Show the memory dir path so users know where to look.
   const dir = memory.dirPath(agentId);
@@ -127,7 +127,7 @@ export async function memoryStatusCommand(
   }
   const memory = new MemoryStore(agentsDir);
   const lines = list.map((def) => {
-    const s = memory.readIndex(def.id, def.memoryCharLimit);
+    const s = memory.readIndex(def.id, DEFAULT_MEMORY_CHAR_LIMIT);
     const pct =
       s.limit > 0 ? Math.round((s.used / s.limit) * 100) : 0;
     const entryWord = s.entryCount === 1 ? "entry" : "entries";

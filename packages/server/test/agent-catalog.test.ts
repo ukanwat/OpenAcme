@@ -122,18 +122,18 @@ describe("AgentManager.importAgentFromTemplate (bundled Coder)", () => {
     const r = await manager.importAgentFromTemplate("coder", {
       overrides: {
         model: { provider: "openai", model: "gpt-5", auth: "api_key" },
-        memoryCharLimit: 4000,
+        role: "Backend specialist",
       },
     });
     expect(r.agent.model?.provider).toBe("openai");
     expect(r.agent.model?.model).toBe("gpt-5");
-    expect(r.agent.memoryCharLimit).toBe(4000);
+    expect(r.agent.role).toBe("Backend specialist");
 
     // Round-trips through AgentStore.upsert serialization, so reading back
     // shows the same values.
     const stored = manager.agentStore.get(r.agent.id);
     expect(stored?.model?.provider).toBe("openai");
-    expect(stored?.memoryCharLimit).toBe(4000);
+    expect(stored?.role).toBe("Backend specialist");
   });
 
   it("does not modify global mcp.json when the template has no MCP servers", async () => {
