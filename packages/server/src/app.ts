@@ -18,6 +18,7 @@ import { registerAuthRoutes } from "./routes/auth.js";
 import { registerUploadsRoutes, type UploadsContext } from "./routes/uploads.js";
 import { registerTaskRoutes } from "./routes/tasks.js";
 import { registerSetupRoutes } from "./routes/setup.js";
+import { registerSkillsHubRoutes } from "./routes/skills-hub.js";
 import {
   AgentDefinitionSchema,
   MCPServerConfigSchema,
@@ -886,6 +887,9 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
 
     return c.json({ success: true, name: safeName, skill }, 201);
   });
+
+  // ── Skills Hub (multi-source import) ──
+  registerSkillsHubRoutes(app, manager, config);
 
   // ── AGENTS.md ──
   app.get("/api/agents-md", (c) => {

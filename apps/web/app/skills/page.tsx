@@ -2,7 +2,7 @@
 
 import { Suspense, useState, useEffect, useMemo, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Plus, Search, Trash2, Upload } from "lucide-react";
+import { Plus, Search, Trash2, Upload, BookOpen, Compass, Pipette } from "lucide-react";
 import { LoadingHairline } from "@/app/components/ui/loading-hairline";
 import { ActiveMarker } from "@/app/components/ui/active-marker";
 import { toast } from "sonner";
@@ -30,7 +30,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/app/components/ui/dialog";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/app/components/ui/tabs";
 import { cn } from "@/app/lib/utils";
+import { BrowseTab } from "./browse-tab";
+import { SourcesTab } from "./sources-tab";
 
 interface SkillIndexEntry {
   name: string;
@@ -71,6 +74,7 @@ function SkillsPageInner() {
   const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<"skills" | "browse" | "sources">("skills");
 
   const [isCreating, setIsCreating] = useState(false);
   const [formData, setFormData] = useState({
@@ -267,41 +271,65 @@ function SkillsPageInner() {
               {skills.length} loaded
             </span>
           </div>
-          <div className="flex items-center gap-2">
-            <input
-              ref={folderInputRef}
-              type="file"
-              hidden
-              // @ts-expect-error -- webkitdirectory + directory are non-standard
-              // attributes used to pick a folder in Chromium-based browsers.
-              webkitdirectory=""
-              directory=""
-              multiple
-              onChange={(e) => {
-                if (e.target.files) void importFolder(e.target.files);
-              }}
-            />
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={importing}
-              onClick={() => folderInputRef.current?.click()}
-            >
-              {importing ? (
-                <LoadingHairline inline />
-              ) : (
-                <Upload className="size-4" />
-              )}
-              Import folder
-            </Button>
-            <Button size="sm" onClick={() => router.push("/skills?create=1")}>
-              <Plus className="size-4" />
-              New skill
-            </Button>
-          </div>
+          {activeTab === "skills" && (
+            <div className="flex items-center gap-2">
+              <input
+                ref={folderInputRef}
+                type="file"
+                hidden
+                // @ts-expect-error -- webkitdirectory + directory are non-standard
+                // attributes used to pick a folder in Chromium-based browsers.
+                webkitdirectory=""
+                directory=""
+                multiple
+                onChange={(e) => {
+                  if (e.target.files) void importFolder(e.target.files);
+                }}
+              />
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={importing}
+                onClick={() => folderInputRef.current?.click()}
+              >
+                {importing ? (
+                  <LoadingHairline inline />
+                ) : (
+                  <Upload className="size-4" />
+                )}
+                Import folder
+              </Button>
+              <Button size="sm" onClick={() => router.push("/skills?create=1")}>
+                <Plus className="size-4" />
+                New skill
+              </Button>
+            </div>
+          )}
         </header>
 
-        <div className="flex flex-1 overflow-hidden">
+        <Tabs
+          value={activeTab}
+          onValueChange={(v) => setActiveTab(v as "skills" | "browse" | "sources")}
+          className="flex flex-1 flex-col overflow-hidden"
+        >
+          <div className="border-b border-paper-rule px-6 py-2">
+            <TabsList>
+              <TabsTrigger value="skills">
+                <BookOpen className="size-3.5" />
+                Installed
+              </TabsTrigger>
+              <TabsTrigger value="browse">
+                <Compass className="size-3.5" />
+                Browse
+              </TabsTrigger>
+              <TabsTrigger value="sources">
+                <Pipette className="size-3.5" />
+                Sources
+              </TabsTrigger>
+            </TabsList>
+          </div>
+
+          <TabsContent value="skills" className="flex flex-1 overflow-hidden m-0">
           <aside className="flex w-80 shrink-0 flex-col border-r border-paper-rule">
             <div className="border-b border-paper-rule px-4 py-2 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
               Index
@@ -534,7 +562,16 @@ function SkillsPageInner() {
               <NoSkillPicked />
             )}
           </div>
-        </div>
+          </TabsContent>
+
+          <TabsContent value="browse" className="flex-1 overflow-y-auto m-0">
+            <BrowseTab onInstalled={() => loadSkills()} />
+          </TabsContent>
+
+          <TabsContent value="sources" className="flex-1 overflow-y-auto m-0">
+            <SourcesTab />
+          </TabsContent>
+        </Tabs>
       </main>
 
       <Dialog

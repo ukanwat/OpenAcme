@@ -26,6 +26,17 @@ import {
   skillsRemoveCommand,
 } from "./commands/skills.js";
 import {
+  skillsHubInstallCommand,
+  skillsHubSearchCommand,
+  skillsHubInspectCommand,
+  skillsHubUpdateCommand,
+  skillsHubUninstallCommand,
+  skillsHubAuditCommand,
+  tapListCommand,
+  tapAddCommand,
+  tapRemoveCommand,
+} from "./commands/skills-hub.js";
+import {
   mcpListCommand,
   mcpStatusCommand,
   mcpRemoveCommand,
@@ -199,6 +210,75 @@ skills
   .description("Delete an installed skill")
   .option("-d, --data-dir <path>", "Data directory (default: ~/.openacme)")
   .action(skillsRemoveCommand);
+
+skills
+  .command("install <identifier>")
+  .description("Install a skill from the hub (owner/repo[/path] or URL)")
+  .option("--source <name>", "Restrict source: github | url | claude-marketplace")
+  .option("--force", "Reinstall over an existing entry")
+  .option("--name <name>", "Override skill name (for URL skills missing a frontmatter name)")
+  .option("-d, --data-dir <path>", "Data directory (default: ~/.openacme)")
+  .action(skillsHubInstallCommand);
+
+skills
+  .command("search <query>")
+  .description("Search hub sources for a skill")
+  .option("--source <name>", "Restrict source: all | github | url | claude-marketplace", "all")
+  .option("--limit <n>", "Max results", (v) => parseInt(v, 10), 25)
+  .option("-d, --data-dir <path>", "Data directory (default: ~/.openacme)")
+  .action(skillsHubSearchCommand);
+
+skills
+  .command("inspect <identifier>")
+  .description("Show metadata for a hub skill without installing")
+  .option("--source <name>", "Restrict source: github | url | claude-marketplace")
+  .option("-d, --data-dir <path>", "Data directory (default: ~/.openacme)")
+  .action(skillsHubInspectCommand);
+
+skills
+  .command("update [name]")
+  .description("Re-fetch and replace if upstream changed (all if name omitted)")
+  .option("-d, --data-dir <path>", "Data directory (default: ~/.openacme)")
+  .action(skillsHubUpdateCommand);
+
+skills
+  .command("uninstall <name>")
+  .description("Uninstall a hub-installed skill (use 'skills remove' for locally-authored)")
+  .option("--yes", "Skip confirmation")
+  .option("-d, --data-dir <path>", "Data directory (default: ~/.openacme)")
+  .action(skillsHubUninstallCommand);
+
+skills
+  .command("audit")
+  .description("Show hub install/update/uninstall history")
+  .option("--limit <n>", "Max rows", (v) => parseInt(v, 10), 50)
+  .option("--action <kind>", "Filter by audit action (INSTALL, UPDATE, UNINSTALL, TAP_ADD, ...)")
+  .option("-d, --data-dir <path>", "Data directory (default: ~/.openacme)")
+  .action(skillsHubAuditCommand);
+
+const tap = skills
+  .command("tap")
+  .description("Manage user-added skill sources (registries)");
+
+tap
+  .command("list")
+  .description("List configured taps")
+  .option("-d, --data-dir <path>", "Data directory (default: ~/.openacme)")
+  .action(tapListCommand);
+
+tap
+  .command("add <repo>")
+  .description("Add a tap (owner/repo)")
+  .option("--source <name>", "github | claude-marketplace", "github")
+  .option("--path <path>", "Subpath inside the repo where skills live (default: skills/)")
+  .option("-d, --data-dir <path>", "Data directory (default: ~/.openacme)")
+  .action(tapAddCommand);
+
+tap
+  .command("remove <repo>")
+  .description("Remove a tap")
+  .option("-d, --data-dir <path>", "Data directory (default: ~/.openacme)")
+  .action(tapRemoveCommand);
 
 const mcp = program
   .command("mcp")
