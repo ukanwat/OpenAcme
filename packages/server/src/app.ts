@@ -17,6 +17,7 @@ import { authMiddleware } from "./middleware/auth.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerUploadsRoutes, type UploadsContext } from "./routes/uploads.js";
 import { registerTaskRoutes } from "./routes/tasks.js";
+import { registerSetupRoutes } from "./routes/setup.js";
 import {
   AgentDefinitionSchema,
   MCPServerConfigSchema,
@@ -78,6 +79,7 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
   // gate. The middleware also whitelists /api/auth/* and /login, but
   // mounting first is the belt to that suspenders.
   registerAuthRoutes(app, { secretSha256 });
+  registerSetupRoutes(app, { dataDir: config.dataDir });
   app.use("/*", authMiddleware({ secretSha256 }));
 
   // Attachment upload + serve routes. The orphan map returned here is

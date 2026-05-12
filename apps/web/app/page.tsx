@@ -35,6 +35,8 @@ import { Textarea } from "@/app/components/ui/textarea";
 import { SectionEyebrow } from "@/app/components/ui/section-eyebrow";
 import { ScribedRule } from "@/app/components/ui/scribed-rule";
 import { JargonChip } from "@/app/components/ui/jargon-chip";
+import { ActiveMarker } from "@/app/components/ui/active-marker";
+import { ChatSetupPanel } from "./components/ChatSetupPanel";
 import {
   Select,
   SelectContent,
@@ -332,6 +334,27 @@ function ChatPageInner() {
     return () => ctrl.abort();
   }, []);
 
+  // Re-fetch just the keys map; called after a save in the setup panel so the
+  // `nothingConfigured` gate flips and the panel unmounts.
+  const reloadKeys = useCallback(async () => {
+    try {
+      const r = await fetch(`${API_BASE}/api/keys`);
+      if (!r.ok) return;
+      const data = (await r.json()) as { configured: Record<string, boolean> };
+      setModelCatalog((prev) => ({ ...prev, configured: data.configured ?? {} }));
+    } catch {
+      // Silent; the panel toasts on its own save error.
+    }
+  }, []);
+
+  const nothingConfigured = useMemo(() => {
+    // Gate is decorative until both /api/models and /api/keys responded.
+    if (modelCatalog.providers.length === 0) return false;
+    const entries = Object.entries(modelCatalog.configured);
+    if (entries.length === 0) return false;
+    return entries.every(([, v]) => !v);
+  }, [modelCatalog]);
+
   // Load history when session changes.
   useEffect(() => {
     if (!activeSessionId) {
@@ -611,6 +634,20 @@ function ChatPageInner() {
     [activeSessionId, setMessages]
   );
 
+  // First-run / "no provider configured" takes over the whole viewport.
+  // The chat chrome (sidebar, sessions, composer) is non-functional without
+  // a credential, so showing it would lie about what's available.
+  if (nothingConfigured) {
+    return (
+      <main className="paper-surface relative min-h-screen overflow-y-auto bg-paper">
+        <ChatSetupPanel
+          providers={modelCatalog.providers}
+          onSetup={() => void reloadKeys()}
+        />
+      </main>
+    );
+  }
+
   return (
     <div className="flex h-screen w-screen overflow-hidden">
       <Sidebar>
@@ -634,13 +671,7 @@ function ChatPageInner() {
                     : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
                 )}
               >
-                <span
-                  className={cn(
-                    "absolute inset-y-0 left-0 w-[2px] bg-plot-red transition-opacity",
-                    isActive ? "opacity-100" : "opacity-0"
-                  )}
-                  aria-hidden
-                />
+                <ActiveMarker active={isActive} />
                 <Bot className="size-3.5 shrink-0" />
                 <span className="min-w-0 flex-1" title={agent.role || undefined}>
                   <span className="block truncate">{agent.name}</span>
@@ -684,13 +715,7 @@ function ChatPageInner() {
                     : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
                 )}
               >
-                <span
-                  className={cn(
-                    "absolute inset-y-0 left-0 w-[2px] bg-plot-red transition-opacity",
-                    isActive ? "opacity-100" : "opacity-0"
-                  )}
-                  aria-hidden
-                />
+                <ActiveMarker active={isActive} />
                 <button
                   onClick={() => {
                     if (s.agentId && s.agentId !== activeAgentId) {
@@ -728,7 +753,7 @@ function ChatPageInner() {
             <div className="flex items-center gap-2">
               <span
                 className={cn(
-                  "status-dot",
+                  "status-dot transition-colors",
                   isStreaming ? "bg-plot-red pulse-live" : "bg-ink"
                 )}
                 aria-hidden
@@ -793,7 +818,10 @@ function ChatPageInner() {
 
         {messages.length === 0 ? (
           <div className="flex flex-1 items-start justify-center overflow-y-auto px-6 py-16">
-            <div className="w-full max-w-2xl">
+            <div
+              key={activeAgent?.id ?? (agents.length === 0 ? "_none" : "_pick")}
+              className="w-full max-w-2xl section-enter"
+            >
               {agents.length === 0 ? (
                 <ChatNoAgentsState />
               ) : activeAgent ? (
@@ -823,8 +851,8 @@ function ChatPageInner() {
                 />
               ))}
               {error && (
-                <div className="mt-4 border-l-2 border-destructive bg-paper-sunk px-3 py-2 font-mono text-[12px] text-destructive section-enter">
-                  <span className="uppercase tracking-[0.08em] text-[10px] mr-2">Error</span>
+                <div className="mt-4 border border-destructive bg-paper-sunk px-3 py-2 font-mono text-[12px] text-destructive section-enter">
+                  <span className="mr-2 text-[10px] uppercase tracking-[0.08em]">Error</span>
                   {error.message}
                 </div>
               )}
@@ -991,7 +1019,7 @@ function MessageHeader({
     <div className="mb-3 flex items-center gap-3 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
       <span
         className={cn(
-          "status-dot",
+          "status-dot transition-colors",
           role === "assistant" && streaming
             ? "bg-plot-red pulse-live"
             : role === "assistant"
@@ -1057,7 +1085,7 @@ function MessageBubble({
       (f) => !(f as { mediaType: string }).mediaType.startsWith("image/")
     );
     return (
-      <section className="border-t border-paper-rule py-5 first:border-t-0 first:pt-0">
+      <section className="section-enter border-t border-paper-rule py-5 first:border-t-0 first:pt-0">
         <MessageHeader role="user" />
         {text && (
           <div className="text-sm leading-relaxed text-ink whitespace-pre-wrap break-words">
@@ -1126,7 +1154,7 @@ function MessageBubble({
   })();
 
   return (
-    <section className="border-t border-paper-rule py-5 first:border-t-0 first:pt-0">
+    <section className="section-enter border-t border-paper-rule py-5 first:border-t-0 first:pt-0">
       <MessageHeader role="assistant" model={modelLabel} streaming={isStreaming} />
       {parts.length === 0 && isStreaming && (
         <div className="flex items-center gap-1.5 text-ink-faint">
@@ -1248,6 +1276,7 @@ function ModelQuickSwitch({
     </Select>
   );
 }
+
 
 function ChatNoAgentsState() {
   return (

@@ -94,9 +94,7 @@ async function loginAnthropic(dataDir: string): Promise<void> {
   p.note(
     "We couldn't find Claude Code credentials.\n" +
     "If you have Claude Code installed, run `claude /login` first, then re-run this command.\n" +
-    "Otherwise, paste a setup token from:\n" +
-    "  https://claude.ai/settings/oauth\n" +
-    "(starts with `sk-ant-oat-`)",
+    "Otherwise, paste an Anthropic OAuth setup token (starts with `sk-ant-oat-`).",
     "Sign in with Claude",
   );
 

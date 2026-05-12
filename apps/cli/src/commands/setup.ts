@@ -487,7 +487,7 @@ async function runOAuthLogin(
 
   p.note(
     "If you have Claude Code installed, run `claude /login` first, then re-run setup.\n" +
-    "Otherwise, paste a setup token from https://claude.ai/settings/oauth (starts with `sk-ant-oat-`).",
+    "Otherwise, paste an Anthropic OAuth setup token (starts with `sk-ant-oat-`).",
     "Sign in with Claude",
   );
 
