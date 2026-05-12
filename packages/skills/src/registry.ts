@@ -23,8 +23,12 @@ export class SkillRegistry {
    * Supports both flat and nested structures:
    *   skills/my-skill/SKILL.md
    *   skills/category/my-skill/SKILL.md
+   *
+   * Reloads from scratch — clears previously loaded entries first so a
+   * deleted skill (rm'd between calls) drops out of the in-memory index.
    */
   loadFromDirectory(dir: string): void {
+    this.skills.clear();
     if (!fs.existsSync(dir)) {
       return;
     }
