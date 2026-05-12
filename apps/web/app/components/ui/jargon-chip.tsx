@@ -66,9 +66,8 @@ export function JargonChip({
             "border border-paper-rule bg-paper p-3 text-left",
             "section-enter"
           )}
-          style={{ borderTopColor: "var(--signal-cyan)" }}
         >
-          <span className="label-faceplate block mb-1.5" style={{ color: "var(--signal-cyan)" }}>
+          <span className="label-faceplate block mb-1.5 text-ink-soft">
             {term}
           </span>
           <span className="block text-[13px] leading-snug text-ink-soft">

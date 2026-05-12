@@ -572,7 +572,7 @@ function Tile({
 
 function TaskCycleDemo() {
   const STATES = [
-    { label: "OPEN", className: "bg-signal-amber" },
+    { label: "OPEN", className: "bg-transparent border border-ink-faint" },
     { label: "IN_PROGRESS", className: "bg-plot-red pulse-live" },
     { label: "DONE", className: "bg-ink" },
   ];

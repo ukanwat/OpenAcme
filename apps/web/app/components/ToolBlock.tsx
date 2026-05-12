@@ -236,14 +236,23 @@ function computeStatus(part: ToolPart, isStreaming: boolean): Status {
 }
 
 function StatusDot({ status }: { status: Status }) {
+  // Interrupted renders as a hollow ring (DESIGN.md §5: stopped/disabled
+  // pattern). Other states keep their permitted chroma — plot-red for
+  // live activity, destructive for error, ink at rest.
+  if (status === "interrupted") {
+    return (
+      <span
+        aria-hidden
+        className="status-dot shrink-0 bg-transparent border border-ink-faint"
+      />
+    );
+  }
   const cls =
     status === "running"
       ? "bg-plot-red pulse-live"
-      : status === "interrupted"
-        ? "bg-warn-ochre"
-        : status === "error"
-          ? "bg-destructive"
-          : "bg-ink";
+      : status === "error"
+        ? "bg-destructive"
+        : "bg-ink";
   return <span className={cn("status-dot shrink-0", cls)} aria-hidden />;
 }
 
@@ -252,7 +261,7 @@ function StatusLabel({ status }: { status: Status }) {
     status === "error"
       ? "text-destructive"
       : status === "interrupted"
-        ? "text-warn-ochre"
+        ? "text-ink-faint"
         : status === "running"
           ? "text-plot-red"
           : "text-ink-faint";
@@ -590,7 +599,7 @@ function ShellOutputView({ output }: { output: unknown }) {
         </pre>
       )}
       {stderr && (
-        <pre className="overflow-x-auto font-mono text-[11px] leading-snug text-warn-ochre whitespace-pre-wrap break-words">
+        <pre className="overflow-x-auto font-mono text-[11px] leading-snug text-ink-soft whitespace-pre-wrap break-words">
           {trim(stderr, 2000)}
         </pre>
       )}

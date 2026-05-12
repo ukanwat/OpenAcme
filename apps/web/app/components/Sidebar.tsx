@@ -53,7 +53,7 @@ export function Sidebar({ children }: { children?: React.ReactNode }) {
       <div className="border-b border-paper-rule px-4 py-4">
         <Logotype className="h-6 w-auto text-ink" />
         <div className="mt-3 flex items-center gap-1.5">
-          <span className="status-dot pulse-live bg-signal-green" aria-hidden />
+          <span className="status-dot pulse-live bg-plot-red" aria-hidden />
           <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-soft">
             Daemon · Live
           </span>
