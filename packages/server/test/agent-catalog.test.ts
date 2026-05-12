@@ -1,0 +1,146 @@
+import { mkdtempSync, rmSync, existsSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import * as path from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { ConfigSchema, loadGlobalMcpServers } from "@openacme/config";
+import { AgentManager } from "../src/agent-manager.js";
+
+/**
+ * Full end-to-end import flow against a real (temp) data directory and a
+ * real AgentManager. Exercises:
+ *   - bundled-skill auto-install via the `builtin` SkillHub source
+ *   - MCP server adds to the global mcp.json (uses Coder's recommended_mcp_servers — currently empty, so behavior is tested with a synthetic template-id-collision case)
+ *   - agent folder materialization (AGENT.md + workspace/ + resources/)
+ *   - id auto-increment across repeated imports
+ */
+describe("AgentManager.importAgentFromTemplate (bundled Coder)", () => {
+  let dataDir: string;
+  let manager: AgentManager;
+
+  beforeEach(() => {
+    dataDir = mkdtempSync(path.join(tmpdir(), "openacme-catalog-"));
+    const config = ConfigSchema.parse({ dataDir });
+    manager = new AgentManager(config);
+  });
+
+  afterEach(async () => {
+    await manager.close();
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it("imports Coder, installs the bundled skill, copies resources", async () => {
+    const result = await manager.importAgentFromTemplate("coder", {});
+
+    expect(result.agent.id).toBe("coder");
+    expect(result.agent.name).toBe("Coder");
+    expect(result.manifest.agent.id).toBe("coder");
+    expect(result.manifest.agent.resourceFiles).toHaveLength(1);
+    expect(result.manifest.agent.resourceFiles[0]?.relPath).toBe(
+      "style-guide.md"
+    );
+
+    // Skill: auto-installed via the builtin source
+    const skill = result.manifest.workforce.skills.find(
+      (s) => s.name === "coding-conventions"
+    );
+    expect(skill?.action).toBe("installed");
+    expect(existsSync(path.join(dataDir, "skills", "coding-conventions", "SKILL.md")))
+      .toBe(true);
+
+    // Agent folder shape
+    const agentDir = path.join(dataDir, "agents", "coder");
+    expect(existsSync(path.join(agentDir, "AGENT.md"))).toBe(true);
+    expect(existsSync(path.join(agentDir, "workspace"))).toBe(true);
+    expect(existsSync(path.join(agentDir, "resources", "style-guide.md")))
+      .toBe(true);
+
+    // Imported AGENT.md is pristine — no template_* keys leaked into frontmatter
+    const agentMd = readFileSync(
+      path.join(agentDir, "AGENT.md"),
+      "utf-8"
+    );
+    expect(agentMd).not.toContain("template_id:");
+    expect(agentMd).not.toContain("default_id_hint:");
+    expect(agentMd).not.toContain("recommended_skills:");
+    expect(agentMd).not.toContain("recommended_mcp_servers:");
+
+    // Resource file is a byte-for-byte copy of the template
+    const dst = readFileSync(
+      path.join(agentDir, "resources", "style-guide.md")
+    );
+    expect(dst.length).toBeGreaterThan(0);
+  });
+
+  it("auto-increments the id on repeated imports", async () => {
+    const a = await manager.importAgentFromTemplate("coder", {});
+    const b = await manager.importAgentFromTemplate("coder", {});
+    const c = await manager.importAgentFromTemplate("coder", {});
+
+    expect(a.agent.id).toBe("coder");
+    expect(b.agent.id).toBe("coder-2");
+    expect(c.agent.id).toBe("coder-3");
+
+    // The skill should be installed once and kept on subsequent imports
+    // (skills live workforce-wide; only the first import installs them).
+    expect(a.manifest.workforce.skills[0]?.action).toBe("installed");
+    expect(b.manifest.workforce.skills[0]?.action).toBe("kept");
+    expect(c.manifest.workforce.skills[0]?.action).toBe("kept");
+
+    // Each instance has its own resources copied fresh
+    expect(b.manifest.agent.resourceFiles).toHaveLength(1);
+    expect(
+      existsSync(path.join(dataDir, "agents", "coder-2", "resources", "style-guide.md"))
+    ).toBe(true);
+  });
+
+  it("honors idOverride when supplied", async () => {
+    const r = await manager.importAgentFromTemplate("coder", {
+      idOverride: "backend-coder",
+      nameOverride: "Backend Coder",
+    });
+    expect(r.agent.id).toBe("backend-coder");
+    expect(r.agent.name).toBe("Backend Coder");
+    expect(
+      existsSync(path.join(dataDir, "agents", "backend-coder", "AGENT.md"))
+    ).toBe(true);
+  });
+
+  it("rejects an idOverride that collides", async () => {
+    await manager.importAgentFromTemplate("coder", {});
+    await expect(
+      manager.importAgentFromTemplate("coder", { idOverride: "coder" })
+    ).rejects.toThrow(/already exists/);
+  });
+
+  it("rejects unknown template ids", async () => {
+    await expect(
+      manager.importAgentFromTemplate("nonexistent", {})
+    ).rejects.toThrow(/template not found/i);
+  });
+
+  it("applies inline overrides to the imported AgentDefinition", async () => {
+    const r = await manager.importAgentFromTemplate("coder", {
+      overrides: {
+        model: { provider: "openai", model: "gpt-5", auth: "api_key" },
+        memoryCharLimit: 4000,
+      },
+    });
+    expect(r.agent.model?.provider).toBe("openai");
+    expect(r.agent.model?.model).toBe("gpt-5");
+    expect(r.agent.memoryCharLimit).toBe(4000);
+
+    // Round-trips through AgentStore.upsert serialization, so reading back
+    // shows the same values.
+    const stored = manager.agentStore.get(r.agent.id);
+    expect(stored?.model?.provider).toBe("openai");
+    expect(stored?.memoryCharLimit).toBe(4000);
+  });
+
+  it("does not modify global mcp.json when the template has no MCP servers", async () => {
+    await manager.importAgentFromTemplate("coder", {});
+    // Coder v1 ships with recommended_mcp_servers: [], so the file
+    // should remain absent.
+    expect(existsSync(path.join(dataDir, "mcp.json"))).toBe(false);
+    expect(Object.keys(loadGlobalMcpServers(dataDir))).toHaveLength(0);
+  });
+});

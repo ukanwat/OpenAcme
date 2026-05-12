@@ -2,6 +2,7 @@ import { Agent, type AgentConfig } from "@openacme/agent-core";
 import {
   createAgentStore,
   loadGlobalMcpServers,
+  saveGlobalMcpServers,
   lookupModelMetadata,
   type AgentDefinition,
   type AgentStore,
@@ -48,7 +49,12 @@ import {
   openBrowser,
   looksHeadless,
 } from "@openacme/auth";
-import { SkillRegistry, type SkillIndexEntry } from "@openacme/skills";
+import { SkillHub, SkillRegistry, type SkillIndexEntry } from "@openacme/skills";
+import {
+  AgentCatalog,
+  buildAgentFromTemplate,
+  TemplateImportError,
+} from "@openacme/agent-catalog";
 import * as path from "node:path";
 
 // Same shape as `SAFE_ID` in `@openacme/memory` and `@openacme/config`'s
@@ -106,6 +112,7 @@ export class AgentManager {
   readonly taskScheduler: TaskScheduler;
   readonly agentStore: AgentStore;
   readonly browserManager: BrowserManager;
+  readonly agentCatalog: AgentCatalog;
   private config: Config;
   private mcpClients = new Map<string, MCPClient>();
   readonly skillRegistry: SkillRegistry;
@@ -264,6 +271,10 @@ export class AgentManager {
       },
       list: () => this.skillRegistry.getIndex(),
     });
+
+    // Bundled agent templates. Read-once snapshot of `packages/agent-catalog/templates/`;
+    // no live reload. Importers route through `importAgentFromTemplate`.
+    this.agentCatalog = new AgentCatalog();
   }
 
   /**
@@ -521,6 +532,122 @@ export class AgentManager {
     this.agents.delete(id);
   }
 
+  /**
+   * Import a bundled agent template:
+   *   1. Install recommended skills via SkillHub (skip already-installed; failures collected, never throw).
+   *   2. Add recommended MCP servers to global mcp.json (skip name collisions).
+   *   3. Build the AgentDefinition + createAgent (existing path — handles MCP reinit + cache).
+   *   4. Copy template resources into <agentDir>/resources/, then evict the cached
+   *      Agent so the next chat picks up the resource listing in its prompt.
+   *
+   * Multi-instance: the same template can be imported repeatedly; the id
+   * auto-increments off `default_id_hint`. Each instance gets its own
+   * folder, memory, sessions, and tasks queue.
+   */
+  async importAgentFromTemplate(
+    templateId: string,
+    opts: { idOverride?: string; nameOverride?: string; overrides?: Partial<AgentDefinition> }
+  ): Promise<{ agent: AgentDefinition; manifest: ImportManifest }> {
+    const template = this.agentCatalog.get(templateId);
+    if (!template) {
+      throw new Error(`Template not found: ${templateId}`);
+    }
+    const manifest: ImportManifest = {
+      agent: { id: "", resourceFiles: [] },
+      workforce: { skills: [], mcpServers: [] },
+    };
+
+    // Stage 1a — recommended skills
+    if (template.recommendedSkills.length > 0) {
+      const skillsDir = path.isAbsolute(this.config.skills.directory)
+        ? this.config.skills.directory
+        : path.join(this.config.dataDir, this.config.skills.directory);
+      const hub = new SkillHub(skillsDir, this.skillRegistry);
+      for (const s of template.recommendedSkills) {
+        const already = this.skillRegistry
+          .getIndex()
+          .some((e) => e.name === s.name);
+        if (already) {
+          manifest.workforce.skills.push({ name: s.name, action: "kept" });
+          continue;
+        }
+        try {
+          await hub.install(s.identifier, {
+            source: s.source,
+            nameOverride: s.name,
+          });
+          manifest.workforce.skills.push({ name: s.name, action: "installed" });
+        } catch (err) {
+          manifest.workforce.skills.push({
+            name: s.name,
+            action: "failed",
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+    }
+
+    // Stage 1b — recommended MCP servers
+    if (template.recommendedMcpServers.length > 0) {
+      const globalMcp = loadGlobalMcpServers(this.config.dataDir);
+      let changed = false;
+      for (const m of template.recommendedMcpServers) {
+        if (Object.prototype.hasOwnProperty.call(globalMcp, m.name)) {
+          manifest.workforce.mcpServers.push({ name: m.name, action: "kept" });
+          continue;
+        }
+        globalMcp[m.name] = m.config;
+        changed = true;
+        manifest.workforce.mcpServers.push({ name: m.name, action: "added" });
+      }
+      if (changed) {
+        saveGlobalMcpServers(this.config.dataDir, globalMcp);
+        // Re-discover MCP tools for every agent — `serversForAgent` reads
+        // mcp.json fresh on each reinit, so existing agents pick up the
+        // new entry too.
+        await this.initMCP();
+      }
+    }
+
+    // Stage 2 — materialize the agent folder
+    const existingIds = new Set(this.agentStore.list().map((d) => d.id));
+    let def: AgentDefinition;
+    try {
+      def = buildAgentFromTemplate(template, opts, existingIds);
+    } catch (err) {
+      if (err instanceof TemplateImportError) {
+        throw new Error(err.message);
+      }
+      throw err;
+    }
+    await this.createAgent(def);
+
+    // Resources go in after createAgent so the agent folder exists.
+    const dir = this.agentStore.agentDir(def.id);
+    if (dir) {
+      for (const r of template.resources) {
+        const dest = path.join(dir, "resources", r.relPath);
+        try {
+          fs.mkdirSync(path.dirname(dest), { recursive: true });
+          fs.copyFileSync(r.absPath, dest);
+          manifest.agent.resourceFiles.push({
+            relPath: r.relPath,
+            size: r.size,
+          });
+        } catch (err) {
+          console.warn(
+            `[agent-catalog] copy ${r.relPath} → ${dest} failed: ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
+      }
+    }
+    manifest.agent.id = def.id;
+    // Resources changed after createAgent ran; rebuild prompt on next chat.
+    this.evictAgent(def.id);
+
+    return { agent: def, manifest };
+  }
+
   /** Current AGENTS.md content, or undefined when the file is absent. */
   getAgentsMd(): string | undefined {
     return this.agentsMd;
@@ -708,4 +835,22 @@ export class AgentManager {
 
 function hasOwn<T extends object>(obj: T, key: PropertyKey): boolean {
   return Object.prototype.hasOwnProperty.call(obj, key);
+}
+
+/**
+ * Structured "what landed where" record returned by `importAgentFromTemplate`.
+ * Two-bucket shape: contents of the agent folder vs. workforce-wide installs.
+ */
+export interface ImportManifest {
+  agent: {
+    id: string;
+    resourceFiles: Array<{ relPath: string; size: number }>;
+  };
+  workforce: {
+    skills: Array<
+      | { name: string; action: "installed" | "kept" }
+      | { name: string; action: "failed"; error: string }
+    >;
+    mcpServers: Array<{ name: string; action: "added" | "kept" }>;
+  };
 }
