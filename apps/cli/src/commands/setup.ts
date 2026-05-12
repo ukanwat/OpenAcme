@@ -73,17 +73,9 @@ export async function setupCommand(opts: { dataDir?: string }) {
   const intent = await p.select<"reuse" | "configure" | "cancel">({
     message: `You already have ${existingAgents.length} agent${existingAgents.length === 1 ? "" : "s"} configured. What do you want to do?`,
     options: [
-      {
-        value: "reuse",
-        label: "Add a new agent",
-        hint: "uses a provider you've already configured",
-      },
-      {
-        value: "configure",
-        label: "Configure a new provider",
-        hint: "auth setup only — no agent created",
-      },
-      { value: "cancel", label: "Cancel", hint: "no changes" },
+      { value: "reuse", label: "Add a new agent" },
+      { value: "configure", label: "Configure a new provider" },
+      { value: "cancel", label: "Cancel" },
     ],
   });
   if (p.isCancel(intent) || intent === "cancel") return cancel();
