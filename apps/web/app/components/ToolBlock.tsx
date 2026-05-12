@@ -1,7 +1,8 @@
 "use client";
 
 import { useMemo, useState, type ReactNode } from "react";
-import { ChevronRight } from "lucide-react";
+import { ArrowUpRight, ChevronRight } from "lucide-react";
+import Link from "next/link";
 import { cn } from "@/app/lib/utils";
 
 /*
@@ -40,7 +41,19 @@ const KNOWN_TOOLS = new Set([
   "task_view",
   "task_update",
   "task_list",
+  "task_comment",
+  "task_comments",
   "process",
+]);
+
+// Tool names that resolve to a single task — used to render an "Open"
+// link in the header that deep-links into /tasks?id=<id>.
+const SINGLE_TASK_TOOLS = new Set([
+  "task_create",
+  "task_view",
+  "task_update",
+  "task_comment",
+  "task_comments",
 ]);
 
 export function ToolBlock({
@@ -85,10 +98,22 @@ function KnownToolBlock({
       }),
     [toolName, part.input, part.output, part.errorText]
   );
+  const taskHref = useMemo(
+    () =>
+      SINGLE_TASK_TOOLS.has(toolName)
+        ? resolveTaskHref(toolName, part.input, part.output)
+        : null,
+    [toolName, part.input, part.output]
+  );
 
   return (
     <div className="border border-paper-rule section-enter">
-      <HeaderRow toolName={toolName} status={status} summary={summary} />
+      <HeaderRow
+        toolName={toolName}
+        status={status}
+        summary={summary}
+        taskHref={taskHref}
+      />
       {body && <div className="border-t border-paper-rule">{body}</div>}
     </div>
   );
@@ -153,10 +178,12 @@ function HeaderRow({
   toolName,
   status,
   summary,
+  taskHref,
 }: {
   toolName: string;
   status: Status;
   summary: ReactNode;
+  taskHref?: string | null;
 }) {
   return (
     <div className="flex items-center gap-2.5 px-3 py-1.5">
@@ -168,8 +195,22 @@ function HeaderRow({
         </span>
       )}
       {!summary && <span className="flex-1" />}
+      {taskHref && <OpenTaskLink href={taskHref} />}
       <StatusLabel status={status} />
     </div>
+  );
+}
+
+function OpenTaskLink({ href }: { href: string }) {
+  return (
+    <Link
+      href={href}
+      onClick={(e) => e.stopPropagation()}
+      className="flex shrink-0 items-center gap-1 border border-paper-rule px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-soft transition-colors hover:border-plot-red hover:text-plot-red focus-visible:border-plot-red focus-visible:text-plot-red focus-visible:outline-none"
+    >
+      Open
+      <ArrowUpRight className="size-3" aria-hidden />
+    </Link>
   );
 }
 
@@ -348,7 +389,18 @@ function renderSummary(name: string, input: unknown, output: unknown): ReactNode
     }
     case "task_create": {
       const t = str(input.title);
-      return t ? <span className="truncate text-ink">{t}</span> : null;
+      const out = parseJsonish(output);
+      const createdId = str(pickTaskId(out));
+      return (
+        <span className="flex min-w-0 items-center gap-2">
+          {createdId && (
+            <code className="bg-paper px-1.5 py-px text-[11px] text-ink">
+              {createdId.slice(0, 8)}
+            </code>
+          )}
+          {t && <span className="min-w-0 truncate text-ink">{t}</span>}
+        </span>
+      );
     }
     case "task_view":
     case "task_update": {
@@ -362,6 +414,39 @@ function renderSummary(name: string, input: unknown, output: unknown): ReactNode
             </code>
           )}
           {status && <span className="text-ink-faint">{status}</span>}
+        </span>
+      );
+    }
+    case "task_comment": {
+      const id = str(input.task_id) ?? str(input.id);
+      const kind = str(input.kind);
+      return (
+        <span className="flex min-w-0 items-center gap-2">
+          {id && (
+            <code className="bg-paper px-1.5 py-px text-[11px] text-ink">
+              {id.slice(0, 8)}
+            </code>
+          )}
+          {kind && <span className="text-ink-faint">{kind}</span>}
+        </span>
+      );
+    }
+    case "task_comments": {
+      const id = str(input.task_id) ?? str(input.id);
+      const out = parseJsonish(output);
+      const n = countResults(out) ?? num(out?.count);
+      return (
+        <span className="flex min-w-0 items-center gap-2">
+          {id && (
+            <code className="bg-paper px-1.5 py-px text-[11px] text-ink">
+              {id.slice(0, 8)}
+            </code>
+          )}
+          {n !== null && (
+            <span className="text-ink-faint">
+              {n} {n === 1 ? "comment" : "comments"}
+            </span>
+          )}
         </span>
       );
     }
@@ -942,6 +1027,35 @@ function formatOutput(output: unknown, errorText?: string): string {
   }
   return safeStringify(output);
 }
+// Pull a task id out of a `{ task: {...} }` or `{ task_id: ... }` envelope.
+// Used by task_create's summary + Open-link logic to find the new id on the
+// output side (input has no id at create time).
+function pickTaskId(out: Record<string, unknown> | null): string | undefined {
+  if (!out) return undefined;
+  const task = out.task;
+  if (isObj(task) && typeof task.id === "string") return task.id;
+  if (typeof out.task_id === "string") return out.task_id;
+  if (typeof out.id === "string") return out.id;
+  return undefined;
+}
+
+// Deep-link href for a task tool's "Open" button. Input-side for tools
+// that take an explicit id; output-side for task_create (id is in the
+// returned task envelope and only appears once the call resolves).
+function resolveTaskHref(
+  name: string,
+  input: unknown,
+  output: unknown
+): string | null {
+  if (name === "task_create") {
+    const id = pickTaskId(parseJsonish(output));
+    return id ? `/tasks?id=${encodeURIComponent(id)}` : null;
+  }
+  if (!isObj(input)) return null;
+  const id = str(input.task_id) ?? str(input.id);
+  return id ? `/tasks?id=${encodeURIComponent(id)}` : null;
+}
+
 function countResults(out: Record<string, unknown> | null): number | null {
   if (!out) return null;
   const candidates = [out.results, out.matches, out.hits, out.items, out.tasks];
