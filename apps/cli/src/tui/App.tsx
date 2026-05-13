@@ -261,6 +261,12 @@ export function App({ manager, agent, dataDir }: Props) {
             role: "assistant",
             parts: responseMessage.parts as unknown[],
           });
+          // Title (LLM via structured subagent; slice fallback inside).
+          // No-op once the session already has a title.
+          agent.fireTitle({
+            sessionId: state.sessionId,
+            sessionMessages: [...state.committed, userMsg, responseMessage],
+          });
         }
 
         dispatch({
