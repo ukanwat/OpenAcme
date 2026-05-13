@@ -29,6 +29,7 @@ import {
   STATUS_LABEL,
   STATUS_ORDER,
   STATUS_VARIANT,
+  dueUrgencyClass,
   formatDate,
   formatRelativeFutureFromIso,
   type Task,
@@ -400,7 +401,9 @@ function TasksPageInner() {
                             <div className="flex w-full flex-wrap gap-x-3 font-mono text-[11px] tabular-nums text-ink-faint">
                               <span>@{t.assignee}</span>
                               {t.due_at && (
-                                <span>due {formatDate(t.due_at)}</span>
+                                <span className={dueUrgencyClass(t.due_at)}>
+                                  due {formatDate(t.due_at)}
+                                </span>
                               )}
                               {t.start_at &&
                                 (new Date(t.start_at).getTime() > Date.now() ? (

@@ -138,6 +138,22 @@ export function formatRelativeFromUnix(unixSec: number): string {
   return `${d}d ago`;
 }
 
+// Urgency tint for a due-at deadline. Overdue → destructive (red).
+// Due within 24h → warn-ochre (WAIT cousin, less hot than destructive).
+// Otherwise no chroma — distant dates stay mono. Caller passes the
+// result as a className on the meta span; `undefined` keeps inherit.
+export function dueUrgencyClass(
+  iso: string | null | undefined
+): string | undefined {
+  if (!iso) return undefined;
+  const ms = new Date(iso).getTime();
+  if (!Number.isFinite(ms)) return undefined;
+  const now = Date.now();
+  if (ms < now) return "text-destructive";
+  if (ms - now < 24 * 60 * 60 * 1000) return "text-warn-ochre";
+  return undefined;
+}
+
 // Humanized future delta: "in 5m", "in 3h", "in 2d". For past timestamps,
 // falls back to ISO via formatDate so callers don't have to branch.
 export function formatRelativeFutureFromIso(iso: string): string {
