@@ -21,6 +21,8 @@ import { registerSetupRoutes } from "./routes/setup.js";
 import { registerSkillsHubRoutes } from "./routes/skills-hub.js";
 import { registerAgentResourceRoutes } from "./routes/agent-resources.js";
 import { registerAgentCatalogRoutes } from "./routes/agent-catalog.js";
+import { registerStreamRoutes } from "./routes/streams.js";
+import { registerHomeRoutes } from "./routes/home.js";
 import { SkillHub, HubError } from "@openacme/skills";
 import {
   AgentDefinitionSchema,
@@ -104,6 +106,16 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
   // Bundled agent catalog — browse + import templates. Mount before the
   // generic /api/agents/:id so /api/agents/catalog/* takes the specific path.
   registerAgentCatalogRoutes(app, manager, config);
+
+  // Live SSE streams: per-session (chat pane live updates) and
+  // workforce-wide (home page row deltas). Mounted before generic
+  // session routes so /api/sessions/:id/stream resolves to the SSE
+  // handler, not the generic catch-all.
+  registerStreamRoutes(app, manager);
+
+  // Home page payload + workforce summary stream. The structured GET
+  // is paired with the workforce stream above for live updates.
+  registerHomeRoutes(app, manager);
 
   // Health check
   app.get("/api/health", (c) =>
@@ -209,6 +221,15 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
     return c.json(messages);
   });
 
+  app.get("/api/sessions/:id", (c) => {
+    // Session metadata (title, agent id, timestamps). Used by the chat
+    // header to render the session title instead of just the id slug.
+    const id = c.req.param("id");
+    const session = manager.sessionStore.get(id);
+    if (!session) return c.json({ error: "Session not found" }, 404);
+    return c.json(session);
+  });
+
   app.delete("/api/sessions/:id", async (c) => {
     const id = c.req.param("id");
     const session = manager.sessionStore.get(id);
@@ -234,6 +255,10 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
     manager.sessionStore.delete(id);
     // Reap the per-session bash subprocess if one was running.
     closeShellSession(session.agentId, id);
+    // Drop the broadcaster's ring buffer + subscriber set for this
+    // session so a deleted session's last 50 events don't sit in
+    // memory until process restart.
+    manager.broadcaster.forget(id);
     return c.json({ success: true });
   });
 
@@ -364,9 +389,43 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
     }
 
     // Ensure the session row exists with the caller-supplied id BEFORE
-    // we write the user message inside onFinish.
+    // anything that depends on it (user-message persist, broadcaster
+    // events, agent.runStream's system-prompt write).
     if (!manager.sessionStore.get(effectiveSessionId)) {
       manager.sessionStore.create(agentId, { id: effectiveSessionId });
+    }
+
+    // Persist + broadcast the user message before the stream runs so
+    // (a) its DB timestamp predates any `ping_user` event the agent
+    // fires during the turn (otherwise `unresolvedPingsBySession` would
+    // immediately clear those pings — the user-msg row would land
+    // post-stream with a later timestamp), and (b) other tabs see the
+    // user message land at the same instant the assistant stream starts.
+    {
+      const lastUser = committed[committed.length - 1];
+      if (lastUser?.role === "user") {
+        try {
+          manager.messageStore.append(effectiveSessionId, {
+            id: lastUser.id,
+            role: "user",
+            parts: lastUser.parts as unknown[],
+          });
+          manager.broadcaster.broadcast(effectiveSessionId, {
+            kind: "messages_appended",
+            messages: [
+              {
+                id: lastUser.id,
+                role: "user",
+                parts: lastUser.parts as unknown[],
+              },
+            ],
+          });
+        } catch (e) {
+          console.warn(
+            `User message pre-persist skipped: ${e instanceof Error ? e.message : String(e)}`
+          );
+        }
+      }
     }
 
     const signal = c.req.raw.signal;
@@ -384,6 +443,15 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
         // turn. Cleared in the finally below; onFinish clears too
         // (idempotent) for the writer.merge success path.
         manager.taskScheduler.markInteractiveBusy(effectiveSessionId);
+        // Tell SSE subscribers (other tabs on this session, the home
+        // view) the session is now Running. Mirrors what the scheduler
+        // does for autonomous turns; without this, /api/home's
+        // "Running" bucket misses interactive turns and other tabs
+        // never see the activity indicator.
+        manager.broadcaster.broadcast(effectiveSessionId, {
+          kind: "session_state",
+          state: "running",
+        });
         try {
           const agent = manager.getAgent(agentId);
 
@@ -413,9 +481,47 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
             history: committed,
             signal,
           });
-          writer.merge(result.toUIMessageStream({ sendStart: false }));
+          // Fan each UIMessage chunk to both the SDK writer (the
+          // originating client via useChat) and the broadcaster (other
+          // tabs). Default `sendStart: true` is required — the SSE
+          // channel is long-lived across turns, so without start/finish
+          // markers the subscriber-side assembler would merge every
+          // turn's chunks into one ever-growing message.
+          const uiStream = result.toUIMessageStream();
+          const reader = (
+            uiStream as ReadableStream<unknown>
+          ).getReader();
+          try {
+            for (;;) {
+              const r = await reader.read();
+              if (r.done) break;
+              try {
+                writer.write(r.value as Parameters<typeof writer.write>[0]);
+              } catch (e) {
+                console.warn(
+                  `/api/chat writer.write failed: ${e instanceof Error ? e.message : String(e)}`
+                );
+              }
+              try {
+                manager.broadcaster.broadcast(effectiveSessionId, {
+                  kind: "ui_message_part",
+                  part: r.value,
+                });
+              } catch (e) {
+                console.warn(
+                  `/api/chat broadcaster forward failed: ${e instanceof Error ? e.message : String(e)}`
+                );
+              }
+            }
+          } finally {
+            reader.releaseLock();
+          }
         } catch (e) {
           manager.taskScheduler.clearInteractiveBusy(effectiveSessionId);
+          manager.broadcaster.broadcast(effectiveSessionId, {
+            kind: "session_state",
+            state: "idle",
+          });
           throw e;
         }
       },
@@ -425,18 +531,13 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
         // Lift the interactive-busy gate before persistence so any wakes
         // queued during the turn fire promptly. Idempotent.
         manager.taskScheduler.clearInteractiveBusy(effectiveSessionId);
-        // Persist the new user message (last item in committed) + the
-        // assembled assistant response. Prior history was already in
-        // the DB and was just sent back to us by useChat.
+        manager.broadcaster.broadcast(effectiveSessionId, {
+          kind: "session_state",
+          state: "idle",
+        });
+        // User message was pre-persisted above; only persist the
+        // assistant response here.
         try {
-          const lastUser = committed[committed.length - 1];
-          if (lastUser?.role === "user") {
-            manager.messageStore.append(effectiveSessionId, {
-              id: lastUser.id,
-              role: "user",
-              parts: lastUser.parts as unknown[],
-            });
-          }
           const sanitizedParts = ensureStepBoundaries(
             finalizeOrphanToolParts(
               responseMessage.parts as UIMessage["parts"]
@@ -446,6 +547,22 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
             id: responseMessage.id,
             role: responseMessage.role as "user" | "assistant",
             parts: sanitizedParts as unknown[],
+          });
+          // Final broadcast of the assembled assistant message so SSE
+          // subscribers settle on the deterministic shape the DB sees.
+          // Streaming `ui_message_part` arrivals already produced an
+          // upserted UIMessage with the same id; this is a no-op for
+          // tabs that received the live stream and the canonical
+          // arrival for any that just connected.
+          manager.broadcaster.broadcast(effectiveSessionId, {
+            kind: "messages_appended",
+            messages: [
+              {
+                id: responseMessage.id,
+                role: responseMessage.role as "user" | "assistant",
+                parts: sanitizedParts as unknown[],
+              },
+            ],
           });
 
           manager.sessionStore.touch(effectiveSessionId);

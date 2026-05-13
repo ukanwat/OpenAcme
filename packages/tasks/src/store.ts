@@ -376,6 +376,7 @@ export class TaskStore {
       // is preserved in the payload.
       this.emitEvent({
         taskId: task.id,
+        sessionId: task.session_id,
         agentId: task.assignee,
         actor: null,
         kind: "task_assigned",
@@ -586,6 +587,7 @@ export class TaskStore {
       if (didReset) {
         this.emitEvent({
           taskId: next.id,
+          sessionId: next.session_id,
           agentId: next.assignee,
           actor: opts?.actor ?? null,
           kind: "task_completed_run",
@@ -601,6 +603,7 @@ export class TaskStore {
       if (statusActuallyChanged) {
         this.emitEvent({
           taskId: next.id,
+          sessionId: next.session_id,
           agentId: next.assignee,
           actor: opts?.actor ?? null,
           kind: "status_changed",
@@ -654,6 +657,7 @@ export class TaskStore {
       // sees this task already terminal in the prompt's recent activity.
       this.emitEvent({
         taskId: id,
+        sessionId: existing.session_id,
         agentId: existing.assignee,
         actor: opts?.actor ?? null,
         kind: "task_deleted",
@@ -833,6 +837,7 @@ export class TaskStore {
       try {
         let didUnblock = false;
         let assignee = dep.assignee;
+        let depSessionId: string | null = dep.session_id;
         await this.withMutex(dep.id, async () => {
           const cur = this.get(dep.id);
           if (!cur || cur.status !== "blocked") return;
@@ -845,6 +850,7 @@ export class TaskStore {
           await this.writeFile(next);
           didUnblock = true;
           assignee = next.assignee;
+          depSessionId = next.session_id;
         });
         if (didUnblock) {
           // actor=null: the dep's wake target is a different session than
@@ -853,6 +859,7 @@ export class TaskStore {
           // every same-agent cross-session unblock.
           this.emitEvent({
             taskId: dep.id,
+            sessionId: depSessionId,
             agentId: assignee,
             actor: null,
             kind: "dep_unblocked",
@@ -945,7 +952,8 @@ export class TaskStore {
    */
   async addComment(input: CommentInput): Promise<Comment | null> {
     if (!this.commentStore) return null;
-    if (!this.get(input.taskId)) {
+    const task = this.get(input.taskId);
+    if (!task) {
       throw new TaskStoreError(
         "not_found",
         `Cannot comment: task ${input.taskId} not found`
@@ -956,6 +964,7 @@ export class TaskStore {
     const excerpt = input.body.replace(/\s+/g, " ").trim().slice(0, 80);
     this.emitEvent({
       taskId: input.taskId,
+      sessionId: task.session_id,
       agentId: input.author,
       actor: isSystemAuthor ? null : input.author,
       kind: "comment_added",

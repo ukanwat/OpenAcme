@@ -141,6 +141,36 @@ const TASKS_GUIDANCE =
   "before starting work — the system-prompt snapshot is from session start and may " +
   "be stale.";
 
+/**
+ * Workforce-side primitives for talking to the human and pacing your
+ * own wakeups. Both are always-on system tools, so the guidance only
+ * fires when those tools are present — but in practice they're in
+ * every agent's effective tool set.
+ */
+const PING_USER_GUIDANCE =
+  "`ping_user(message)` is the single agent → user attention primitive. " +
+  "Use when: (a) you're genuinely blocked and the assigner is the human (not " +
+  "another agent), (b) you have a result the user specifically asked to see, " +
+  "(c) you need a credential or a human-only action. For agent-to-agent " +
+  "clarification, comment on the task instead — the assigner wakes on the " +
+  "event pipe; ping_user is the human boundary.\n" +
+  "Behavior: write the message text as your assistant response AND call " +
+  "`ping_user(message)` with the same text — the chat shows the message via " +
+  "your response, the inbox surfaces it via the tool. Two paths, same string. " +
+  "After calling, end the turn — the user's reply lands as a regular message " +
+  "that wakes you on its own.";
+
+const SLEEP_GUIDANCE =
+  "`sleep(duration)` sets when the scheduler next probes this session if " +
+  "nothing else moves the world. Default cadence is your agent's " +
+  "`probeIntervalMs` (typically 30 min). Override when:\n" +
+  "- Polling external state that changes fast → `sleep(\"5m\")`.\n" +
+  "- Natural pause and nothing's likely to change for a while → `sleep(\"4h\")`.\n" +
+  "- You're confident only events will move things → `sleep(\"never\")` " +
+  "  (capped at 24h by the platform).\n" +
+  "Events (tasks, comments, dep unblocks, user messages) wake you regardless. " +
+  "The override resets each turn; call it again if you still want a custom cadence.";
+
 // Cap on the per-prompt `## Resources` listing. More than this fast-paths
 // to a `... and N more` tail so an agent with hundreds of files doesn't
 // blow the prefix cache. Agent can still `read_file` anything; this is
@@ -236,6 +266,16 @@ export function buildSystemPrompt(options: {
   // regardless of whether any tasks currently exist.
   if (options.toolNames.includes("task_create")) {
     parts.push(`\n## Tasks tool\n${TASKS_GUIDANCE}`);
+  }
+
+  // ping_user + sleep — always-on system tools; the guidance is short
+  // but load-bearing for the workforce shape (when to bring the human
+  // in vs comment on a task; what cadence to wake at).
+  if (options.toolNames.includes("ping_user")) {
+    parts.push(`\n## Talking to the user\n${PING_USER_GUIDANCE}`);
+  }
+  if (options.toolNames.includes("sleep")) {
+    parts.push(`\n## Pacing your own wakeups\n${SLEEP_GUIDANCE}`);
   }
 
   // Skills index (Level 0 — names + descriptions). Bodies aren't loaded

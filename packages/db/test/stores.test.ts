@@ -236,3 +236,96 @@ describe("MessageStore — appendMany and ordering", () => {
     expect(messages.search("calling").length).toBeGreaterThan(0);
   });
 });
+
+describe("EventStore — unresolvedPingsBySession (inbox resolution rule)", () => {
+  let db: Database.Database;
+  let sessions: ReturnType<typeof createSessionStore>;
+  let messages: ReturnType<typeof createMessageStore>;
+
+  beforeEach(async () => {
+    db = freshDb();
+    sessions = createSessionStore(db);
+    messages = createMessageStore(db);
+  });
+
+  it("returns pings that have no user message after them", async () => {
+    const { createEventStore } = await import("../src/stores/event-store.js");
+    const events = createEventStore(db);
+    const s = sessions.create("a1");
+    events.append({
+      sessionId: s.id,
+      agentId: "a1",
+      kind: "ping_user",
+      payload: { message: "need help" },
+    });
+    const unresolved = events.unresolvedPingsBySession();
+    expect(unresolved).toHaveLength(1);
+    expect(unresolved[0]!.sessionId).toBe(s.id);
+    expect(unresolved[0]!.message).toBe("need help");
+  });
+
+  it("filters out pings followed by any user message in the session", async () => {
+    const { createEventStore } = await import("../src/stores/event-store.js");
+    const events = createEventStore(db);
+    const s = sessions.create("a1");
+    events.append({
+      sessionId: s.id,
+      agentId: "a1",
+      kind: "ping_user",
+      payload: { message: "need help" },
+    });
+    // Wait a beat so the user message has a strictly later created_at
+    // (unixepoch() is second-resolution).
+    await new Promise((r) => setTimeout(r, 1100));
+    messages.append(s.id, { id: "m1", role: "user", parts: [] });
+    const unresolved = events.unresolvedPingsBySession();
+    expect(unresolved).toHaveLength(0);
+  });
+
+  it("returns only the latest ping per session", async () => {
+    const { createEventStore } = await import("../src/stores/event-store.js");
+    const events = createEventStore(db);
+    const s = sessions.create("a1");
+    events.append({
+      sessionId: s.id,
+      agentId: "a1",
+      kind: "ping_user",
+      payload: { message: "first" },
+    });
+    await new Promise((r) => setTimeout(r, 1100));
+    events.append({
+      sessionId: s.id,
+      agentId: "a1",
+      kind: "ping_user",
+      payload: { message: "second" },
+    });
+    const unresolved = events.unresolvedPingsBySession();
+    expect(unresolved).toHaveLength(1);
+    expect(unresolved[0]!.message).toBe("second");
+  });
+
+  it("scopes per session — pings in different sessions are independent", async () => {
+    const { createEventStore } = await import("../src/stores/event-store.js");
+    const events = createEventStore(db);
+    const s1 = sessions.create("a1");
+    const s2 = sessions.create("a1");
+    events.append({
+      sessionId: s1.id,
+      agentId: "a1",
+      kind: "ping_user",
+      payload: { message: "s1" },
+    });
+    events.append({
+      sessionId: s2.id,
+      agentId: "a1",
+      kind: "ping_user",
+      payload: { message: "s2" },
+    });
+    // Resolve only s1 with a user message.
+    await new Promise((r) => setTimeout(r, 1100));
+    messages.append(s1.id, { id: "m1", role: "user", parts: [] });
+    const unresolved = events.unresolvedPingsBySession();
+    expect(unresolved).toHaveLength(1);
+    expect(unresolved[0]!.sessionId).toBe(s2.id);
+  });
+});

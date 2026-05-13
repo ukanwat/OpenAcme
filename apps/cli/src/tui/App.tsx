@@ -86,6 +86,60 @@ export function App({ manager, agent, dataDir }: Props) {
     inkApp.exit();
   }, [inkApp]);
 
+  // Subscribe to the broadcaster for the active session so the CLI
+  // sees autonomous-turn activity the same way the web does:
+  // when a scheduler-driven turn completes (session_state becomes
+  // "idle") OR a task event lands (ping_user, status changes, etc.),
+  // refresh the committed message list from the DB so the new
+  // assistant turns appear in the transcript without the user having
+  // to issue a `/clear` or switch sessions.
+  //
+  // We don't try to live-stream `ui_message_part` chunks — those are
+  // UIMessage stream protocol events, while the TUI reducer consumes
+  // raw fullStream events. Format mismatch + the extra render cost
+  // isn't worth it for the in-process CLI. Refresh-on-done captures
+  // the same content with a one-frame lag.
+  useEffect(() => {
+    if (sendingRef.current) {
+      // An interactive turn is in flight via this TUI — don't clobber
+      // its growing in-flight state with a DB read. We'll catch up on
+      // the next event after the turn finishes.
+      return;
+    }
+    const sub = manager.broadcaster.subscribe(state.sessionId, (env) => {
+      if (env.event.kind === "ui_message_part") return;
+      if (sendingRef.current) return;
+      try {
+        const dbHistory = sanitizeStoredHistory(
+          manager.messageStore.getHistory(state.sessionId)
+        );
+        const committed = dbMessagesToTuiMessages(dbHistory);
+        dispatch({
+          type: "set-session",
+          sessionId: state.sessionId,
+          agentId: state.agentId,
+          agentName: state.agentName,
+          modelLabel: state.modelLabel,
+          committed,
+        });
+      } catch (e) {
+        // History refresh is best-effort — log and continue. Next
+        // event will retry.
+        // eslint-disable-next-line no-console
+        console.warn(
+          `broadcaster refresh failed for ${state.sessionId}: ${e instanceof Error ? e.message : String(e)}`
+        );
+      }
+    });
+    return () => sub.unsubscribe();
+  }, [
+    manager,
+    state.sessionId,
+    state.agentId,
+    state.agentName,
+    state.modelLabel,
+  ]);
+
   const ctx: CommandCtx = useMemo(
     () => ({ dispatch, manager, agentId: state.agentId, exit }),
     [manager, state.agentId, exit]
@@ -103,6 +157,12 @@ export function App({ manager, agent, dataDir }: Props) {
       sendingRef.current = true;
       const ctrl = new AbortController();
       abortRef.current = ctrl;
+      // Block the scheduler from racing an autonomous wake into the
+      // same session while this interactive turn runs. Cleared in the
+      // `finally` below. Without this, the CLI scheduler (which now
+      // boots in chat.ts) can fire `runAutonomous` concurrently with
+      // `runStream` here, both racing the same session's history.
+      manager.taskScheduler.markInteractiveBusy(state.sessionId);
 
       // Commit each pending attachment to disk and build a UIMessage with
       // text + file parts. The CLI runs in-process and writes straight
@@ -302,6 +362,7 @@ export function App({ manager, agent, dataDir }: Props) {
       } finally {
         if (abortRef.current === ctrl) abortRef.current = null;
         sendingRef.current = false;
+        manager.taskScheduler.clearInteractiveBusy(state.sessionId);
       }
     },
     [manager, state.agentId, state.sessionId, state.committed]

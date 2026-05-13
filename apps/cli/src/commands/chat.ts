@@ -15,6 +15,11 @@ export async function chatCommand(opts: {
   const config = loadConfig(opts.dataDir);
   const manager = new AgentManager(config);
   await manager.initMCP();
+  // Start the scheduler so autonomous turns + heartbeat probes run
+  // while the operator is in a terminal chat — same workforce behavior
+  // as the web daemon. Without this, recurring tasks and ping_user
+  // events never fire from the CLI.
+  await manager.taskScheduler.start();
 
   const agents = manager.listAgents();
   if (agents.length === 0) {

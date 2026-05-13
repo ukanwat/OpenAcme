@@ -8,14 +8,7 @@ import {
   useCallback,
   useMemo,
 } from "react";
-import {
-  ArrowUp,
-  Bot,
-  MessageSquare,
-  Trash2,
-  Square,
-  Paperclip,
-} from "lucide-react";
+import { ArrowUp, Square, Paperclip } from "lucide-react";
 import { toast } from "sonner";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport, type UIMessage } from "ai";
@@ -24,6 +17,8 @@ import { DefaultChatTransport, type UIMessage } from "ai";
 // any future `sendMessage` consumers that read message metadata.
 import type { MessageMetadata, OpenAcmeUIMessage } from "./lib/types";
 import { Sidebar } from "./components/Sidebar";
+import { HomeView } from "./components/HomeView";
+import { useLiveSession } from "./lib/useLiveSession";
 import { Markdown } from "./components/Markdown";
 import { AttachmentChip } from "./components/AttachmentChip";
 import { ToolBlock } from "./components/ToolBlock";
@@ -35,7 +30,6 @@ import { Textarea } from "@/app/components/ui/textarea";
 import { SectionEyebrow } from "@/app/components/ui/section-eyebrow";
 import { ScribedRule } from "@/app/components/ui/scribed-rule";
 import { JargonChip } from "@/app/components/ui/jargon-chip";
-import { ActiveMarker } from "@/app/components/ui/active-marker";
 import { ChatSetupPanel } from "./components/ChatSetupPanel";
 import {
   Select,
@@ -68,12 +62,6 @@ interface ModelOption {
   id: string;
   label: string;
   hint?: string;
-}
-
-interface SessionSummary {
-  id: string;
-  title: string | null;
-  agentId: string;
 }
 
 interface PendingAttachment {
@@ -109,11 +97,18 @@ function ChatPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const sessionFromUrl = searchParams.get("session") ?? "";
+  const agentFromUrl = searchParams.get("agent") ?? "";
 
   const [agents, setAgents] = useState<Agent[]>([]);
-  const [activeAgentId, setActiveAgentId] = useState<string>("");
-  const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  const [activeAgentId, setActiveAgentId] = useState<string>(agentFromUrl);
   const [activeSessionId, setActiveSessionId] = useState<string>(sessionFromUrl);
+  // Session title for the chat header. Fetched on session change; the
+  // server also updates this asynchronously after the first turn (via
+  // `agent.fireTitle`), so we refresh on `messages.length` transitions
+  // 0 → 1 too.
+  const [activeSessionTitle, setActiveSessionTitle] = useState<string | null>(
+    null
+  );
   const [input, setInput] = useState("");
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [isDragging, setIsDragging] = useState(false);
@@ -142,26 +137,37 @@ function ChatPageInner() {
     activeSessionIdRef.current = activeSessionId;
   }, [activeSessionId]);
 
-  // activeSessionId ↔ ?session= URL search param. `replace` (not push) so
-  // session pinning during streaming doesn't fill browser history.
+  // State → URL sync. `searchParams` is read at fire time but is NOT
+  // a dependency — including it would re-fire on every URL change and
+  // race the URL → state sync below, clobbering an in-flight HomeView
+  // navigation back to "/".
   useEffect(() => {
-    const currentInUrl = searchParams.get("session") ?? "";
-    if (activeSessionId !== currentInUrl) {
-      router.replace(
-        activeSessionId
-          ? `/?session=${encodeURIComponent(activeSessionId)}`
-          : "/"
-      );
+    const currentSession = searchParams.get("session") ?? "";
+    const currentAgent = searchParams.get("agent") ?? "";
+    if (activeSessionId === currentSession && activeAgentId === currentAgent) {
+      return;
     }
-  }, [activeSessionId, searchParams, router]);
+    if (!activeSessionId) {
+      if (currentSession) router.replace("/");
+      return;
+    }
+    const qs = activeAgentId
+      ? `session=${encodeURIComponent(activeSessionId)}&agent=${encodeURIComponent(activeAgentId)}`
+      : `session=${encodeURIComponent(activeSessionId)}`;
+    router.replace(`/?${qs}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSessionId, activeAgentId, router]);
 
-  // Browser back / forward → re-sync state from URL.
+  // URL → state sync (browser nav, HomeView row click).
   useEffect(() => {
     if (sessionFromUrl !== activeSessionId) {
       setActiveSessionId(sessionFromUrl);
     }
+    if (agentFromUrl && agentFromUrl !== activeAgentId) {
+      setActiveAgentId(agentFromUrl);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionFromUrl]);
+  }, [sessionFromUrl, agentFromUrl]);
 
   // ── Chat state via useChat ────────────────────────────────────────────
   const transport = useMemo(
@@ -206,26 +212,8 @@ function ChatPageInner() {
       if (part.type === "data-session") {
         const newId = part.data.sessionId;
         if (newId && newId !== activeSessionIdRef.current) {
-          const previousId = activeSessionIdRef.current;
           skipNextHistoryFetchRef.current = true;
           setActiveSessionId(newId);
-          setSessions((prev) => {
-            const parent = previousId
-              ? prev.find((s) => s.id === previousId)
-              : undefined;
-            const withoutParent = previousId
-              ? prev.filter((s) => s.id !== previousId)
-              : prev;
-            if (withoutParent.some((s) => s.id === newId)) return withoutParent;
-            return [
-              {
-                id: newId,
-                title: parent?.title ?? null,
-                agentId: activeAgentIdRef.current,
-              },
-              ...withoutParent,
-            ];
-          });
         }
         return;
       }
@@ -260,6 +248,34 @@ function ChatPageInner() {
 
   const isStreaming = status === "submitted" || status === "streaming";
 
+  // Live session subscription. Drives cross-tab + autonomous-turn live
+  // streaming into useChat's `messages` via setMessages-by-id upsert.
+  // Same tab as the originating /api/chat send also receives an SSE
+  // echo, but the upsert-by-id is idempotent — useChat's own response
+  // assembler and the SSE assembler produce the same UIMessage shape
+  // with the same id, so one overwrites the other harmlessly.
+  const liveSession = useLiveSession(
+    activeSessionId || null,
+    activeSessionId ? setMessages : null
+  );
+  const isLiveRunning = liveSession.state === "running";
+
+  // Refresh title on each running → idle transition. `agent.fireTitle`
+  // runs fire-and-forget after the first turn, so the title may have
+  // been written server-side between mount and now.
+  const prevLiveRunningRef = useRef(false);
+  useEffect(() => {
+    const wasRunning = prevLiveRunningRef.current;
+    prevLiveRunningRef.current = isLiveRunning;
+    if (!activeSessionId || !wasRunning || isLiveRunning) return;
+    fetch(`${API_BASE}/api/sessions/${activeSessionId}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { title?: string | null } | null) => {
+        if (data) setActiveSessionTitle(data.title ?? null);
+      })
+      .catch(() => {});
+  }, [isLiveRunning, activeSessionId]);
+
   // Abort any in-flight stream when the page unmounts.
   useEffect(() => {
     return () => {
@@ -268,26 +284,12 @@ function ChatPageInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const loadAgentsAndSessions = useCallback(
-    async (signal?: AbortSignal): Promise<{ agents: Agent[]; sessions: SessionSummary[] } | null> => {
+  const loadAgents = useCallback(
+    async (signal?: AbortSignal): Promise<Agent[] | null> => {
       try {
         const res = await fetch(`${API_BASE}/api/agents`, { signal });
         if (!res.ok) throw new Error("agents fetch failed");
-        const agentList: Agent[] = await res.json();
-        const sessionResults = await Promise.all(
-          agentList.map(async (agent) => {
-            try {
-              const r = await fetch(`${API_BASE}/api/agents/${agent.id}/sessions`, { signal });
-              if (!r.ok) return [];
-              const list = (await r.json()) as { id: string; title: string | null }[];
-              return list.map((s) => ({ ...s, agentId: agent.id }));
-            } catch (e) {
-              if ((e as Error).name === "AbortError") throw e;
-              return [];
-            }
-          })
-        );
-        return { agents: agentList, sessions: sessionResults.flat() };
+        return (await res.json()) as Agent[];
       } catch (e) {
         if ((e as Error).name === "AbortError") return null;
         throw e;
@@ -298,12 +300,11 @@ function ChatPageInner() {
 
   useEffect(() => {
     const ctrl = new AbortController();
-    loadAgentsAndSessions(ctrl.signal)
-      .then((result) => {
-        if (!result) return;
-        setAgents(result.agents);
-        setSessions(result.sessions);
-        setActiveAgentId((current) => current || result.agents[0]?.id || "");
+    loadAgents(ctrl.signal)
+      .then((list) => {
+        if (!list) return;
+        setAgents(list);
+        setActiveAgentId((current) => current || list[0]?.id || "");
       })
       .catch(() =>
         toast.error("Cannot connect to server", {
@@ -311,7 +312,7 @@ function ChatPageInner() {
         })
       );
     return () => ctrl.abort();
-  }, [loadAgentsAndSessions]);
+  }, [loadAgents]);
 
   useEffect(() => {
     const ctrl = new AbortController();
@@ -355,10 +356,39 @@ function ChatPageInner() {
     return entries.every(([, v]) => !v);
   }, [modelCatalog]);
 
+  // True while we're fetching history for `activeSessionId`. The chat
+  // area uses this to suppress its empty-state flash between the
+  // synchronous `setMessages([])` and the async fetch resolution —
+  // otherwise opening a session briefly renders `ChatAgentReadyState`
+  // before the real messages land. Reset on every session change so a
+  // genuinely empty session (no messages at all) still shows the
+  // empty state after the fetch completes.
+  const [historyLoading, setHistoryLoading] = useState(false);
+
+  // Load session metadata (title) when activeSessionId changes.
+  useEffect(() => {
+    if (!activeSessionId) {
+      setActiveSessionTitle(null);
+      return;
+    }
+    const ctrl = new AbortController();
+    fetch(`${API_BASE}/api/sessions/${activeSessionId}`, { signal: ctrl.signal })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { title?: string | null } | null) => {
+        if (!data) return;
+        setActiveSessionTitle(data.title ?? null);
+      })
+      .catch((e) => {
+        if ((e as Error).name === "AbortError") return;
+      });
+    return () => ctrl.abort();
+  }, [activeSessionId]);
+
   // Load history when session changes.
   useEffect(() => {
     if (!activeSessionId) {
       setMessages([]);
+      setHistoryLoading(false);
       return;
     }
     if (skipNextHistoryFetchRef.current) {
@@ -368,14 +398,21 @@ function ChatPageInner() {
       skipNextHistoryFetchRef.current = false;
       return;
     }
+    // Clear synchronously before the new history lands — otherwise the
+    // previous session's messages stay visible until the fetch resolves,
+    // which makes session switches feel like "old chat is still here".
+    setMessages([]);
+    setHistoryLoading(true);
     const ctrl = new AbortController();
     fetch(`${API_BASE}/api/sessions/${activeSessionId}/messages`, { signal: ctrl.signal })
       .then((r) => r.json())
       .then((data: OpenAcmeUIMessage[]) => {
         setMessages(data);
+        setHistoryLoading(false);
       })
       .catch((e) => {
         if ((e as Error).name === "AbortError") return;
+        setHistoryLoading(false);
         toast.error("Failed to load messages");
       });
     return () => ctrl.abort();
@@ -607,33 +644,6 @@ function ChatPageInner() {
     }
   };
 
-  const newChat = () => {
-    setMessages([]);
-    setActiveSessionId("");
-  };
-
-  const deleteSession = useCallback(
-    async (id: string) => {
-      if (!window.confirm("Delete this chat? This cannot be undone.")) return;
-      try {
-        const res = await fetch(`${API_BASE}/api/sessions/${id}`, {
-          method: "DELETE",
-        });
-        if (!res.ok) throw new Error(await res.text());
-        setSessions((prev) => prev.filter((s) => s.id !== id));
-        if (activeSessionId === id) {
-          setActiveSessionId("");
-          setMessages([]);
-        }
-      } catch (err) {
-        toast.error("Failed to delete chat", {
-          description: err instanceof Error ? err.message : String(err),
-        });
-      }
-    },
-    [activeSessionId, setMessages]
-  );
-
   // First-run / "no provider configured" takes over the whole viewport.
   // The chat chrome (sidebar, sessions, composer) is non-functional without
   // a credential, so showing it would lie about what's available.
@@ -648,105 +658,16 @@ function ChatPageInner() {
     );
   }
 
+  // Layout: Sidebar (icons) | HomeView (compact when a session is
+  // selected, full otherwise) | Chat panel (only when a session is
+  // selected). Single mount across home ↔ chat transitions → no
+  // flicker. The agent + session pickers that used to live as Sidebar
+  // children are gone — home owns that surface now.
   return (
     <div className="flex h-screen w-screen overflow-hidden">
-      <Sidebar>
-        <div className="border-t border-paper-rule pt-3">
-          <div className="px-4 pb-2 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
-            Agents
-          </div>
-          {agents.map((agent) => {
-            const isActive = agent.id === activeAgentId;
-            return (
-              <button
-                key={agent.id}
-                onClick={() => {
-                  setActiveAgentId(agent.id);
-                  newChat();
-                }}
-                className={cn(
-                  "group relative flex w-full items-center gap-3 px-4 py-1.5 text-left text-sm transition-colors",
-                  isActive
-                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                    : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-                )}
-              >
-                <ActiveMarker active={isActive} />
-                <Bot className="size-3.5 shrink-0" />
-                <span className="min-w-0 flex-1" title={agent.role || undefined}>
-                  <span className="block truncate">{agent.name}</span>
-                  {agent.role && (
-                    <span className="block truncate text-[11px] text-sidebar-foreground/60">
-                      {agent.role}
-                    </span>
-                  )}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-
-        <div className="mt-3 border-t border-paper-rule pt-3">
-          <div className="flex items-center justify-between px-4 pb-2">
-            <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
-              Sessions
-            </span>
-            <button
-              onClick={newChat}
-              title="New session"
-              aria-label="New session"
-              className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-soft hover:text-plot-red focus:text-plot-red focus:outline-none"
-            >
-              + New
-            </button>
-          </div>
-          {sessions
-            .filter((s) => !activeAgentId || s.agentId === activeAgentId)
-            .slice(0, 30)
-            .map((s) => {
-            const isActive = s.id === activeSessionId;
-            return (
-              <div
-                key={s.id}
-                className={cn(
-                  "group relative flex w-full items-center transition-colors",
-                  isActive
-                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                    : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-                )}
-              >
-                <ActiveMarker active={isActive} />
-                <button
-                  onClick={() => {
-                    if (s.agentId && s.agentId !== activeAgentId) {
-                      setActiveAgentId(s.agentId);
-                    }
-                    setActiveSessionId(s.id);
-                  }}
-                  className="flex flex-1 min-w-0 items-center gap-3 px-4 py-1.5 text-left text-sm"
-                >
-                  <MessageSquare className="size-3.5 shrink-0" />
-                  <span className="truncate">{s.title || "Untitled session"}</span>
-                </button>
-                <button
-                  onClick={() => deleteSession(s.id)}
-                  title="Delete session"
-                  aria-label="Delete session"
-                  className="mr-2 p-1 opacity-0 transition-opacity hover:text-destructive focus:opacity-100 focus:outline-none focus-visible:text-destructive group-hover:opacity-100"
-                >
-                  <Trash2 className="size-3" />
-                </button>
-              </div>
-            );
-          })}
-          {sessions.filter((s) => !activeAgentId || s.agentId === activeAgentId).length === 0 && (
-            <div className="px-4 pb-3 font-mono text-[11px] text-ink-faint">
-              No sessions yet.
-            </div>
-          )}
-        </div>
-      </Sidebar>
-
+      <Sidebar />
+      <HomeView compact={!!activeSessionId} />
+      {activeSessionId && (
       <main className="flex flex-1 flex-col overflow-hidden bg-paper">
         <header className="flex h-12 shrink-0 items-center justify-between border-b border-paper-rule px-6">
           <div className="flex items-center gap-4">
@@ -754,21 +675,30 @@ function ChatPageInner() {
               <span
                 className={cn(
                   "status-dot transition-colors",
-                  isStreaming ? "bg-plot-red pulse-live" : "bg-ink"
+                  isStreaming || isLiveRunning
+                    ? "bg-plot-red pulse-live"
+                    : "bg-ink"
                 )}
                 aria-hidden
               />
               <span className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-soft">
-                {isStreaming ? "Streaming" : activeAgent ? "Ready" : "No agent"}
+                {isStreaming
+                  ? "Streaming"
+                  : isLiveRunning
+                    ? "Running"
+                    : activeAgent
+                      ? "Ready"
+                      : "No agent"}
               </span>
             </div>
             <span className="h-3 w-px bg-paper-rule" aria-hidden />
-            <span className="text-sm font-medium text-ink">
-              {activeAgent?.name ?? "—"}
+            <span className="min-w-0 truncate text-sm font-medium text-ink">
+              {activeSessionTitle ||
+                (activeSessionId ? "Untitled session" : "New chat")}
             </span>
-            {activeSessionId && (
-              <span className="font-mono text-[11px] text-ink-faint tabular-nums">
-                · {activeSessionId.slice(0, 8)}
+            {activeAgent && (
+              <span className="font-mono text-[11px] text-ink-faint">
+                · {activeAgent.name}
               </span>
             )}
           </div>
@@ -817,20 +747,27 @@ function ChatPageInner() {
         </header>
 
         {messages.length === 0 ? (
-          <div className="flex flex-1 items-start justify-center overflow-y-auto px-6 py-16">
-            <div
-              key={activeAgent?.id ?? (agents.length === 0 ? "_none" : "_pick")}
-              className="w-full max-w-2xl section-enter"
-            >
-              {agents.length === 0 ? (
-                <ChatNoAgentsState />
-              ) : activeAgent ? (
-                <ChatAgentReadyState agent={activeAgent} />
-              ) : (
-                <ChatSelectAgentState />
-              )}
+          historyLoading ? (
+            // History is in flight; suppress the empty-state poster so
+            // it doesn't flash between `setMessages([])` and the fetch
+            // resolution. Plain spacer keeps the layout stable.
+            <div className="flex-1" />
+          ) : (
+            <div className="flex flex-1 items-start justify-center overflow-y-auto px-6 py-16">
+              <div
+                key={activeAgent?.id ?? (agents.length === 0 ? "_none" : "_pick")}
+                className="w-full max-w-2xl section-enter"
+              >
+                {agents.length === 0 ? (
+                  <ChatNoAgentsState />
+                ) : activeAgent ? (
+                  <ChatAgentReadyState agent={activeAgent} />
+                ) : (
+                  <ChatSelectAgentState />
+                )}
+              </div>
             </div>
-          </div>
+          )
         ) : (
           <div
             ref={messagesContainerRef}
@@ -995,6 +932,7 @@ function ChatPageInner() {
           </div>
         </div>
       </main>
+      )}
     </div>
   );
 }

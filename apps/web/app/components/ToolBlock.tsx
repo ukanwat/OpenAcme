@@ -1,9 +1,10 @@
 "use client";
 
 import { useMemo, useState, type ReactNode } from "react";
-import { ArrowUpRight, ChevronRight } from "lucide-react";
+import { ArrowUpRight, ChevronRight, Bell, Clock } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/app/lib/utils";
+import { Markdown } from "./Markdown";
 
 /*
  * Renders a tool-${name} UIMessagePart.
@@ -44,6 +45,8 @@ const KNOWN_TOOLS = new Set([
   "task_comment",
   "task_comments",
   "process",
+  "ping_user",
+  "sleep",
 ]);
 
 // Tool names that resolve to a single task — used to render an "Open"
@@ -490,6 +493,32 @@ function renderSummary(name: string, input: unknown, output: unknown): ReactNode
         </span>
       );
     }
+    case "ping_user": {
+      const msg = str(input.message);
+      const excerpt = msg ? trim(msg, 80) : "";
+      return (
+        <span className="flex min-w-0 items-center gap-2">
+          <Bell className="size-3 shrink-0 text-plot-red" aria-hidden />
+          {excerpt && <span className="truncate text-ink">{excerpt}</span>}
+        </span>
+      );
+    }
+    case "sleep": {
+      const dur = str(input.duration);
+      const out = parseJsonish(output);
+      const next = str(out?.next_check_at);
+      return (
+        <span className="flex min-w-0 items-center gap-2">
+          <Clock className="size-3 shrink-0 text-ink-soft" aria-hidden />
+          {dur && <span className="text-ink">{dur}</span>}
+          {next && (
+            <span className="truncate text-ink-faint">
+              until {new Date(next).toLocaleString()}
+            </span>
+          )}
+        </span>
+      );
+    }
     default:
       return null;
   }
@@ -572,6 +601,23 @@ function renderBody({
         </pre>
       );
     }
+    case "ping_user": {
+      // The message arg is the user-facing content. Render it like a
+      // regular assistant bubble below the tool-call header so the
+      // operator sees both signals: "this was a ping" (the header) +
+      // "here's the message" (the bubble).
+      const msg = str(input.message);
+      if (!msg) return null;
+      return (
+        <div className="px-3 py-2 text-sm leading-relaxed text-ink break-words">
+          <Markdown>{msg}</Markdown>
+        </div>
+      );
+    }
+    case "sleep":
+      // The duration + next_check_at are already in the summary; no
+      // separate body content.
+      return null;
     default:
       return null;
   }

@@ -154,9 +154,15 @@ export function renderRecentActivity(
   if (events.length === 0) return "";
   const lines = events.map((e) => {
     const when = formatRelativeFrom(e.createdAt, now);
-    const title = titlesById.get(e.taskId) ?? "(unknown task)";
     const summary = summarizeEventPayload(e);
     const tail = summary ? ` — ${summary}` : "";
+    if (!e.taskId) {
+      // Session-level event with no task anchor. Format without the
+      // bracketed task id; the kind + payload summary already carries
+      // the context the agent needs.
+      return `- ${when} · ${e.kind}${tail}`;
+    }
+    const title = titlesById.get(e.taskId) ?? "(unknown task)";
     return `- ${when} · ${e.kind} on [${e.taskId}] ${title}${tail}`;
   });
   return lines.join("\n");
@@ -197,6 +203,12 @@ export function summarizeEventPayload(
       const runs = p.runs != null ? String(p.runs) : "?";
       const next = p.next_fire ? ` — next fire ${String(p.next_fire)}` : "";
       return `run ${runs} done${next}`;
+    }
+    case "ping_user": {
+      const excerpt = p.message ? String(p.message).slice(0, 80) : "";
+      return excerpt
+        ? `${e.agentId} pinged user: "${excerpt}"`
+        : `${e.agentId} pinged user`;
     }
     default:
       return `actor ${e.agentId}`;

@@ -37,6 +37,11 @@ export const sessions = sqliteTable(
     lastSeenEventTs: integer("last_seen_event_ts")
       .notNull()
       .default(sql`(unixepoch())`),
+    // Per-session next-probe override the agent sets via `sleep`. When
+    // non-null, scheduler arms a one-shot cron at this absolute unix
+    // second to wake the session. Cleared on each turn; if the agent
+    // doesn't re-set, the scheduler falls back to agent.probeIntervalMs.
+    nextCheckAt: integer("next_check_at"),
   },
   (t) => [
     index("idx_sessions_agent_id").on(t.agentId),
@@ -109,16 +114,22 @@ export const taskComments = sqliteTable(
 );
 
 /**
- * Append-only event log for the task subsystem. Drives the agent's
- * "Recent activity" prompt section and the scheduler's wake decisions.
+ * Append-only event log. Originally task-anchored; now polymorphic
+ * across task events and session-level events (e.g. `ping_user` where
+ * no task is in scope). Constraint: at least one of (task_id, session_id)
+ * is set — enforced at write time in `EventStore.append`. Both indices
+ * exist so reads from either anchor are cheap.
+ *
  * `agent_id` is the actor (or "system:scheduler"); the recipient is
- * computed implicitly at read time from task involvement.
+ * computed implicitly at read time from task involvement / session
+ * binding.
  */
 export const taskEvents = sqliteTable(
   "task_events",
   {
     id: text("id").primaryKey(),
-    taskId: text("task_id").notNull(),
+    taskId: text("task_id"),
+    sessionId: text("session_id"),
     agentId: text("agent_id").notNull(),
     /** The actor that caused this event (agent id). Used both for
      *  prompt attribution and for the wake policy's echo suppression
@@ -135,6 +146,7 @@ export const taskEvents = sqliteTable(
   },
   (t) => [
     index("idx_task_events_task").on(t.taskId, t.createdAt),
+    index("idx_task_events_session").on(t.sessionId, t.createdAt),
     index("idx_task_events_created").on(t.createdAt),
   ]
 );

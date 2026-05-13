@@ -24,9 +24,18 @@ export function MessageList({
   committed: UIMessage[];
   inflight: UIMessage | null;
 }) {
+  // Hide the synthesized "system-event" user prompts that runAutonomous
+  // prepends to each autonomous turn. They're scaffolding visible to
+  // the model, not conversation visible to the operator. Web does the
+  // same filter at MessageBubble render time; we filter at the list
+  // level here since the Static renderer commits items once.
+  const visible = committed.filter((m) => {
+    const meta = (m as { metadata?: { kind?: string } }).metadata;
+    return meta?.kind !== "autonomous_event";
+  });
   const items: StaticItem[] = [
     { kind: "banner", agentName, modelLabel },
-    ...committed.map<StaticItem>((msg) => ({ kind: "message", msg })),
+    ...visible.map<StaticItem>((msg) => ({ kind: "message", msg })),
   ];
 
   return (

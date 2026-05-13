@@ -180,6 +180,7 @@ async function addAgentReusingProvider(
     mcpServers: {},
     mcpDisabled: [],
     skills: [],
+    probeIntervalMs: 30 * 60 * 1000,
   };
   try {
     agentStore.upsert(newAgent);
@@ -314,6 +315,7 @@ async function configureProviderAndCreateAgent(
       mcpServers: {},
       mcpDisabled: [],
       skills: [],
+      probeIntervalMs: 30 * 60 * 1000,
     };
     savedAction = `Added agent: ${newId}`;
   } else if (firstAgent) {
@@ -330,6 +332,7 @@ async function configureProviderAndCreateAgent(
       mcpServers: {},
       mcpDisabled: [],
       skills: [],
+      probeIntervalMs: 30 * 60 * 1000,
     };
     savedAction = `Created agent: ${savedAgent.id}`;
   }
