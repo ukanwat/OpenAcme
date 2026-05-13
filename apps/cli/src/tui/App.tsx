@@ -18,7 +18,7 @@ import { MultilineInput } from "./components/MultilineInput.js";
 import { CommandPalette } from "./components/CommandPalette.js";
 import { ModelPicker } from "./components/ModelPicker.js";
 import { AgentPicker } from "./components/AgentPicker.js";
-import { SessionPicker, type SessionRow } from "./components/SessionPicker.js";
+import { SessionsView } from "./components/SessionsView.js";
 import { SkillsOverlay } from "./components/SkillsOverlay.js";
 import { MCPOverlay } from "./components/MCPOverlay.js";
 import { TasksOverlay } from "./components/TasksOverlay.js";
@@ -32,6 +32,7 @@ import {
   stripAtToken,
 } from "./file-search.js";
 import { dbMessagesToTuiMessages } from "./restore.js";
+import { resetTerminalView } from "./terminal.js";
 import {
   commitAttachmentForCli,
   extractAtPaths,
@@ -48,6 +49,14 @@ interface Props {
   manager: AgentManager;
   agent: ResolvedAgent;
   dataDir: string;
+  /** "sessions" landing page (default) or jump straight to chat with an
+   *  explicit --agent / --session flag. */
+  initialView?: "sessions" | "chat";
+  /** Pre-seeded session id when launched with --session; the agent in
+   *  `agent` is the resolved owner of that session. */
+  initialSessionId?: string;
+  /** Loaded history for `initialSessionId` so the first paint isn't blank. */
+  initialCommitted?: UIMessage[];
 }
 
 function buildAssistantMessage(
@@ -62,17 +71,51 @@ function buildAssistantMessage(
   } as UIMessage;
 }
 
-export function App({ manager, agent, dataDir }: Props) {
+export function App({
+  manager,
+  agent,
+  dataDir,
+  initialView,
+  initialSessionId,
+  initialCommitted,
+}: Props) {
   const inkApp = useApp();
-  const [state, dispatch] = useReducer(
+  const [state, dispatchRaw] = useReducer(
     reducer,
     {
       agentId: agent.id,
       agentName: agent.name,
       modelLabel: `${agent.model.provider}/${agent.model.model}`,
-      sessionId: cryptoId(),
+      sessionId: initialSessionId ?? cryptoId(),
+      view: initialView ?? "sessions",
+      committed: initialCommitted ?? [],
     },
     initState
+  );
+
+  // Reset the terminal viewport + scrollback right before a transition
+  // dispatch fires. Without this, the prior view's Ink <Static> frames
+  // bleed into the new view (Static is append-only, by design). Doing
+  // the clear here — before the raw dispatch — means React's next
+  // render lands on a fresh buffer. The other ~20 action types
+  // (stream-* deltas, attach-*, palette toggles) skip the clear so
+  // intra-chat streaming stays cheap.
+  const dispatch = useCallback(
+    (action: Parameters<typeof dispatchRaw>[0]) => {
+      switch (action.type) {
+        case "enter-sessions":
+        case "set-session":
+        case "set-agent":
+        case "new-session":
+        case "clear":
+          resetTerminalView();
+          break;
+        default:
+          break;
+      }
+      dispatchRaw(action);
+    },
+    [dispatchRaw]
   );
   const [input, setInput] = useState("");
   const [paletteIndex, setPaletteIndex] = useState(0);
@@ -100,6 +143,10 @@ export function App({ manager, agent, dataDir }: Props) {
   // isn't worth it for the in-process CLI. Refresh-on-done captures
   // the same content with a one-frame lag.
   useEffect(() => {
+    if (state.view !== "chat") {
+      // No point refetching chat history while the user is on the list.
+      return;
+    }
     if (sendingRef.current) {
       // An interactive turn is in flight via this TUI — don't clobber
       // its growing in-flight state with a DB read. We'll catch up on
@@ -134,6 +181,7 @@ export function App({ manager, agent, dataDir }: Props) {
     return () => sub.unsubscribe();
   }, [
     manager,
+    state.view,
     state.sessionId,
     state.agentId,
     state.agentName,
@@ -380,12 +428,33 @@ export function App({ manager, agent, dataDir }: Props) {
     return true;
   }, []);
 
-  // Esc-to-stop while streaming. Lives at the App level rather than inside
-  // MultilineInput because that input is `disabled` mid-stream, which gates
-  // its own useInput. Multiple Ink useInput hooks coexist fine.
+  const anyOverlayOpen =
+    state.modelPickerOpen ||
+    state.agentPickerOpen ||
+    state.skillsOverlayOpen ||
+    state.mcpOverlayOpen ||
+    state.tasksOverlayOpen ||
+    state.showHelp;
+
+  // Esc behavior is layered:
+  //   1) Streaming   → abort the turn.
+  //   2) In chat, idle, no overlay open → back to the sessions list.
+  //   3) On the list → SessionsView owns input (no-op here).
+  // Lives at App level rather than MultilineInput because that input is
+  // `disabled` mid-stream, which gates its own useInput.
   useInput((input, key) => {
     if (key.escape && state.status === "streaming") {
       abortRef.current?.abort();
+      return;
+    }
+    if (
+      key.escape &&
+      state.view === "chat" &&
+      state.status !== "streaming" &&
+      !anyOverlayOpen
+    ) {
+      dispatch({ type: "enter-sessions" });
+      return;
     }
     // Ctrl+X clears the pending attachment list.
     if (key.ctrl && input === "x" && state.pendingAttachments.length > 0) {
@@ -416,7 +485,6 @@ export function App({ manager, agent, dataDir }: Props) {
     input.startsWith("/") &&
     !state.modelPickerOpen &&
     !state.agentPickerOpen &&
-    !state.sessionPickerOpen &&
     !state.skillsOverlayOpen &&
     !state.mcpOverlayOpen &&
     !state.tasksOverlayOpen;
@@ -444,7 +512,6 @@ export function App({ manager, agent, dataDir }: Props) {
     !paletteOpen &&
     !state.modelPickerOpen &&
     !state.agentPickerOpen &&
-    !state.sessionPickerOpen &&
     !state.skillsOverlayOpen &&
     !state.mcpOverlayOpen &&
     !state.tasksOverlayOpen;
@@ -629,20 +696,60 @@ export function App({ manager, agent, dataDir }: Props) {
   const inputDisabled =
     state.modelPickerOpen ||
     state.agentPickerOpen ||
-    state.sessionPickerOpen ||
     state.skillsOverlayOpen ||
     state.mcpOverlayOpen ||
     state.tasksOverlayOpen ||
     state.status === "streaming";
 
+  const openSession = useCallback(
+    (sessionId: string) => {
+      const sess = manager.sessionStore.get(sessionId);
+      if (!sess) return;
+      const owner = manager
+        .listAgents()
+        .find((a) => a.id === sess.agentId);
+      if (!owner) return;
+      const dbHistory = sanitizeStoredHistory(
+        manager.messageStore.getHistory(sessionId)
+      );
+      const committed = dbMessagesToTuiMessages(dbHistory);
+      dispatch({
+        type: "set-session",
+        sessionId,
+        agentId: owner.id,
+        agentName: owner.name,
+        modelLabel: `${owner.model.provider}/${owner.model.model}`,
+        committed,
+      });
+    },
+    [manager]
+  );
+
   return (
     <Box flexDirection="column">
-      <MessageList
-        agentName={state.agentName}
-        modelLabel={state.modelLabel}
-        committed={state.committed}
-        inflight={state.inflight}
-      />
+      {state.view === "sessions" ? (
+        <SessionsView
+          manager={manager}
+          initialSessionId={state.sessionId}
+          inputDisabled={anyOverlayOpen}
+          onOpen={openSession}
+          onNewChat={() => dispatch({ type: "open-agent-picker" })}
+        />
+      ) : (
+        <>
+          {/* Key by sessionId so Ink's <Static> (which tracks
+              already-rendered indices internally) re-mounts fresh
+              when the session changes — otherwise the new session's
+              committed messages wouldn't print after a switch. */}
+          <MessageList
+            key={state.sessionId}
+            agentName={state.agentName}
+            modelLabel={state.modelLabel}
+            committed={state.committed}
+            inflight={state.inflight}
+          />
+        </>
+      )}
 
       {state.showHelp && <HelpOverlay />}
 
@@ -688,50 +795,6 @@ export function App({ manager, agent, dataDir }: Props) {
         />
       )}
 
-      {state.sessionPickerOpen && (() => {
-        const agents = manager.listAgents();
-        const agentsById = new Map(agents.map((a) => [a.id, a]));
-        // Hide sessions whose agent has been deleted — the next chat turn
-        // would resolve to a missing AgentDefinition. listAllActive already
-        // hides compression-parents.
-        const rows: SessionRow[] = manager.sessionStore
-          .listAllActive()
-          .filter((s) => agentsById.has(s.agentId))
-          .map((s) => ({
-            id: s.id,
-            title: s.title,
-            agentId: s.agentId,
-            updatedAt: s.updatedAt,
-          }));
-        return (
-          <SessionPicker
-            sessions={rows}
-            agentsById={agentsById}
-            currentSessionId={state.sessionId}
-            onSelect={(picked) => {
-              const owner = agentsById.get(picked.agentId);
-              if (!owner) {
-                dispatch({ type: "close-overlays" });
-                return;
-              }
-              const dbHistory = sanitizeStoredHistory(
-                manager.messageStore.getHistory(picked.id)
-              );
-              const committed = dbMessagesToTuiMessages(dbHistory);
-              dispatch({
-                type: "set-session",
-                sessionId: picked.id,
-                agentId: owner.id,
-                agentName: owner.name,
-                modelLabel: `${owner.model.provider}/${owner.model.model}`,
-                committed,
-              });
-            }}
-            onCancel={() => dispatch({ type: "close-overlays" })}
-          />
-        );
-      })()}
-
       {state.skillsOverlayOpen && (
         <SkillsOverlay
           skills={manager.skillRegistry.getIndex()}
@@ -755,11 +818,11 @@ export function App({ manager, agent, dataDir }: Props) {
         />
       )}
 
-      {paletteOpen && (
+      {state.view === "chat" && paletteOpen && (
         <CommandPalette query={input} selectedIndex={paletteIndex} />
       )}
 
-      {atPickerOpen && (
+      {state.view === "chat" && atPickerOpen && (
         <FilePathPicker
           query={atQuery!}
           matches={atMatches}
@@ -768,31 +831,35 @@ export function App({ manager, agent, dataDir }: Props) {
         />
       )}
 
-      <PendingAttachmentsBar
-        attachments={state.pendingAttachments}
-        notice={state.attachNotice}
-      />
+      {state.view === "chat" && (
+        <>
+          <PendingAttachmentsBar
+            attachments={state.pendingAttachments}
+            notice={state.attachNotice}
+          />
 
-      <StatusLine
-        modelLabel={state.modelLabel}
-        sessionId={state.sessionId}
-        totalTokens={state.totalTokens}
-        status={state.status}
-      />
+          <StatusLine
+            modelLabel={state.modelLabel}
+            sessionId={state.sessionId}
+            totalTokens={state.totalTokens}
+            status={state.status}
+          />
 
-      <MultilineInput
-        value={input}
-        onChange={setInput}
-        onSubmit={handleSubmit}
-        disabled={inputDisabled}
-        placeholder={
-          state.status === "streaming"
-            ? "(streaming…)"
-            : "Send a message · drop a file · @path · / for commands"
-        }
-        onSpecialKey={handleSpecialKey}
-        onPastePath={(rawPath) => tryAttachPath(rawPath)}
-      />
+          <MultilineInput
+            value={input}
+            onChange={setInput}
+            onSubmit={handleSubmit}
+            disabled={inputDisabled}
+            placeholder={
+              state.status === "streaming"
+                ? "(streaming…)"
+                : "Send a message · drop a file · @path · / for commands · esc to list"
+            }
+            onSpecialKey={handleSpecialKey}
+            onPastePath={(rawPath) => tryAttachPath(rawPath)}
+          />
+        </>
+      )}
     </Box>
   );
 }

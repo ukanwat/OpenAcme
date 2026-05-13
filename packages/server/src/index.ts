@@ -19,6 +19,12 @@ export async function startServer(dataDirOverride?: string) {
   // Initialize MCP connections for all agents
   await manager.initMCP();
 
+  // Materialize the default Acme agent on a fresh install so the user
+  // lands with something to chat with. No-op when any agent already
+  // exists. Runs AFTER initMCP — the import path calls
+  // reinitMCPForAgent itself for the new agent.
+  await manager.ensureDefaultAgents();
+
   // Start the autonomous task scheduler. Runs the startup sweep
   // (resets stale in_progress) and arms the first wake.
   await manager.taskScheduler.start();
@@ -64,6 +70,17 @@ export async function startServer(dataDirOverride?: string) {
 
 export { createApp } from "./app.js";
 export { AgentManager } from "./agent-manager.js";
+export {
+  buildHomePayload,
+  type HomePayload,
+  type SessionSummary,
+} from "./routes/home.js";
+export {
+  SessionBroadcaster,
+  type BroadcastEnvelope,
+  type SessionBroadcastEvent,
+  type WorkforceListener,
+} from "./broadcaster.js";
 
 // If run directly: start the server
 const isDirectRun =

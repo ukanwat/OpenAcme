@@ -167,8 +167,9 @@ program
 
 program
   .command("chat")
-  .description("Start a terminal chat session with an agent")
-  .option("-a, --agent <id>", "Agent ID to chat with (default: first agent)")
+  .description("Open the terminal sessions list; pick a session to chat, or pass --agent/--session to jump straight in")
+  .option("-a, --agent <id>", "Agent ID to start a fresh chat with (bypasses the list)")
+  .option("-s, --session <id>", "Resume a specific session by id (bypasses the list)")
   .option("-d, --data-dir <path>", "Data directory (default: ~/.openacme)")
   .action(chatCommand);
 

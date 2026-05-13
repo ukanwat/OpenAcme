@@ -57,9 +57,9 @@ export const COMMANDS: CommandDef[] = [
   },
   {
     name: "sessions",
-    description: "Resume an existing session",
+    description: "Back to the sessions list",
     category: "session",
-    handler: (c) => c.dispatch({ type: "open-session-picker" }),
+    handler: (c) => c.dispatch({ type: "enter-sessions" }),
   },
   {
     name: "skills",

@@ -15,11 +15,38 @@
  */
 
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Bell, CircleDot, Pause, Bot, Clock } from "lucide-react";
+import {
+  Bell,
+  CircleDot,
+  Pause,
+  Bot,
+  Clock,
+  MessageSquarePlus,
+  Plus,
+  ChevronDown,
+  Filter as FilterIcon,
+} from "lucide-react";
 import { useHomeStream } from "@/app/lib/useHomeStream";
+import { API_BASE } from "@/app/lib/api";
 import type { SessionSummary } from "@/app/lib/types";
 import { cn } from "@/app/lib/utils";
+import { Button } from "@/app/components/ui/button";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/app/components/ui/popover";
+
+/** Subset of AgentDefinition surfaced on the fresh-install picker.
+ *  Mirrors what `/api/agents` returns; kept narrow so this component
+ *  doesn't pull in the chat page's local Agent type. */
+interface AgentPickerEntry {
+  id: string;
+  name: string;
+  role: string;
+}
 
 function formatRelative(unixSeconds: number): string {
   const now = Math.floor(Date.now() / 1000);
@@ -223,10 +250,377 @@ function Section({
   );
 }
 
+/**
+ * Always-on "+ New chat" entry point. Opens a popover with the same
+ * agent grid the EmptyState uses. Picking an agent navigates to
+ * `/?agent=<id>` (no session id) — the chat page already supports
+ * this state via ChatAgentReadyState until the first message commits
+ * a session via `/api/chat`.
+ *
+ * Self-fetches `/api/agents` so the parent doesn't have to thread it.
+ * Renders nothing until the first agent loads (avoids a flash of a
+ * disabled-looking button).
+ */
+function NewChatPopover({ compact }: { compact: boolean }) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const [open, setOpen] = useState(false);
+  const [agents, setAgents] = useState<AgentPickerEntry[] | null>(null);
+  const [query, setQuery] = useState("");
+
+  useEffect(() => {
+    const ctrl = new AbortController();
+    fetch(`${API_BASE}/api/agents`, { signal: ctrl.signal })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(r.statusText))))
+      .then((list: AgentPickerEntry[]) => setAgents(list))
+      .catch(() => {
+        if (!ctrl.signal.aborted) setAgents([]);
+      });
+    return () => ctrl.abort();
+  }, []);
+
+  // Hide the trigger until we know there's at least one agent — there
+  // is nothing to start a chat with otherwise, and the link from
+  // EmptyState's "Create an agent" CTA already handles the recovery path.
+  if (!agents || agents.length === 0) return null;
+
+  const q = query.trim().toLowerCase();
+  const filtered = q
+    ? agents.filter(
+        (a) =>
+          a.name.toLowerCase().includes(q) ||
+          a.role?.toLowerCase().includes(q)
+      )
+    : agents;
+
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next) setQuery("");
+      }}
+    >
+      <PopoverTrigger asChild>
+        {compact ? (
+          <button
+            type="button"
+            aria-label="New chat"
+            className="flex size-7 shrink-0 items-center justify-center border border-paper-rule bg-paper text-ink-soft transition-colors hover:border-plot-red hover:text-plot-red"
+          >
+            <Plus className="size-3.5" aria-hidden />
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="flex shrink-0 items-center gap-1.5 border border-paper-rule bg-paper px-2.5 py-1 text-[12px] font-medium text-ink transition-colors hover:border-plot-red hover:text-plot-red"
+          >
+            <Plus className="size-3.5" aria-hidden />
+            New chat
+          </button>
+        )}
+      </PopoverTrigger>
+      <PopoverContent
+        align="end"
+        sideOffset={6}
+        className="flex w-72 flex-col p-0"
+      >
+        <div className="border-b border-paper-rule px-3 py-2">
+          <p className="mb-1.5 font-mono text-[11px] uppercase tracking-[0.08em] text-ink-soft">
+            Start a chat
+          </p>
+          <input
+            type="text"
+            autoFocus
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search agents…"
+            className="w-full border border-paper-rule bg-paper px-2 py-1 text-[12px] text-ink outline-none placeholder:text-ink-faint focus:border-plot-red"
+          />
+        </div>
+        <ul className="max-h-[50vh] overflow-y-auto">
+          {filtered.length === 0 ? (
+            <li className="px-3 py-3 text-center text-[12px] text-ink-faint">
+              No agents match.
+            </li>
+          ) : (
+            filtered.map((a) => (
+              <li key={a.id}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOpen(false);
+                    setQuery("");
+                    // Preserve other params (e.g. ?agentFilter) so
+                    // picking a new chat doesn't drop the operator's
+                    // filter. Drop ?session — this is a fresh chat.
+                    const params = new URLSearchParams(
+                      searchParams.toString()
+                    );
+                    params.set("agent", a.id);
+                    params.delete("session");
+                    router.push(`/?${params.toString()}`);
+                  }}
+                  className="group flex w-full items-start gap-3 border-b border-paper-rule px-3 py-2.5 text-left transition-colors last:border-b-0 hover:bg-paper-sunk"
+                >
+                  <MessageSquarePlus
+                    className="mt-0.5 size-4 shrink-0 text-ink-soft group-hover:text-plot-red"
+                    aria-hidden
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[13px] font-medium text-ink">
+                      {a.name}
+                    </div>
+                    {a.role && (
+                      <div className="mt-0.5 line-clamp-2 text-[12px] text-ink-soft">
+                        {a.role}
+                      </div>
+                    )}
+                  </div>
+                </button>
+              </li>
+            ))
+          )}
+        </ul>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/**
+ * Single-button dropdown that scopes the home view to one agent.
+ * Replaces the prior chip-per-agent row — that visual got noisy at 5+
+ * agents. The popover content mirrors NewChatPopover (search + list)
+ * so both pickers feel the same.
+ */
+function FilterByAgentPopover({
+  agentTotals,
+  active,
+  onPick,
+  compact,
+}: {
+  agentTotals: { id: string; name: string; count: number }[];
+  active: string | null;
+  onPick: (id: string | null) => void;
+  compact: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const total = agentTotals.reduce((sum, t) => sum + t.count, 0);
+  const activeName = agentTotals.find((t) => t.id === active)?.name ?? null;
+  const q = query.trim().toLowerCase();
+  const filtered = q
+    ? agentTotals.filter((t) => t.name.toLowerCase().includes(q))
+    : agentTotals;
+
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next) setQuery("");
+      }}
+    >
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className={cn(
+            "flex shrink-0 items-center gap-1.5 border bg-paper text-[12px] transition-colors hover:border-plot-red/60",
+            compact ? "px-2 py-1" : "px-2.5 py-1",
+            active
+              ? "border-plot-red/60 text-plot-red"
+              : "border-paper-rule text-ink"
+          )}
+          aria-label="Filter by agent"
+        >
+          <FilterIcon className="size-3.5" aria-hidden />
+          <span className="font-medium">
+            {activeName ?? "All agents"}
+          </span>
+          <span className="font-mono tabular-nums text-ink-faint">
+            ·&nbsp;{active ? agentTotals.find((t) => t.id === active)?.count ?? 0 : total}
+          </span>
+          <ChevronDown className="size-3.5 text-ink-soft" aria-hidden />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        sideOffset={6}
+        className="flex w-64 flex-col p-0"
+      >
+        <div className="border-b border-paper-rule px-3 py-2">
+          <p className="mb-1.5 font-mono text-[11px] uppercase tracking-[0.08em] text-ink-soft">
+            Filter by agent
+          </p>
+          <input
+            type="text"
+            autoFocus
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search agents…"
+            className="w-full border border-paper-rule bg-paper px-2 py-1 text-[12px] text-ink outline-none placeholder:text-ink-faint focus:border-plot-red"
+          />
+        </div>
+        <ul className="max-h-[50vh] overflow-y-auto">
+          <li>
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                setQuery("");
+                onPick(null);
+              }}
+              className={cn(
+                "flex w-full items-center justify-between gap-3 border-b border-paper-rule px-3 py-2 text-left text-[13px] transition-colors hover:bg-paper-sunk",
+                !active && "bg-plot-red/10 text-plot-red"
+              )}
+            >
+              <span className="font-medium">All agents</span>
+              <span className="font-mono tabular-nums text-ink-faint">
+                {total}
+              </span>
+            </button>
+          </li>
+          {filtered.length === 0 ? (
+            <li className="px-3 py-3 text-center text-[12px] text-ink-faint">
+              No agents match.
+            </li>
+          ) : (
+            filtered.map((a) => (
+              <li key={a.id}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOpen(false);
+                    setQuery("");
+                    onPick(a.id);
+                  }}
+                  className={cn(
+                    "flex w-full items-center justify-between gap-3 border-b border-paper-rule px-3 py-2 text-left text-[13px] transition-colors last:border-b-0 hover:bg-paper-sunk",
+                    active === a.id && "bg-plot-red/10 text-plot-red"
+                  )}
+                >
+                  <span className="truncate font-medium">{a.name}</span>
+                  <span className="font-mono tabular-nums text-ink-faint">
+                    {a.count}
+                  </span>
+                </button>
+              </li>
+            ))
+          )}
+        </ul>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/**
+ * Empty state — no active sessions in any bucket. Two paths:
+ *
+ *   - Workforce has at least one agent (the normal case post-Acme
+ *     auto-materialization): show a picker so the user can start a
+ *     fresh chat. Without this, a clean install lands on Home with
+ *     "Nothing's running" and no way to reach the chat UI.
+ *   - Zero agents (the user deleted everything, including Acme): point
+ *     them at the Agents page to recreate one.
+ */
+function EmptyState({ compact }: { compact: boolean }) {
+  const [agents, setAgents] = useState<AgentPickerEntry[] | null>(null);
+  useEffect(() => {
+    const ctrl = new AbortController();
+    fetch(`${API_BASE}/api/agents`, { signal: ctrl.signal })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(r.statusText))))
+      .then((list: AgentPickerEntry[]) => setAgents(list))
+      .catch(() => {
+        if (!ctrl.signal.aborted) setAgents([]);
+      });
+    return () => ctrl.abort();
+  }, []);
+
+  // Loading: keep the layout stable while the fetch resolves.
+  if (agents === null) {
+    return (
+      <div className="px-6 py-12 text-center font-mono text-[11px] uppercase tracking-[0.08em] text-ink-faint">
+        Loading&hellip;
+      </div>
+    );
+  }
+
+  if (agents.length === 0) {
+    return (
+      <div className="px-6 py-12 text-center">
+        <p className="font-mono text-[12px] uppercase tracking-[0.08em] text-ink-soft">
+          No agents in your workforce.
+        </p>
+        <p className="mt-2 text-sm text-ink-faint">
+          Recreate one to get started.
+        </p>
+        <div className="mt-4">
+          <Button asChild>
+            <Link href="/agents">Create an agent</Link>
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // Compact rail: just the picker, tighter padding. Non-compact: full
+  // landing with copy + picker.
+  return (
+    <div className={cn("text-center", compact ? "px-3 py-6" : "px-6 py-10")}>
+      {!compact && (
+        <>
+          <p className="font-mono text-[12px] uppercase tracking-[0.08em] text-ink-soft">
+            Start a chat
+          </p>
+          <p className="mx-auto mt-2 max-w-md text-sm text-ink-faint">
+            Pick an agent to begin. Your workforce will populate this page as
+            sessions and tasks come online.
+          </p>
+        </>
+      )}
+      <ul
+        className={cn(
+          "mx-auto mt-6 grid gap-2",
+          compact ? "max-w-full" : "max-w-md"
+        )}
+      >
+        {agents.map((a) => (
+          <li key={a.id}>
+            <Link
+              href={`/?agent=${encodeURIComponent(a.id)}`}
+              className="group flex items-start gap-3 border border-paper-rule bg-paper px-3 py-2.5 text-left transition-colors hover:border-plot-red hover:bg-paper-sunk"
+            >
+              <MessageSquarePlus
+                className="mt-0.5 size-4 shrink-0 text-ink-soft group-hover:text-plot-red"
+                aria-hidden
+              />
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-[13px] font-medium text-ink">
+                  {a.name}
+                </div>
+                {a.role && (
+                  <div className="mt-0.5 line-clamp-2 text-[12px] text-ink-soft">
+                    {a.role}
+                  </div>
+                )}
+              </div>
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export function HomeView({ compact = false }: { compact?: boolean } = {}) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const activeSessionId = searchParams.get("session") ?? null;
+  // Filter the three buckets to one agent. URL-backed (`?agentFilter=`)
+  // so refresh and shared links survive. Orthogonal to ?session / ?agent
+  // — picking a chip never changes which chat is open. Null = show all.
+  const agentFilter = searchParams.get("agentFilter");
   const { payload, loading, error } = useHomeStream();
 
   // Build a lookup of sessionId → agentId so the row click can pin
@@ -246,6 +640,14 @@ export function HomeView({ compact = false }: { compact?: boolean } = {}) {
       ? `session=${encodeURIComponent(sid)}&agent=${encodeURIComponent(aid)}`
       : `session=${encodeURIComponent(sid)}`;
     router.push(`/?${qs}`);
+  };
+
+  const setAgentFilter = (next: string | null) => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (next == null) params.delete("agentFilter");
+    else params.set("agentFilter", next);
+    const qs = params.toString();
+    router.replace(qs ? `/?${qs}` : "/");
   };
 
   if (loading && !payload) {
@@ -294,66 +696,129 @@ export function HomeView({ compact = false }: { compact?: boolean } = {}) {
     >
       <div
         className={cn(
-          "border-b border-paper-rule",
+          "flex items-start justify-between gap-3 border-b border-paper-rule",
           compact ? "px-3 py-3" : "px-6 py-5"
         )}
       >
-        <h1
-          className={cn(
-            "text-ink",
-            compact ? "text-sm font-medium" : "text-lg font-medium"
+        <div className="min-w-0">
+          <h1
+            className={cn(
+              "text-ink",
+              compact ? "text-sm font-medium" : "text-lg font-medium"
+            )}
+          >
+            Home
+          </h1>
+          {!compact && (
+            <p className="mt-0.5 font-mono text-[11px] uppercase tracking-[0.08em] text-ink-soft">
+              Workforce activity at a glance
+            </p>
           )}
-        >
-          Home
-        </h1>
-        {!compact && (
-          <p className="mt-0.5 font-mono text-[11px] uppercase tracking-[0.08em] text-ink-soft">
-            Workforce activity at a glance
-          </p>
-        )}
+        </div>
+        <NewChatPopover compact={compact} />
       </div>
 
+      {!empty && payload && (() => {
+        // Per-agent totals from the UNFILTERED payload so chip counts
+        // don't zero out when a filter is active.
+        const totals = new Map<
+          string,
+          { name: string; count: number }
+        >();
+        for (const bucket of [
+          payload.waiting,
+          payload.running,
+          payload.idle,
+        ]) {
+          for (const s of bucket) {
+            const cur = totals.get(s.agentId);
+            if (cur) cur.count++;
+            else totals.set(s.agentId, { name: s.agentName, count: 1 });
+          }
+        }
+        // Single-agent slot: hide the filter entirely — scoping is
+        // noise when there's nothing to scope away from.
+        if (totals.size <= 1) return null;
+        const agentTotals = Array.from(totals.entries())
+          .map(([id, { name, count }]) => ({ id, name, count }))
+          .sort((a, b) => a.name.localeCompare(b.name));
+        return (
+          <div
+            className={cn(
+              "border-b border-paper-rule",
+              compact ? "px-3 py-2" : "px-6 py-3"
+            )}
+          >
+            <FilterByAgentPopover
+              agentTotals={agentTotals}
+              active={agentFilter}
+              onPick={setAgentFilter}
+              compact={compact}
+            />
+          </div>
+        );
+      })()}
+
       {empty ? (
-        <div className="px-6 py-12 text-center">
-          <p className="font-mono text-[12px] uppercase tracking-[0.08em] text-ink-soft">
-            Nothing&apos;s running right now.
-          </p>
-          <p className="mt-2 text-sm text-ink-faint">
-            Create an agent, give it a task, and this page will fill in as
-            work happens.
-          </p>
-        </div>
-      ) : (
-        <>
-          <Section
-            title="Waiting on you"
-            hint="oldest first"
-            icon={Bell}
-            sessions={payload!.waiting}
-            onPick={pick}
-            compact={compact}
-            activeSessionId={activeSessionId}
-          />
-          <Section
-            title="Running"
-            hint="live"
-            icon={CircleDot}
-            sessions={payload!.running}
-            onPick={pick}
-            compact={compact}
-            activeSessionId={activeSessionId}
-          />
-          <Section
-            title="Idle"
-            hint="with pending work"
-            icon={Pause}
-            sessions={payload!.idle}
-            onPick={pick}
-            compact={compact}
-            activeSessionId={activeSessionId}
-          />
-        </>
-      )}
+        <EmptyState compact={compact} />
+      ) : (() => {
+        const apply = (b: SessionSummary[]) =>
+          agentFilter ? b.filter((s) => s.agentId === agentFilter) : b;
+        const w = apply(payload!.waiting);
+        const r = apply(payload!.running);
+        const i = apply(payload!.idle);
+        // Filter active + nothing left in any bucket → tell the user
+        // explicitly rather than dropping into a blank pane.
+        if (agentFilter && w.length === 0 && r.length === 0 && i.length === 0) {
+          const name =
+            payload!.waiting.find((s) => s.agentId === agentFilter)?.agentName ??
+            payload!.running.find((s) => s.agentId === agentFilter)?.agentName ??
+            payload!.idle.find((s) => s.agentId === agentFilter)?.agentName ??
+            agentFilter;
+          return (
+            <div
+              className={cn(
+                "text-center font-mono text-[11px] uppercase tracking-[0.08em] text-ink-faint",
+                compact ? "px-3 py-8" : "px-6 py-12"
+              )}
+            >
+              No active sessions for {name}.
+            </div>
+          );
+        }
+        return (
+          <>
+            <Section
+              title="Waiting on you"
+              hint="oldest first"
+              icon={Bell}
+              sessions={w}
+              onPick={pick}
+              compact={compact}
+              activeSessionId={activeSessionId}
+            />
+            <Section
+              title="Running"
+              hint="live"
+              icon={CircleDot}
+              sessions={r}
+              onPick={pick}
+              compact={compact}
+              activeSessionId={activeSessionId}
+            />
+            <Section
+              title="Idle"
+              hint="with pending work"
+              icon={Pause}
+              sessions={i}
+              onPick={pick}
+              compact={compact}
+              activeSessionId={activeSessionId}
+            />
+          </>
+        );
+      })()}
     </div>
   );
 }
+

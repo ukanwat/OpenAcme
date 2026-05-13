@@ -12,8 +12,7 @@ export interface PickerItem {
 const DEFAULT_PAGE_SIZE = 10;
 
 /**
- * Generic single-select overlay used by ModelPicker / AgentPicker /
- * SessionPicker.
+ * Generic single-select overlay used by ModelPicker / AgentPicker.
  *
  * - Up/Down: move one row, clamped at top/bottom (no wrap).
  * - PageUp/PageDown: jump a page.

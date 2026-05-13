@@ -12,6 +12,12 @@ export interface PendingAttachment {
 }
 
 export interface AppState {
+  /**
+   * Workforce IA: the TUI lands on the sessions list (mirrors the web
+   * home page) and chat is a sub-view entered by picking a session or
+   * starting a new chat. Esc / `/sessions` returns to the list.
+   */
+  view: "sessions" | "chat";
   agentId: string;
   agentName: string;
   modelLabel: string;
@@ -26,7 +32,6 @@ export interface AppState {
   paletteOpen: boolean;
   modelPickerOpen: boolean;
   agentPickerOpen: boolean;
-  sessionPickerOpen: boolean;
   skillsOverlayOpen: boolean;
   mcpOverlayOpen: boolean;
   tasksOverlayOpen: boolean;
@@ -64,11 +69,11 @@ export type Action =
   | { type: "close-overlays" }
   | { type: "open-model-picker" }
   | { type: "open-agent-picker" }
-  | { type: "open-session-picker" }
   | { type: "open-skills-overlay" }
   | { type: "open-mcp-overlay" }
   | { type: "open-tasks-overlay" }
   | { type: "open-palette" }
+  | { type: "enter-sessions" }
   | { type: "attach-add"; attachment: PendingAttachment }
   | { type: "attach-remove"; sourcePath: string }
   | { type: "attach-clear" }
@@ -247,6 +252,7 @@ export function reducer(state: AppState, action: Action): AppState {
     case "new-session":
       return {
         ...state,
+        view: "chat",
         committed: [],
         inflight: null,
         sessionId: cryptoId(),
@@ -257,6 +263,21 @@ export function reducer(state: AppState, action: Action): AppState {
         pendingAttachments: [],
         attachNotice: undefined,
         lastError: undefined,
+      };
+    case "enter-sessions":
+      return {
+        ...state,
+        view: "sessions",
+        showHelp: false,
+        paletteOpen: false,
+        modelPickerOpen: false,
+        agentPickerOpen: false,
+        skillsOverlayOpen: false,
+        mcpOverlayOpen: false,
+        tasksOverlayOpen: false,
+        inflight: null,
+        pendingAttachments: [],
+        attachNotice: undefined,
       };
     case "clear":
       return { ...state, committed: [], inflight: null };
@@ -269,7 +290,6 @@ export function reducer(state: AppState, action: Action): AppState {
         paletteOpen: false,
         modelPickerOpen: false,
         agentPickerOpen: false,
-        sessionPickerOpen: false,
         skillsOverlayOpen: false,
         mcpOverlayOpen: false,
         tasksOverlayOpen: false,
@@ -278,8 +298,6 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, modelPickerOpen: true, paletteOpen: false };
     case "open-agent-picker":
       return { ...state, agentPickerOpen: true, paletteOpen: false };
-    case "open-session-picker":
-      return { ...state, sessionPickerOpen: true, paletteOpen: false };
     case "open-skills-overlay":
       return { ...state, skillsOverlayOpen: true, paletteOpen: false };
     case "open-mcp-overlay":
@@ -315,6 +333,7 @@ export function reducer(state: AppState, action: Action): AppState {
     case "set-agent":
       return {
         ...state,
+        view: "chat",
         agentId: action.agentId,
         agentName: action.agentName,
         modelLabel: action.modelLabel,
@@ -329,6 +348,7 @@ export function reducer(state: AppState, action: Action): AppState {
     case "set-session":
       return {
         ...state,
+        view: "chat",
         agentId: action.agentId,
         agentName: action.agentName,
         modelLabel: action.modelLabel,
@@ -337,7 +357,6 @@ export function reducer(state: AppState, action: Action): AppState {
         inflight: null,
         status: "idle",
         totalTokens: 0,
-        sessionPickerOpen: false,
         pendingAttachments: [],
         attachNotice: undefined,
       };
@@ -357,13 +376,16 @@ export function initState(opts: {
   agentName: string;
   modelLabel: string;
   sessionId: string;
+  view?: "sessions" | "chat";
+  committed?: UIMessage[];
 }): AppState {
   return {
+    view: opts.view ?? "sessions",
     agentId: opts.agentId,
     agentName: opts.agentName,
     modelLabel: opts.modelLabel,
     sessionId: opts.sessionId,
-    committed: [],
+    committed: opts.committed ?? [],
     inflight: null,
     status: "idle",
     totalTokens: 0,
@@ -371,7 +393,6 @@ export function initState(opts: {
     paletteOpen: false,
     modelPickerOpen: false,
     agentPickerOpen: false,
-    sessionPickerOpen: false,
     skillsOverlayOpen: false,
     mcpOverlayOpen: false,
     tasksOverlayOpen: false,
