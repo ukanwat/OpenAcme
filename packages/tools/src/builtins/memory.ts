@@ -62,7 +62,8 @@ const MemoryParams = z
         "Path under /memories. Required for view/create/str_replace/insert/delete."
       ),
     view_range: z
-      .tuple([z.number().int(), z.number().int()])
+      .array(z.number().int())
+      .length(2)
       .optional()
       .describe("view: optional [start, end] line range (1-indexed)"),
     file_text: z
@@ -168,7 +169,10 @@ registry.register({
     // Zod would have rejected the call upstream.
     switch (params.command) {
       case "view": {
-        return store.view(agentId, params.path!, params.view_range);
+        const range = params.view_range
+          ? ([params.view_range[0]!, params.view_range[1]!] as const)
+          : undefined;
+        return store.view(agentId, params.path!, range);
       }
 
       case "create": {
