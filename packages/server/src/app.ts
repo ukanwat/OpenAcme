@@ -17,7 +17,7 @@ import { authMiddleware } from "./middleware/auth.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerUploadsRoutes, type UploadsContext } from "./routes/uploads.js";
 import { registerTaskRoutes } from "./routes/tasks.js";
-import { registerSetupRoutes } from "./routes/setup.js";
+import { registerSetupRoutes, setDefaultModelIfUnset } from "./routes/setup.js";
 import { registerSkillsHubRoutes } from "./routes/skills-hub.js";
 import { registerAgentResourceRoutes } from "./routes/agent-resources.js";
 import { registerAgentCatalogRoutes } from "./routes/agent-catalog.js";
@@ -34,6 +34,7 @@ import {
   type Config,
   type AgentDefinition,
   type MCPServerConfig,
+  type Provider,
 } from "@openacme/config";
 import {
   listProviders,
@@ -86,7 +87,7 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
   // gate. The middleware also whitelists /api/auth/* and /login, but
   // mounting first is the belt to that suspenders.
   registerAuthRoutes(app, { secretSha256 });
-  registerSetupRoutes(app, { dataDir: config.dataDir });
+  registerSetupRoutes(app, { dataDir: config.dataDir, manager });
   app.use("/*", authMiddleware({ secretSha256 }));
 
   // Attachment upload + serve routes. The orphan map returned here is
@@ -1078,6 +1079,18 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
 
     // Also set in current process so it takes effect immediately
     process.env[envVar] = apiKey.trim();
+
+    // First-time provider setup: also seed the top-level `model` in
+    // config.yaml with a sensible default for this provider, so the
+    // platform default isn't `openrouter` (the schema fallback) when the
+    // user just signed in with someone else. `reloadConfig` evicts
+    // cached Agents so the inheriting platform agent (Acme) reflects
+    // the new model on the next chat — no restart needed.
+    setDefaultModelIfUnset(config.dataDir, {
+      provider: provider as Provider,
+      auth: "api_key",
+    });
+    manager.reloadConfig();
 
     return c.json({ success: true, envVar });
   });

@@ -1,6 +1,7 @@
 import { Agent, type AgentConfig } from "@openacme/agent-core";
 import {
   createAgentStore,
+  loadConfig,
   loadGlobalMcpServers,
   saveGlobalMcpServers,
   lookupModelMetadata,
@@ -819,6 +820,32 @@ export class AgentManager {
     return { agent: def, manifest };
   }
 
+  /**
+   * Materialize the platform-default Acme agent if the workforce is
+   * empty. Called at boot from both the server and the CLI chat paths
+   * so a fresh install lands with a working agent — the user doesn't
+   * need to run `openacme setup` first.
+   *
+   * Idempotent: gates on `agentStore.list().length === 0`. Once any
+   * agent exists (Acme or otherwise), this is a no-op. If the user
+   * deletes Acme but keeps other agents, it stays gone — deletion is
+   * intentional. If they delete every agent, Acme materializes on next
+   * boot (clean-slate semantics).
+   *
+   * Failure-tolerant: a busted catalog or skill install logs a warning
+   * and bails. The daemon keeps booting; subsequent boots retry.
+   */
+  async ensureDefaultAgents(): Promise<void> {
+    if (this.agentStore.list().length > 0) return;
+    try {
+      await this.importAgentFromTemplate("acme", {});
+    } catch (e) {
+      console.warn(
+        `Failed to materialize default Acme agent: ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+  }
+
   /** Current AGENTS.md content, or undefined when the file is absent. */
   getAgentsMd(): string | undefined {
     return this.agentsMd;
@@ -829,6 +856,22 @@ export class AgentManager {
   setAgentsMd(content: string): void {
     writeAgentsMd(this.config.dataDir, content);
     this.agentsMd = readAgentsMd(this.config.dataDir);
+    this.agents.clear();
+  }
+
+  /**
+   * Re-read `config.yaml` from disk and evict cached Agents so the next
+   * chat picks up the new model / behavior / etc. Called by setup paths
+   * (web `/api/setup/*` and `/api/keys`) after they write a top-level
+   * `model` to config so the bundled Acme agent (which inherits the
+   * platform default) reflects the just-saved provider immediately —
+   * without forcing the user to restart the daemon.
+   *
+   * Doesn't reload skills, the agent store, or MCP — those have their
+   * own refresh paths.
+   */
+  reloadConfig(): void {
+    this.config = loadConfig(this.config.dataDir);
     this.agents.clear();
   }
 

@@ -7,9 +7,51 @@ import {
   loginWithClaudeCodeCredentials,
   looksHeadless,
 } from "@openacme/auth";
+import { readRawConfig, writeRawConfig, type Provider, type AuthMode } from "@openacme/config";
+import { DEFAULT_MODEL_BY_PROVIDER } from "@openacme/llm-provider";
+import type { AgentManager } from "../agent-manager.js";
 
 export interface SetupRoutesOptions {
   dataDir: string;
+  /** Set by `createApp` so setup endpoints can refresh AgentManager's
+   *  cached `config` after writing a new default model to config.yaml.
+   *  Without this, the platform default model the agents see stays stale
+   *  until the daemon restarts. */
+  manager: AgentManager;
+}
+
+/**
+ * Write a top-level `model` to config.yaml when the user finishes setting
+ * up a provider, BUT only if no `model` is already configured. Picks the
+ * recommended default from `DEFAULT_MODEL_BY_PROVIDER` so the agent that
+ * inherits the platform default (e.g. the bundled Acme) doesn't fall back
+ * to the schema's `openrouter` default after a user signed in with a
+ * different provider.
+ *
+ * Idempotent + non-destructive: if the user already has a model set
+ * (manually, or from a previous setup run), we leave it alone.
+ */
+export function setDefaultModelIfUnset(
+  dataDir: string,
+  opts: { provider: Provider; auth: AuthMode; baseUrl?: string }
+): void {
+  const raw = readRawConfig(dataDir);
+  const existing = raw.model as { model?: unknown } | undefined;
+  if (existing && typeof existing === "object" && typeof existing.model === "string" && existing.model) {
+    return;
+  }
+  const modelId = DEFAULT_MODEL_BY_PROVIDER[opts.provider];
+  if (!modelId) return;
+  const next: Record<string, unknown> = {
+    ...raw,
+    model: {
+      provider: opts.provider,
+      model: modelId,
+      auth: opts.auth,
+      ...(opts.baseUrl ? { baseUrl: opts.baseUrl } : {}),
+    },
+  };
+  writeRawConfig(dataDir, next);
 }
 
 /**
@@ -53,6 +95,8 @@ export function registerSetupRoutes(app: Hono, opts: SetupRoutesOptions): void {
         dataDir: opts.dataDir,
         flow: "browser",
       });
+      setDefaultModelIfUnset(opts.dataDir, { provider: "openai", auth: "oauth" });
+      opts.manager.reloadConfig();
       return c.json({ success: true, email: result.email ?? null });
     } catch (e) {
       return c.json(
@@ -80,6 +124,8 @@ export function registerSetupRoutes(app: Hono, opts: SetupRoutesOptions): void {
       if (!result) {
         return c.json({ error: "no Claude Code credentials found" }, 404);
       }
+      setDefaultModelIfUnset(opts.dataDir, { provider: "anthropic", auth: "oauth" });
+      opts.manager.reloadConfig();
       return c.json({ imported: true });
     } catch (e) {
       return c.json(

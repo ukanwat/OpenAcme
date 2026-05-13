@@ -15,6 +15,7 @@ import {
   listProviders,
   MODEL_PRESETS,
   CUSTOM_MODEL_ID,
+  DEFAULT_MODEL_BY_PROVIDER,
   type ProviderInfo,
 } from "@openacme/llm-provider";
 import {
@@ -150,6 +151,8 @@ async function addAgentReusingProvider(
       if (!trimmed) return "Required";
       if (!SAFE_AGENT_ID.test(trimmed))
         return "Use letters, digits, _ . - (no leading dot or slashes)";
+      if (trimmed === "acme")
+        return 'id "acme" is reserved for the platform agent';
       if (taken.has(trimmed)) return `id "${trimmed}" is already taken`;
       return undefined;
     },
@@ -254,9 +257,19 @@ async function configureProviderAndCreateAgent(
     return;
   }
 
-  // 3. Model
-  const modelId = await pickModel(provider.id);
-  if (modelId === "cancelled") return cancel();
+  // 3. Model — auto-pick the recommended default for this provider on
+  // first run; user can change later via the web UI's model picker or by
+  // editing config.yaml. `custom` is the one case where there's no
+  // sensible default — fall back to the interactive picker.
+  const defaultModel = DEFAULT_MODEL_BY_PROVIDER[provider.id];
+  let modelId: string;
+  if (defaultModel) {
+    modelId = defaultModel;
+  } else {
+    const picked = await pickModel(provider.id);
+    if (picked === "cancelled") return cancel();
+    modelId = picked;
+  }
 
   const modelConfig = {
     provider: provider.id as Provider,
@@ -294,11 +307,20 @@ async function configureProviderAndCreateAgent(
   const spin = p.spinner();
   spin.start("Saving configuration");
 
-  let savedAgent: AgentDefinition;
+  // First-run flag: no existing agents AND nothing got replaced. In that
+  // case the wizard only records the provider + top-level model in
+  // config.yaml; agent creation is the daemon's job — AgentManager
+  // materializes the Acme platform agent on first boot.
+  const isFirstRun = !firstAgent;
+
+  let savedAgent: AgentDefinition | null = null;
   let savedAction: string;
 
   if (mode === "add") {
     const taken = new Set(existingAgents.map((a) => a.id));
+    // Reserve `acme` so a user-added agent can't shadow the platform
+    // agent (which materializes on first boot).
+    taken.add("acme");
     let newId: string = provider.id;
     let suffix = 2;
     while (taken.has(newId)) {
@@ -322,30 +344,27 @@ async function configureProviderAndCreateAgent(
     savedAgent = { ...firstAgent, model: modelConfig };
     savedAction = `Updated agent: ${firstAgent.id}`;
   } else {
-    savedAgent = {
-      id: "default",
-      name: "Default Agent",
-      role: "",
-      model: modelConfig,
-      persona: DEFAULT_PERSONA,
-      tools: DEFAULT_TOOLS,
-      mcpServers: {},
-      mcpDisabled: [],
-      skills: [],
-      probeIntervalMs: 30 * 60 * 1000,
-    };
-    savedAction = `Created agent: ${savedAgent.id}`;
+    // First run: don't create an agent. The daemon's
+    // `ensureDefaultAgents()` will import the Acme template on first
+    // boot, inheriting the model we're about to write to config.yaml.
+    savedAction = "Configured provider";
   }
 
   try {
-    agentStore.upsert(savedAgent);
+    if (savedAgent) {
+      agentStore.upsert(savedAgent);
+    }
 
     // Update config.yaml's top-level `model` (platform default for newly-
-    // created agents) and strip the legacy `agents:` block if present.
+    // created agents, including the auto-imported Acme) and strip the
+    // legacy `agents:` block if present.
     const existingConfig = readRawConfig(dataDir);
     const merged: Record<string, unknown> = {
       ...existingConfig,
-      model: mode === "replace" ? modelConfig : (existingConfig.model ?? modelConfig),
+      model:
+        mode === "replace" || isFirstRun
+          ? modelConfig
+          : (existingConfig.model ?? modelConfig),
     };
     delete merged.agents;
     writeRawConfig(dataDir, merged);
@@ -364,16 +383,22 @@ async function configureProviderAndCreateAgent(
     `Provider: ${provider.name}`,
     `Model: ${modelId}`,
     `Auth: ${auth.mode === "oauth" ? "OAuth subscription" : "API key"}`,
-    `Agent id: ${savedAgent.id}`,
-    `Agent file: ${path.join(agentsDir, savedAgent.id, "AGENT.md")}`,
-    `Config: ${path.join(dataDir, "config.yaml")}`,
   ];
+  if (savedAgent) {
+    summaryLines.push(`Agent id: ${savedAgent.id}`);
+    summaryLines.push(`Agent file: ${path.join(agentsDir, savedAgent.id, "AGENT.md")}`);
+  }
+  summaryLines.push(`Config: ${path.join(dataDir, "config.yaml")}`);
   if (auth.mode === "oauth") summaryLines.push(`Tokens: ${path.join(dataDir, "auth.json")}`);
   if (auth.mode === "api_key" && provider.envVar) summaryLines.push(`API key: ${path.join(dataDir, ".env")}`);
   summaryLines.push(`MCP servers: ${path.join(dataDir, "mcp.json")} — paste any Claude Desktop / Cursor config to add`);
   p.note(summaryLines.join("\n"), "Summary");
 
-  p.outro("Setup complete! Run: openacme start");
+  p.outro(
+    isFirstRun
+      ? "Setup complete! Run `openacme start` — Acme, your platform helper, will be ready in the agent picker."
+      : "Setup complete! Run: openacme start"
+  );
 }
 
 function titleCase(s: string): string {

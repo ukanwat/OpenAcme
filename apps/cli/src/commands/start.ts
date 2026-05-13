@@ -1,6 +1,5 @@
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
-import * as path from "node:path";
 import {
   loadConfig,
   resolveDataDir,
@@ -8,7 +7,6 @@ import {
   readSecret,
   readRawConfig,
   writeRawConfig,
-  createAgentStore,
 } from "@openacme/config";
 import {
   getPlatformLifecycle,
@@ -70,13 +68,10 @@ export async function startCommand(opts: StartOpts): Promise<void> {
   const port = config.server.port;
   const url = userFacingUrl(host, port);
 
-  // Setup gate — refuse to start without a configured agent.
-  const agents = createAgentStore(path.join(dataDir, "agents")).list();
-  if (agents.length === 0) {
-    console.error("No agents configured.");
-    console.error("Run `openacme setup` to configure your first agent.");
-    process.exit(1);
-  }
+  // No agent gate here — the daemon's `ensureDefaultAgents()` materializes
+  // the Acme platform agent on first boot from an empty workforce. If
+  // provider auth is missing the daemon still boots; chat fails with a
+  // self-explanatory auth error which is the right surface for that case.
 
   // Non-loopback binding requires a secret for the auth middleware.
   let freshSecret: string | null = null;

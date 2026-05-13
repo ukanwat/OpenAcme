@@ -176,3 +176,77 @@ describe("AgentManager.importAgentFromTemplate (bundled Coder)", () => {
     }
   });
 });
+
+/**
+ * First-boot materialization. Covers the path that lets a fresh install
+ * land with a working Acme agent without the user running setup.
+ */
+describe("AgentManager.ensureDefaultAgents", () => {
+  let dataDir: string;
+  let manager: AgentManager;
+
+  beforeEach(() => {
+    dataDir = mkdtempSync(path.join(tmpdir(), "openacme-acme-"));
+    manager = new AgentManager(ConfigSchema.parse({ dataDir }));
+  });
+
+  afterEach(async () => {
+    await manager.close();
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it("materializes Acme on an empty workforce", async () => {
+    expect(manager.listAgents()).toHaveLength(0);
+
+    await manager.ensureDefaultAgents();
+
+    const agents = manager.listAgents();
+    expect(agents).toHaveLength(1);
+    const acme = agents[0]!;
+    expect(acme.id).toBe("acme");
+    expect(acme.name).toBe("Acme");
+
+    // Agent folder
+    expect(existsSync(path.join(dataDir, "agents", "acme", "AGENT.md"))).toBe(true);
+    expect(existsSync(path.join(dataDir, "agents", "acme", "workspace"))).toBe(true);
+
+    // Bundled skill landed
+    expect(existsSync(path.join(dataDir, "skills", "openacme-platform", "SKILL.md")))
+      .toBe(true);
+
+    // Resources copied
+    expect(
+      existsSync(path.join(dataDir, "agents", "acme", "resources", "example-agent.md"))
+    ).toBe(true);
+    expect(
+      existsSync(path.join(dataDir, "agents", "acme", "resources", "example-skill.md"))
+    ).toBe(true);
+    expect(
+      existsSync(path.join(dataDir, "agents", "acme", "resources", "example-mcp.md"))
+    ).toBe(true);
+    expect(
+      existsSync(path.join(dataDir, "agents", "acme", "resources", "cli-commands.md"))
+    ).toBe(true);
+    expect(
+      existsSync(path.join(dataDir, "agents", "acme", "resources", "onboarding-task.md"))
+    ).toBe(true);
+  });
+
+  it("is idempotent — second call does not duplicate the agent", async () => {
+    await manager.ensureDefaultAgents();
+    await manager.ensureDefaultAgents();
+    expect(manager.listAgents()).toHaveLength(1);
+  });
+
+  it("does not re-materialize when other agents exist", async () => {
+    // Pretend a user-added agent showed up before Acme.
+    await manager.importAgentFromTemplate("coder", {});
+    expect(manager.listAgents().map((a) => a.id)).toEqual(["coder"]);
+
+    await manager.ensureDefaultAgents();
+
+    // Acme stays out — the gate fires only when the workforce is empty.
+    expect(manager.listAgents().map((a) => a.id)).toEqual(["coder"]);
+    expect(existsSync(path.join(dataDir, "agents", "acme"))).toBe(false);
+  });
+});
