@@ -95,6 +95,12 @@ function SessionRow({ s, onClick, compact, active }: RowProps) {
       : s.status === "running"
         ? "Running"
         : "Idle";
+  const statusTextColor =
+    s.status === "waiting"
+      ? "text-plot-red"
+      : s.status === "running"
+        ? "text-amber-600 dark:text-amber-400"
+        : "text-ink-soft";
 
   if (compact) {
     return (
@@ -148,7 +154,12 @@ function SessionRow({ s, onClick, compact, active }: RowProps) {
     >
       <div className="flex w-32 shrink-0 items-center gap-2 pt-0.5">
         <span className={cn("status-dot", statusDot)} aria-hidden />
-        <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-soft">
+        <span
+          className={cn(
+            "font-mono text-[10px] uppercase tracking-[0.08em]",
+            statusTextColor
+          )}
+        >
           {statusLabel}
         </span>
       </div>
@@ -203,6 +214,7 @@ function Section({
   title,
   hint,
   icon: Icon,
+  tone,
   sessions,
   onPick,
   compact,
@@ -211,12 +223,19 @@ function Section({
   title: string;
   hint?: string;
   icon: React.ComponentType<{ className?: string }>;
+  tone: "waiting" | "running" | "idle";
   sessions: SessionSummary[];
   onPick: (sid: string) => void;
   compact: boolean;
   activeSessionId: string | null;
 }) {
   if (sessions.length === 0) return null;
+  const toneColor =
+    tone === "waiting"
+      ? "text-plot-red"
+      : tone === "running"
+        ? "text-amber-600 dark:text-amber-400"
+        : "text-ink-soft";
   return (
     <section className={compact ? "mt-3" : "mt-6"}>
       <div
@@ -225,7 +244,12 @@ function Section({
           compact ? "px-3" : "px-6"
         )}
       >
-        <h2 className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.10em] text-ink-soft">
+        <h2
+          className={cn(
+            "flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.10em]",
+            toneColor
+          )}
+        >
           <Icon className="size-3.5" aria-hidden />
           {title}
           <span className="font-mono text-ink-faint">·</span>
@@ -792,6 +816,7 @@ export function HomeView({ compact = false }: { compact?: boolean } = {}) {
               title="Waiting on you"
               hint="oldest first"
               icon={Bell}
+              tone="waiting"
               sessions={w}
               onPick={pick}
               compact={compact}
@@ -801,6 +826,7 @@ export function HomeView({ compact = false }: { compact?: boolean } = {}) {
               title="Running"
               hint="live"
               icon={CircleDot}
+              tone="running"
               sessions={r}
               onPick={pick}
               compact={compact}
@@ -810,6 +836,7 @@ export function HomeView({ compact = false }: { compact?: boolean } = {}) {
               title="Idle"
               hint="with pending work"
               icon={Pause}
+              tone="idle"
               sessions={i}
               onPick={pick}
               compact={compact}
