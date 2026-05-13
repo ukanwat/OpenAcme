@@ -304,13 +304,11 @@ export class Agent {
       status: "in_progress",
     })[0];
 
-    // Build the autonomous user message with this turn's "Recent
-    // activity" snapshot inline. We do NOT bake recent activity into
-    // the cached system prompt — that would leak stale snapshots into
-    // subsequent interactive turns and into sessions.system_prompt.
-    // Read the cursor at turn start; advance it (in finally) to the
-    // max event ts we actually saw, so events from the same wall-clock
-    // second don't get silently skipped by `gt(...)` in the next turn.
+    // Recent-activity snapshot goes inline in the user message, not in
+    // the cached system prompt — otherwise stale snapshots would leak
+    // into subsequent interactive turns and sessions.system_prompt.
+    // Cursor advances to the max rendered ts (not wall-clock) so events
+    // at the same second aren't dropped by the next turn's `gt(...)`.
     const lastSeen = this.sessionStore.getLastSeenEventTs(opts.sessionId) ?? 0;
     let maxRenderedTs = lastSeen;
     let recentActivity = "";
@@ -395,15 +393,12 @@ export class Agent {
       ];
     }
 
-    // Mid-turn event injection: between LLM steps, surface any new
-    // events that landed since the turn started (or since the last
-    // injection). Echo-suppress events caused by this agent (their
-    // `actor` matches `this.config.id`). Cursor advances on the MAX
-    // event ts actually rendered (not wall-clock) so events at the
-    // same second don't get dropped by the next `gt(...)` query.
-    // Injected as a `user` message wrapping a <system-reminder> block —
-    // mid-stream `system` role messages are non-standard for Anthropic
-    // and break prefix prompt-cache anyway.
+    // Mid-turn event injection: between LLM steps, surface new events
+    // that landed since the last injection, excluding self-authored
+    // (echo). Cursor advances on the max ts rendered, not wall-clock,
+    // so same-second events aren't lost by the next `gt(...)` query.
+    // Wrapped in a `user` role message — mid-stream `system` role is
+    // non-standard for Anthropic and breaks prefix prompt-cache.
     let injectionCount = 0;
     let injectionCursor = lastSeen;
     const MAX_INJECTIONS = 5;
@@ -416,14 +411,19 @@ export class Agent {
       if (stepOpts.stepNumber === 0) return undefined;
       if (injectionCount >= MAX_INJECTIONS) return undefined;
       try {
-        const fresh = turnTaskStore
-          .recentEventsForSession(turnSessionId, turnAgentId, injectionCursor)
-          .filter((e) => e.actor !== turnAgentId);
+        const fresh = turnTaskStore.recentEventsForSession(
+          turnSessionId,
+          turnAgentId,
+          injectionCursor,
+          { excludeActor: turnAgentId }
+        );
         if (fresh.length === 0) return undefined;
         const formatted = turnTaskStore.renderRecentActivity(
           turnSessionId,
           turnAgentId,
-          injectionCursor
+          injectionCursor,
+          new Date(),
+          { excludeActor: turnAgentId }
         );
         if (!formatted) return undefined;
         let maxTs = injectionCursor;

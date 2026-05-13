@@ -589,6 +589,121 @@ describe("TaskStore recurrence", () => {
     expect(closed.closed_at).toBeTruthy();
   });
 
+  it("addComment emits comment_added with a single-line ≤80-char excerpt", async () => {
+    const { commentStore, eventStore, events } = makeStores();
+    const s = new TaskStore(dir, { commentStore, eventStore });
+    const t = await s.create({ title: "x", assignee: "a", created_by: "a" });
+    events.length = 0;
+    const longMulti =
+      "Line one with detail.\n  Line two — even more detail.\n\nThird paragraph that runs on and on and on past the cap.";
+    await s.addComment({ taskId: t.id, author: "u", body: longMulti });
+    const ev = events.find((e) => e.kind === "comment_added");
+    expect(ev).toBeTruthy();
+    const excerpt = (ev!.payload as { excerpt: string }).excerpt;
+    expect(excerpt.length).toBeLessThanOrEqual(80);
+    expect(excerpt).not.toContain("\n");
+    expect(excerpt.startsWith("Line one with detail.")).toBe(true);
+  });
+
+  it("renderRecentActivity excludeActor drops events caused by that actor", async () => {
+    const { commentStore, eventStore } = makeStores();
+    const s = new TaskStore(dir, { commentStore, eventStore });
+    const t = await s.create({
+      title: "x",
+      assignee: "owner",
+      created_by: "owner",
+      session_id: "sX",
+    });
+    // owner adds a self comment (actor=owner) and outsider adds another.
+    await s.addComment({ taskId: t.id, author: "owner", body: "self note" });
+    await s.addComment({ taskId: t.id, author: "outsider", body: "from elsewhere" });
+
+    // Unfiltered: task_assigned + 2 comment_added → 3 lines.
+    const full = s.renderRecentActivity("sX", "owner", 0);
+    expect(full.split("\n").length).toBe(3);
+
+    // excludeActor=owner: task_assigned has actor=null (kept), owner's
+    // self comment dropped, outsider's kept → 2 lines.
+    const filtered = s.renderRecentActivity("sX", "owner", 0, new Date(), {
+      excludeActor: "owner",
+    });
+    expect(filtered.split("\n").length).toBe(2);
+    expect(filtered).toContain("comment by outsider");
+    expect(filtered).not.toContain("comment by owner");
+  });
+
+  it("rejects create with an unknown session_id when validateSession is wired", async () => {
+    const known = new Set<string>(["real-session"]);
+    const s = new TaskStore(dir, {
+      validateSession: (id) => known.has(id),
+    });
+    await expect(
+      s.create({
+        title: "x",
+        assignee: "a",
+        created_by: "a",
+        session_id: "ghost-uuid",
+      })
+    ).rejects.toMatchObject({ code: "unknown_session" });
+
+    // Known session works.
+    const t = await s.create({
+      title: "y",
+      assignee: "a",
+      created_by: "a",
+      session_id: "real-session",
+    });
+    expect(t.session_id).toBe("real-session");
+  });
+
+  it("rejects update binding to an unknown session_id", async () => {
+    const known = new Set<string>(["s1"]);
+    const s = new TaskStore(dir, {
+      validateSession: (id) => known.has(id),
+    });
+    const t = await s.create({ title: "x", assignee: "a", created_by: "a" });
+    await expect(
+      s.update(t.id, { session_id: "ghost" })
+    ).rejects.toMatchObject({ code: "unknown_session" });
+    // Detaching to null is always permitted.
+    const detached = await s.update(t.id, { session_id: null });
+    expect(detached.session_id).toBeNull();
+  });
+
+  it("recurring task done emits task_completed_run before status_changed (in_progress → open)", async () => {
+    const { commentStore, eventStore, events } = makeStores();
+    const s = new TaskStore(dir, { commentStore, eventStore });
+    const t = await s.create({
+      title: "daily",
+      assignee: "x",
+      created_by: "x",
+      recurrence: { kind: "interval", every_ms: 60_000, session: "fresh" },
+    });
+    await s.update(t.id, { status: "in_progress" });
+    // Drain events emitted by create + first transition so we only check the
+    // close sequence below.
+    events.length = 0;
+
+    const closed = await s.update(t.id, { status: "done" });
+    expect(closed.status).toBe("open");
+    expect(closed.runs).toBe(1);
+
+    const kinds = events.map((e) => e.kind);
+    const completedIdx = kinds.indexOf("task_completed_run");
+    const statusIdx = kinds.indexOf("status_changed");
+    expect(completedIdx).toBeGreaterThanOrEqual(0);
+    expect(statusIdx).toBeGreaterThan(completedIdx);
+
+    const completed = events[completedIdx]!;
+    expect(completed.payload).toMatchObject({ runs: 1 });
+    expect(typeof (completed.payload as { next_fire?: string }).next_fire).toBe(
+      "string"
+    );
+
+    const status = events[statusIdx]!;
+    expect(status.payload).toMatchObject({ from: "in_progress", to: "open" });
+  });
+
   it("recurring task done: dependents do NOT unblock on transient close", async () => {
     const a = await store.create({
       title: "recurring-a",
@@ -728,12 +843,34 @@ function makeStores() {
     },
   };
 
-  const events: (EventInput & { ts: number })[] = [];
+  const events: (EventInput & { ts: number; id: string })[] = [];
   const eventStore: EventStorePort = {
     append(input: EventInput) {
-      const row = { ...input, ts: Date.now() };
+      const row = {
+        ...input,
+        ts: Date.now(),
+        id: randomUUID(),
+      };
       events.push(row);
       return row;
+    },
+    recentForTasks(taskIds: string[], sinceTs: number, limit = 20) {
+      const want = new Set(taskIds);
+      // Convert internal rows to TaskEvent shape — createdAt is unix-seconds.
+      return events
+        .filter((e) => want.has(e.taskId))
+        .filter((e) => Math.floor(e.ts / 1000) > sinceTs)
+        .sort((a, b) => b.ts - a.ts)
+        .slice(0, limit)
+        .map((e) => ({
+          id: e.id,
+          taskId: e.taskId,
+          agentId: e.agentId,
+          actor: e.actor ?? null,
+          kind: e.kind,
+          payload: e.payload !== undefined ? JSON.stringify(e.payload) : null,
+          createdAt: Math.floor(e.ts / 1000),
+        }));
     },
   };
 

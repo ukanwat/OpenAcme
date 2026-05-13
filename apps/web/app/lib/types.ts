@@ -61,6 +61,7 @@ export const EVENT_KINDS = [
   "comment_added",
   "task_deleted",
   "scheduler_action",
+  "task_completed_run",
 ] as const;
 export type EventKind = (typeof EVENT_KINDS)[number];
 

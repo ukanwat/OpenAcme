@@ -429,18 +429,16 @@ registry.register({
       });
     }
 
-    // Soft-warn check BEFORE the update — if the assignee is closing the
-    // task as `done` without leaving a result comment, hint that they
-    // probably want to leave one. We check before because after, the
-    // recurring-task self-reset path returns status: "open" even for a
-    // legitimate done call, so post-check would mis-fire.
+    // Soft-warn pre-check: closing as `done` without a result comment by
+    // this agent. Must check before update — recurring-task self-reset
+    // returns status:"open" for a legitimate done, so post-check misfires.
+    // Author-filter avoids treating a prior run's result as fresh.
     const closingDone = a.status === "done";
     let warnMissingResult = false;
     if (closingDone) {
       const existing = b.store.get(a.id);
       if (existing && existing.assignee === agentId) {
-        const result = b.store.latestResult(a.id);
-        warnMissingResult = result === null;
+        warnMissingResult = b.store.latestResult(a.id)?.author !== agentId;
       }
     }
 
@@ -456,8 +454,12 @@ registry.register({
             ? { session_id: a.session_id }
             : {}),
           depends_on: a.depends_on,
-          start_at: a.start_at,
-          due_at: a.due_at,
+          ...(Object.prototype.hasOwnProperty.call(a, "start_at")
+            ? { start_at: a.start_at }
+            : {}),
+          ...(Object.prototype.hasOwnProperty.call(a, "due_at")
+            ? { due_at: a.due_at }
+            : {}),
           ...(Object.prototype.hasOwnProperty.call(a, "recurrence")
             ? { recurrence: a.recurrence }
             : {}),
@@ -535,10 +537,8 @@ registry.register({
       });
     }
 
-    // Defensive gate: only "result" or unset is permitted via this tool.
-    // The Zod schema enforces this at the SDK boundary; this re-check
-    // catches any path that bypasses validation (direct handler invocation,
-    // tests, etc.) and prevents agents from forging system-authored entries.
+    // Belt-and-braces with the Zod schema — blocks any path that bypasses
+    // validation from forging system-authored comments.
     if (a.kind !== undefined && a.kind !== "result") {
       return JSON.stringify({
         ok: false,
@@ -592,8 +592,10 @@ registry.register({
 const TASK_COMMENTS_DESCRIPTION =
   "Read the discussion thread on a task. Returns comments oldest-first. " +
   "Use `kinds: [\"result\"]` to fetch only the canonical answer when you " +
-  "depend on this task and want the assignee's final output. Use `sinceTs` " +
-  "to read only what's new since you last looked.";
+  "depend on this task and want the assignee's final output. " +
+  "Use `kinds: [\"system\"]` to see scheduler annotations (timeout / error " +
+  "parks, watchdog notes) — useful when a task got stuck and you're checking " +
+  "what happened. Use `sinceTs` to read only what's new since you last looked.";
 
 registry.register({
   name: "task_comments",
@@ -637,9 +639,7 @@ registry.register({
     if (!b.store.get(a.id)) {
       return JSON.stringify({ ok: false, error: `Task ${a.id} not found.` });
     }
-    // Narrow incoming kind strings against the canonical CommentKind
-    // union (single source of truth: `COMMENT_KINDS` in @openacme/tasks).
-    // Unknown values get dropped silently — filter, not validate.
+    // Filter (not validate) — unknown kinds drop silently.
     const validKindSet = new Set<string>(COMMENT_KINDS);
     const kinds = a.kinds
       ? (a.kinds.filter((k) => validKindSet.has(k)) as CommentKind[])

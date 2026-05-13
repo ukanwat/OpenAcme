@@ -1,22 +1,15 @@
 /**
  * TaskScheduler — turns task state changes into autonomous agent turns.
  *
- * Uses `croner` for the wake primitive. One `Cron` per future-dated
- * task; tasks without `start_at` (or already due) are handled by the
- * immediate path on `poke()`. When recurring tasks land later, the
- * same `Cron` accepts a cron expression — no new wake mechanism.
+ * Event-driven: every TaskStore mutation emits an event; `onEvent` is
+ * the only runtime wake path. Time-based wakes use one `Cron` per
+ * future-dated task. A one-shot `startupSweep` handles the at-boot
+ * backlog. There is no periodic tick.
  *
- * Concurrency:
- *   - Per-agent serialization. Each agent has at most one in-flight
- *     turn; agents run in parallel. The `chains` map values are
- *     settle-only (never reject) so a thrown turn doesn't poison the
- *     next.
- *   - At-most-one-in_progress-per-session is enforced upstream by
- *     `TaskStore.update`; the scheduler doesn't double-check.
- *
- * Persistence:
- *   - Tasks are markdown files. Restart sweep resets stale in_progress
- *     tasks (older than 10 min) back to open so the queue picks them up.
+ * Concurrency: per-agent chain serializes the turns for one agent;
+ * agents run in parallel. Chain promises settle-only so a thrown turn
+ * doesn't poison the next. At-most-one-in_progress per session is
+ * enforced upstream by TaskStore.update.
  */
 
 import { Cron } from "croner";
@@ -26,12 +19,15 @@ import type { SessionStore } from "@openacme/db";
 import type { AgentManager } from "./agent-manager.js";
 
 const SESSION_WAKE_DEBOUNCE_MS = 7_000;
-// Floor on the gap between two wakes on the same session. With pure
-// event-driven scheduling (no periodic tick fallback), events that
-// arrive while a session is rate-limited are QUEUED — they fire when
-// the window opens. Originally 30s when the tick covered the gap; 10s
-// now to keep latency tolerable for users.
+// Floor between successive wakes on one session. Events arriving inside
+// the window are queued, not dropped.
 const SESSION_MIN_WAKE_INTERVAL_MS = 10_000;
+// Park back-off: failure-park and watchdog-park both set start_at this
+// far in the future, bounding the retry loop.
+const PARK_BACKOFF_MS = 5 * 60_000;
+// Watchdog: park the head-of-queue after this many consecutive turns
+// produced no in_progress claim. Distinct from the failure-park path.
+const MAX_NO_CLAIM_STREAK = 3;
 
 interface SessionWakeState {
   debounceTimer?: NodeJS.Timeout;
@@ -62,6 +58,13 @@ export class TaskScheduler {
   private chains = new Map<string, Promise<void>>();
   /** Sessions currently enqueued or running — avoid double-enqueue across rapid ticks. */
   private pendingSessions = new Set<string>();
+  /** Sessions with an in-flight interactive (/api/chat) turn. Treated
+   *  identically to `pendingSessions` for wake gating — autonomous turns
+   *  would otherwise race history persistence with the interactive turn. */
+  private interactiveBusy = new Set<string>();
+  /** Consecutive turns in a session that produced no in_progress claim.
+   *  Watchdog parks the head-of-queue task once this hits the limit. */
+  private noClaimStreak = new Map<string, number>();
   /** Per-session wake bookkeeping for debounce + rate-limit. */
   private wakeBySession = new Map<string, SessionWakeState>();
   // Defaults to true: events that fire before `start()` are dropped so
@@ -102,6 +105,8 @@ export class TaskScheduler {
       if (state.debounceTimer) clearTimeout(state.debounceTimer);
     }
     this.wakeBySession.clear();
+    this.interactiveBusy.clear();
+    this.noClaimStreak.clear();
   }
 
   /**
@@ -113,6 +118,19 @@ export class TaskScheduler {
   reconcile(): void {
     if (this.stopped) return;
     this.reconcileArmed(this.taskStore.list(), this.now());
+  }
+
+  markInteractiveBusy(sessionId: string): void {
+    this.interactiveBusy.add(sessionId);
+  }
+
+  clearInteractiveBusy(sessionId: string): void {
+    if (!this.interactiveBusy.delete(sessionId)) return;
+    const state = this.wakeBySession.get(sessionId);
+    if (state?.wakeRequestedDuringTurn) {
+      state.wakeRequestedDuringTurn = false;
+      this.scheduleWake(sessionId);
+    }
   }
 
   /**
@@ -130,6 +148,13 @@ export class TaskScheduler {
    *   6. Schedule the wake with `scheduleWake` — debounce coalesces
    *      bursts, rate-limit delays (does NOT drop) so busy sessions
    *      still hear about every event eventually.
+   *
+   * Echo policy reference (where bugs live): the echo check at step 4
+   * compares `event.actor` against the *wake target's* `agentId`, not
+   * against the event's task assignee. Same-agent cross-session
+   * fan-out events (`dep_unblocked`) must use `actor: null` at emit
+   * time or the target session never wakes. See `EventInput.actor` in
+   * @openacme/tasks/ports.ts for the emit-side contract.
    */
   async onEvent(event: TaskEvent): Promise<void> {
     if (this.stopped) return;
@@ -168,6 +193,22 @@ export class TaskScheduler {
     const session = this.sessionStore.get(sessionId);
     if (!session) {
       this.dropWakeState(sessionId);
+      // Defensive belt for the orphan task → deleted session case.
+      // The DELETE /api/sessions route walks tasks and nulls bindings;
+      // this catches races and direct-SQL paths (tests, migrations).
+      if (task.session_id === sessionId) {
+        try {
+          await this.taskStore.update(
+            task.id,
+            { session_id: null },
+            { actor: "system:scheduler" }
+          );
+        } catch (e) {
+          console.warn(
+            `TaskScheduler: failed to clear dangling session_id for ${task.id}: ${e instanceof Error ? e.message : String(e)}`
+          );
+        }
+      }
       return;
     }
 
@@ -196,7 +237,10 @@ export class TaskScheduler {
    */
   private scheduleWake(sessionId: string): void {
     const state = this.getOrInitWakeState(sessionId);
-    if (this.pendingSessions.has(sessionId)) {
+    if (
+      this.pendingSessions.has(sessionId) ||
+      this.interactiveBusy.has(sessionId)
+    ) {
       // A turn is running. Queue the wake to fire when it finishes.
       state.wakeRequestedDuringTurn = true;
       return;
@@ -223,7 +267,10 @@ export class TaskScheduler {
   }
 
   private fireWake(sessionId: string): void {
-    if (this.pendingSessions.has(sessionId)) {
+    if (
+      this.pendingSessions.has(sessionId) ||
+      this.interactiveBusy.has(sessionId)
+    ) {
       // Lost the race to a concurrent turn — queue for after-turn retry.
       const state = this.getOrInitWakeState(sessionId);
       state.wakeRequestedDuringTurn = true;
@@ -255,18 +302,6 @@ export class TaskScheduler {
     const s = this.wakeBySession.get(sessionId);
     if (s?.debounceTimer) clearTimeout(s.debounceTimer);
     this.wakeBySession.delete(sessionId);
-  }
-
-  /**
-   * Resolve which session should wake for an event. Bound tasks → that
-   * session. Unbound tasks → null (caller handles inline allocation).
-   * DON'T fall back to the assignee's most-recent session here — that
-   * triggers self-echo for tasks an agent created in their own session.
-   */
-  private resolveTargetSession(event: TaskEvent): string | null {
-    const task = this.taskStore.get(event.taskId);
-    if (!task) return null;
-    return task.session_id;
   }
 
   // ── Internals ─────────────────────────────────────────────────────
@@ -470,6 +505,24 @@ export class TaskScheduler {
 
     try {
       await agent.runAutonomous({ sessionId });
+      // Success path — check whether the agent claimed something this
+      // turn. If the streak hits the limit, the watchdog parks the
+      // head-of-queue task so a human notices the stall.
+      const claimed = this.taskStore.list({
+        session_id: sessionId,
+        status: "in_progress",
+      });
+      if (claimed.length > 0) {
+        this.noClaimStreak.delete(sessionId);
+      } else {
+        const next = (this.noClaimStreak.get(sessionId) ?? 0) + 1;
+        if (next >= MAX_NO_CLAIM_STREAK) {
+          await this.watchdogPark(sessionId, next);
+          this.noClaimStreak.delete(sessionId);
+        } else {
+          this.noClaimStreak.set(sessionId, next);
+        }
+      }
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       const isTimeout = e instanceof AutonomousTurnTimeout;
@@ -484,6 +537,35 @@ export class TaskScheduler {
           ? `turn timed out at ${this.now().toISOString()}`
           : `turn errored at ${this.now().toISOString()}: ${message}`,
       });
+      // A failure-park resolves the stall — start the streak fresh.
+      this.noClaimStreak.delete(sessionId);
+    }
+  }
+
+  /**
+   * Watchdog: after MAX_NO_CLAIM_STREAK turns produced no claim, park
+   * the head of the session's queue with a `system:scheduler` comment.
+   * Distinct from `parkInProgress`, which addresses tasks the agent
+   * DID claim and then failed on; this one addresses tasks the agent
+   * never engaged with at all.
+   */
+  private async watchdogPark(
+    sessionId: string,
+    streak: number
+  ): Promise<void> {
+    const head = this.taskStore.nextEligibleFor(sessionId, this.now());
+    if (!head) return;
+    const retryAt = new Date(this.now().getTime() + PARK_BACKOFF_MS);
+    try {
+      await this.taskStore.park({
+        id: head.id,
+        retryAt,
+        reason: `watchdog: ${streak} consecutive turns produced no claim — review this task`,
+      });
+    } catch (e) {
+      console.warn(
+        `TaskScheduler: watchdogPark failed for ${head.id}: ${e instanceof Error ? e.message : String(e)}`
+      );
     }
   }
 
@@ -494,6 +576,10 @@ export class TaskScheduler {
    * it has to look at the post-failure session state. If the agent
    * never picked anything (timed out before claiming, errored on
    * setup), there's nothing to park.
+   *
+   * Sets `start_at = now + PARK_BACKOFF_MS`. Future-dated + blocked
+   * means the scheduler reconciles to arm a cron rather than firing
+   * immediately on subsequent events — bounded retry rate.
    */
   private async parkInProgress(
     sessionId: string,
@@ -503,18 +589,13 @@ export class TaskScheduler {
       session_id: sessionId,
       status: "in_progress",
     });
+    const retryAt = new Date(this.now().getTime() + PARK_BACKOFF_MS);
     for (const task of inProg) {
       try {
-        await this.taskStore.update(
-          task.id,
-          { status: "blocked" },
-          { actor: "system:scheduler" }
-        );
-        await this.taskStore.addComment({
-          taskId: task.id,
-          author: "system:scheduler",
-          kind: "system",
-          body: `[${note.action}] ${note.message}`,
+        await this.taskStore.park({
+          id: task.id,
+          retryAt,
+          reason: `[${note.action}] ${note.message}`,
         });
       } catch (e) {
         console.warn(

@@ -12,7 +12,7 @@ export type TaskStatus = (typeof TASK_STATUSES)[number];
 
 export const TaskStatusSchema = z.enum(TASK_STATUSES);
 
-const NullableIso = z.string().datetime({ offset: true }).nullable();
+export const NullableIso = z.string().datetime({ offset: true }).nullable();
 const IsoString = z.string().datetime({ offset: true });
 
 export const RECURRENCE_SESSION_MODES = ["fresh", "reuse"] as const;
@@ -59,6 +59,18 @@ export const TaskFrontmatterSchema = z
     title: z.string().min(1).max(500),
     status: TaskStatusSchema,
     assignee: z.string().min(1),
+    /**
+     * Session binding. Three semantically distinct meanings depending
+     * on status — don't clear this field without understanding which
+     * applies:
+     *  - non-terminal (open / in_progress / blocked): the live session
+     *    where work is happening or will happen on pickup.
+     *  - done / canceled: historical audit trail. The session where the
+     *    work happened. Do NOT null this out — readers (event log, web
+     *    detail view, prompt rendering of past activity) rely on it.
+     *  - recurring task in `open` post-reset with `recurrence.session:
+     *    "reuse"`: the session the next fire will run in.
+     */
     session_id: z.string().min(1).nullable().default(null),
     created_by: z.string().min(1),
     parent_id: z.string().min(1).nullable().default(null),
