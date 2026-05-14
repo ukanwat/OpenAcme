@@ -12,7 +12,7 @@ The job-to-be-done is not "talk to an AI." It's *operate a workforce of agents* 
 
 ## Product Purpose
 
-OpenAcme is the substrate for organizations whose workforce is agents. The web UI is the human-facing console: where operators see the fleet (agents, sessions, tasks, processes, memory), read what each agent is doing, and intervene by chat, configuration, or scheduled work. Success is the user feeling like they oversee a small workforce — not like they're using a chatbot with extra panels.
+OpenAcme is the substrate for organizations whose workforce is agents. The web UI is the human-facing console: where operators see the workforce (agents, sessions, tasks, processes, memory), read what each agent is doing, and intervene by chat, configuration, or scheduled work. Success is the user feeling like they oversee a small workforce — not like they're using a chatbot with extra panels.
 
 ## Brand Personality
 
@@ -24,13 +24,13 @@ Voice: short, declarative, no hedging. Labels say what they do. Errors are direc
 
 - **Generic SaaS dashboard** — KPI tiles, gradient hero, sky-blue primary, stock illustrations, "14-day free trial" cadence. This is not a sales surface; it is an operating surface.
 - **Cute consumer app** — rounded everything, mascots, smiling robots, pastel palette, friendly emoji peppered through UI.
-- **ChatGPT / Claude.ai chat-wrapper** — centered input, two-column with chats sidebar, soft cards, pastel illustration empty states. The product is an agent fleet; framing it as a chat tool obscures what it is.
+- **ChatGPT / Claude.ai chat-wrapper** — centered input, two-column with chats sidebar, soft cards, pastel illustration empty states. The product is an agent workforce; framing it as a chat tool obscures what it is.
 - **AI-startup neon / glassmorphism** — dark + radial gradient + glass blur + "orchestrate intelligence" framing. The currently saturated AI look.
 - **Team-collaboration SaaS** — seats, roles, invite modals, activity feeds keyed on humans. The unit here is the agent, not the human collaborator.
 
 ## Design Principles
 
-1. **The substrate, not the surface.** Show the fleet — agents, sessions, processes, schedules — as first-class objects. Don't hide them behind "AI assistant" framing. Identifiers, timestamps, and state are always reachable.
+1. **The substrate, not the surface.** Show the workforce — agents, sessions, processes, schedules — as first-class objects. Don't hide them behind "AI assistant" framing. Identifiers, timestamps, and state are always reachable.
 2. **Density earns trust.** Treat the user as capable. Real metadata, real timestamps, real IDs are visible by default. No infantilizing whitespace, no padded cards around single sentences.
 3. **Quiet by default, loud on change.** Baseline UI is calm and monochromatic. Motion, color, and emphasis are reserved for state transitions, live signal, and the user's own focus.
 4. **Made by a person.** Visible craft beats novelty. Hairline rules, considered type pairings, hand-tuned spacing, weighted motion. If a detail isn't tuned, leave it out rather than ship it rough.

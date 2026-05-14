@@ -106,12 +106,12 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
   });
 
   app.get("/api/agents/:id", (c) => {
-    try {
-      const agent = manager.getAgent(c.req.param("id"));
-      return c.json(agent.config);
-    } catch {
-      return c.json({ error: "Agent not found" }, 404);
-    }
+    // Return the full AgentDefinition (matches what GET /api/agents
+    // lists), not the runtime AgentConfig — the latter drops
+    // persisted-only fields like `role` that the web UI needs.
+    const def = manager.getAgentDef(c.req.param("id"));
+    if (!def) return c.json({ error: "Agent not found" }, 404);
+    return c.json(def);
   });
 
   app.post("/api/agents", async (c) => {

@@ -47,7 +47,7 @@ registry.register({
   emoji: "🗂️",
   parallelSafe: false,
   description:
-    "Manage this agent's browser tabs: list owned tabs, open a new one, close one, or focus one. Each agent only sees its own tabs (cookies/login state are shared across the fleet, but tabs are not). Use the returned tabId in subsequent browser_* calls.",
+    "Manage this agent's browser tabs: list owned tabs, open a new one, close one, or focus one. Each agent only sees its own tabs (cookies/login state are shared across the workforce, but tabs are not). Use the returned tabId in subsequent browser_* calls.",
   parameters: TabsParams,
   handler: async (args) => {
     const p = args as TabsArgs;

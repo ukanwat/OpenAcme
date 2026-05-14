@@ -170,6 +170,7 @@ async function addAgentReusingProvider(
   const newAgent: AgentDefinition = {
     id: agentId,
     name: (name as string).trim(),
+    role: "",
     model: { ...baseConfig, model: modelId },
     persona: DEFAULT_PERSONA,
     tools: DEFAULT_TOOLS,
@@ -284,6 +285,7 @@ async function configureProviderAndCreateAgent(
     savedAgent = {
       id: newId,
       name: `${provider.name} Agent`,
+      role: "",
       model: modelConfig,
       persona: DEFAULT_PERSONA,
       tools: DEFAULT_TOOLS,
@@ -300,6 +302,7 @@ async function configureProviderAndCreateAgent(
     savedAgent = {
       id: "default",
       name: "Default Agent",
+      role: "",
       model: modelConfig,
       persona: DEFAULT_PERSONA,
       tools: DEFAULT_TOOLS,

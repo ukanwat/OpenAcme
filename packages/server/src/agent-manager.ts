@@ -27,8 +27,10 @@ import {
   bindMemory,
   bindTaskStore,
   bindBrowser,
+  bindAgentTool,
   SYSTEM_TOOLS,
 } from "@openacme/tools";
+import * as fs from "node:fs";
 import { MemoryStore } from "@openacme/memory";
 import { TaskStore } from "@openacme/tasks";
 import { BrowserManager } from "@openacme/browser";
@@ -47,6 +49,11 @@ import {
 } from "@openacme/auth";
 import { SkillRegistry, type SkillIndexEntry } from "@openacme/skills";
 import * as path from "node:path";
+
+// Same shape as `SAFE_ID` in `@openacme/memory` and `@openacme/config`'s
+// agent-store. Duplicated here to avoid a cross-package import for one
+// regex; the three must stay in sync.
+const PEER_ID_SAFE = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 
 /**
  * AgentManager — manages multiple agent instances, MCP connections, and skills.
@@ -139,7 +146,7 @@ export class AgentManager {
     // reconciles cron arms; wakes still go through events.
     this.taskStore.setOnChange(() => this.taskScheduler.reconcile());
 
-    // Browser: one managed Chrome shared across the fleet under
+    // Browser: one managed Chrome shared across the workforce under
     // `<dataDir>/browser-profile/`. Lazy — Chrome doesn't spawn until
     // the first browser_* tool call. Per-agent tab ownership lives
     // inside the manager. Bound via the same placeholder pattern as
@@ -150,6 +157,45 @@ export class AgentManager {
       config: config.browser,
     });
     bindBrowser({ manager: this.browserManager });
+
+    // agent_list: surface the workforce directory + the calling agent's peer
+    // notes inline so a delegating agent sees canonical role plus their
+    // own lived experience in one tool result. Peer notes live at
+    // `<agentDir>/memory/peers/<peerId>.md` per memory convention; read
+    // directly here (no MemoryStore dep) to keep @openacme/tools free
+    // of @openacme/config and @openacme/memory.
+    bindAgentTool({
+      listAgents: () =>
+        this.agentStore.list().map((def) => ({
+          id: def.id,
+          name: def.name,
+          role: def.role ?? "",
+        })),
+      peerNoteFor: (callerId, peerId) => {
+        // Defense in depth — agent ids in the store are SAFE_ID-validated
+        // on upsert, but path interpolation is a sharp tool. Reject any
+        // id whose shape would let `path.join` escape the peers dir.
+        if (!PEER_ID_SAFE.test(callerId) || !PEER_ID_SAFE.test(peerId)) {
+          return null;
+        }
+        const file = path.join(
+          this.memoryStore.dirPath(callerId),
+          "peers",
+          `${peerId}.md`
+        );
+        try {
+          const st = fs.statSync(file);
+          const content = fs.readFileSync(file, "utf-8");
+          return { content, mtimeMs: st.mtimeMs };
+        } catch (e) {
+          if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
+          console.warn(
+            `peerNoteFor(${callerId}, ${peerId}) read failed: ${e instanceof Error ? e.message : String(e)}`
+          );
+          return null;
+        }
+      },
+    });
 
     // Load skills
     this.skillRegistry = new SkillRegistry();

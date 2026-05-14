@@ -288,7 +288,7 @@ The label is mandatory — no dot without a label. This satisfies the "no color-
 - **Do** use 0px radius on every surface — chrome, panels, inputs, buttons, chips. The discipline is the consistency.
 - **Do** use 1px hairlines, single weight, never doubled. Two surfaces meeting share one hairline.
 - **Do** layer with tonality (3-4% OKLCH lightness step). Maximum three layers per screen.
-- **Do** show the agent fleet as first-class. Agents, sessions, processes, schedules, memory all surface as visible objects with their own IDs and state.
+- **Do** show the agent workforce as first-class. Agents, sessions, processes, schedules, memory all surface as visible objects with their own IDs and state.
 - **Do** restrict motion to state transitions (180ms ease-out-quart) and the live-stream pulse (1.2s ease-in-out on Plot Red). Disable both under `prefers-reduced-motion`.
 
 ### Don't:

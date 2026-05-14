@@ -18,6 +18,7 @@ function makeAgent(
   return {
     id,
     name: `${id} Agent`,
+    role: "",
     model: {
       provider: provider as AgentDefinition["model"]["provider"],
       model: "test-model",

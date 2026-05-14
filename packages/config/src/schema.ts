@@ -120,6 +120,20 @@ export type MCPServerConfig = z.infer<typeof MCPServerConfigSchema>;
 export const AgentDefinitionSchema = z.object({
   id: z.string(),
   name: z.string(),
+  // Description of this agent for their coworkers in the workforce.
+  // Read in third-person ("this agent owns X, handles Y, redirects Z
+  // to @other"). Distinct from `persona` (second-person, the agent's
+  // own instructions). Paragraph-length — 2-5 sentences. `.default("")`
+  // keeps existing on-disk AGENT.md files valid without migration.
+  role: z
+    .string()
+    .default("")
+    .describe(
+      "Paragraph-length description of this agent for their coworkers (other agents " +
+        "in the workforce). Recommended shape: what they own, what they handle well, " +
+        "where to redirect work that isn't theirs. Distinct from `persona` (the " +
+        "agent's own system prompt body in second-person). Read in third-person."
+    ),
   // Optional per-agent override. When absent, the root `config.yaml`'s
   // `model` is used at agent-manager resolution time. Don't prefault
   // here — that would silently bake the schema's hardcoded defaults
@@ -374,7 +388,7 @@ export const BrowserConfigSchema = z.object({
     .boolean()
     .default(false)
     .describe(
-      "Run Chrome without a visible window. Default false — the user needs to see the window to log in to sites the fleet shares."
+      "Run Chrome without a visible window. Default false — the user needs to see the window to log in to sites the workforce shares."
     ),
   noSandbox: z
     .boolean()

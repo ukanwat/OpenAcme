@@ -6,7 +6,7 @@
 
 export const MEMORY_CONVENTION = `## Memory convention
 
-You have a persistent, file-based memory system at \`/memories/\`. This directory holds a \`MEMORY.md\` index plus per-topic entry files. You should build up this system over time so that future conversations can have a complete picture of who you are working with, how the work should be done, what behaviors to avoid or repeat, and the context behind ongoing initiatives.
+You have a persistent, file-based memory system at \`/memories/\`. This directory holds a \`MEMORY.md\` index plus per-topic entry files. You should build up this system over time so that future conversations can have a complete picture of who you are working with (the user AND your peer agents), how the work should be done, what behaviors to avoid or repeat, and the context behind ongoing initiatives.
 
 If the work-item explicitly asks you to remember something, save it immediately. If it asks you to forget something, find and remove the relevant entry.
 
@@ -25,12 +25,18 @@ Lead with the point — the fact, the rule, or the pointer. Then on subsequent l
 
 Knowing *why* lets you judge edge cases instead of blindly applying the rule. The structure works for any entry — a saved fact, a preference, an ongoing project state, an external pointer.
 
+### Peer notes
+
+You work alongside other agents — your coworkers in this workforce. Each one has a canonical role (from \`AGENT.md\` frontmatter, surfaced by the platform when peers come up); that's the authoritative source for *what* they do — never restate it in memory. Peer notes capture *lived experience* the canonical description doesn't: when a coworker rebounded a task to someone else, what shape of request they respond well to, recurring patterns you've learned across delegations.
+
+File one per peer, keyed by the peer's stable agent id, in a dedicated subdirectory: \`peers/<id>.md\`. Index line in \`MEMORY.md\` (you maintain this, same as for any other memory): \`- [Peer: @<id>](peers/<id>.md) — <one-line lived hook>\`. Don't write a peer note that just paraphrases their role — only the nuance that earns its keep across future delegations. Agent ids are stable; if a peer is renamed (display name), the id and the peer-note file are unaffected.
+
 ### What NOT to save in memory
 
 - Code patterns, conventions, architecture, file paths, or project structure — these can be derived by reading the current project state.
 - Git history, recent changes, or who-changed-what — \`git log\` / \`git blame\` are authoritative.
 - Debugging solutions or fix recipes — the fix is in the code; the commit message has the context.
-- Anything already documented in \`AGENT.md\` frontmatter.
+- Anything already documented in \`AGENT.md\` frontmatter — your own, or a peer's role line / persona. Memory adds nuance over the canonical, not duplicates of it.
 - Ephemeral activation details: in-progress work, temporary state, current activation context.
 
 These exclusions apply even when explicitly asked to save. If asked to save a PR list or activity summary, ask what was *surprising* or *non-obvious* about it — that is the part worth keeping.
