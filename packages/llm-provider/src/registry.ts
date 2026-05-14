@@ -15,6 +15,7 @@ import {
   transformAnthropicOAuthBody,
   transformAnthropicOAuthResponse,
   transformCodexOAuthBody,
+  tryReimportClaudeCode,
 } from "@openacme/auth";
 import { injectAnthropicCacheControl } from "./openrouter-cache.js";
 
@@ -236,6 +237,12 @@ const providerFactories: Record<
           dataDir
         );
 
+        // Captured by `buildHeaders` on each call, read by the 429
+        // recovery branch below to compare "what we sent" vs. "what
+        // tryReimport now offers." Differs → Claude Code swapped to a
+        // new account; retry with the new bearer.
+        let lastSentToken: string | undefined;
+
         const buildHeaders = async (force: boolean): Promise<Headers> => {
           const headers = new Headers(
             init?.headers as Record<string, string> | undefined
@@ -246,6 +253,7 @@ const providerFactories: Record<
               dataDir,
               { force }
             );
+            lastSentToken = token;
             noteAccount("anthropic", accountId);
             headers.delete("x-api-key");
             headers.set("Authorization", `Bearer ${token}`);
@@ -316,7 +324,11 @@ const providerFactories: Record<
         // server-side (account swapped, rotated elsewhere, suspended)
         // before our `expires_at` claim caught up. Force-refresh once
         // and retry — if still 401, propagate so the user sees the
-        // login prompt.
+        // login prompt. `getOAuthToken` itself attempts a silent
+        // Claude Code re-import on refresh failure (see
+        // `@openacme/auth/refresh.ts`), so this branch covers both
+        // "stored refresh_token still good" and "user just swapped
+        // accounts in Claude Code" without extra work here.
         if (oauthNow && res.status === 401) {
           if (DEBUG) console.error("[openacme] anthropic 401 — forcing token refresh and retrying");
           try {
@@ -324,6 +336,19 @@ const providerFactories: Record<
           } catch (e) {
             if (DEBUG) console.error("[openacme] anthropic refresh-on-401 failed:", e);
             throw e;
+          }
+        }
+        // 429 with OAuth: the account we're using is rate-capped. If
+        // the user has since switched to a different Claude account in
+        // Claude Code, that account has its own usage budget. Try a
+        // one-shot Claude Code re-import; if the active bearer differs
+        // from the one we just sent, retry with it. If it doesn't
+        // differ, propagate the 429 — there's nothing more we can do.
+        if (oauthNow && res.status === 429) {
+          const active = tryReimportClaudeCode(dataDir);
+          if (active && active !== lastSentToken) {
+            if (DEBUG) console.error("[openacme] anthropic 429 — claude-code creds changed, retrying with new bearer");
+            res = await send(false);
           }
         }
         // 1M-context fallback: if the API rejects the beta because the

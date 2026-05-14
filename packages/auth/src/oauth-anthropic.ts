@@ -101,6 +101,36 @@ export function loginWithClaudeCodeCredentials(dataDir: string): AnthropicLoginR
   return { source: "claude-code" };
 }
 
+/**
+ * Best-effort silent re-import of Claude Code credentials when an in-flight
+ * request hits a token-shaped or rate-limit failure. Mirrors the read path
+ * used by `loginWithClaudeCodeCredentials` but adds two guards:
+ *
+ *   - Respects an existing **manual setup token** (`mode: "claude-setup-token"`).
+ *     The user explicitly pasted that — don't silently swap to Claude Code.
+ *   - Idempotent: if the candidate's `access_token` matches the stored
+ *     entry, no write happens.
+ *
+ * Returns the currently-active access token (whether just imported or
+ * already in place), or `null` when no Claude Code creds are available
+ * or the existing entry is a setup-token we won't touch. Callers
+ * compare the return value to the token they actually sent to detect
+ * "the user switched Claude accounts in Claude Code; we now have a
+ * different bearer to retry with."
+ */
+export function tryReimportClaudeCode(dataDir: string): string | null {
+  const candidate = readClaudeCodeCredentials();
+  if (!candidate) return null;
+  const current = getEntry(dataDir, "anthropic");
+  if (current && current.mode === "claude-setup-token") {
+    return null;
+  }
+  if (!current || current.access_token !== candidate.access_token) {
+    setEntry(dataDir, "anthropic", candidate);
+  }
+  return candidate.access_token;
+}
+
 /** Persist a manually-pasted Anthropic setup token (sk-ant-oat-…). */
 export function loginWithSetupToken(dataDir: string, token: string): AnthropicLoginResult {
   if (!isAnthropicOAuthToken(token)) {
