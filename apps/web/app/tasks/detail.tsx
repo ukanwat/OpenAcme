@@ -427,11 +427,7 @@ function ActivityTimeline({
                     />
                   )
                 ) : (
-                  <EventRow
-                    event={it.event}
-                    agentMap={agentMap}
-                    titleByDepId={titleByDepId}
-                  />
+                  <EventRow event={it.event} titleByDepId={titleByDepId} />
                 )}
               </li>
             );
@@ -451,48 +447,33 @@ function ActivityTimeline({
 
 // ── Activity row variants ──────────────────────────────────────────
 
-type ResolvedAuthor =
-  | { kind: "agent"; label: string; tail: string }
-  | { kind: "user"; label: "User" }
-  | { kind: "system"; label: string }
-  | { kind: "unknown"; label: string };
+interface ResolvedAuthor {
+  kind: "agent" | "user" | "system" | "unknown";
+  handle: string;
+}
 
 function resolveAuthor(
   id: string,
   agentMap: Map<string, string>
 ): ResolvedAuthor {
-  if (id === "system:user") return { kind: "user", label: "User" };
+  if (id === "system:user") return { kind: "user", handle: "user" };
   if (id.startsWith("system:")) {
     const sub = id.slice("system:".length);
-    return {
-      kind: "system",
-      label: sub.length > 0 ? sub.charAt(0).toUpperCase() + sub.slice(1) : "System",
-    };
+    return { kind: "system", handle: sub || "system" };
   }
-  const name = agentMap.get(id);
-  if (name) return { kind: "agent", label: name, tail: id.slice(0, 8) };
-  return { kind: "unknown", label: id.slice(0, 8) };
+  if (agentMap.has(id)) return { kind: "agent", handle: id };
+  return { kind: "unknown", handle: id.slice(0, 8) };
 }
 
 function AuthorChip({ author }: { author: ResolvedAuthor }) {
   return (
-    <span className="flex items-baseline gap-1.5">
-      <span
-        className={cn(
-          "font-mono text-[11px]",
-          author.kind === "system" ? "italic text-ink-soft" : "text-ink"
-        )}
-      >
-        {author.label}
-      </span>
-      {author.kind === "agent" && (
-        <span className="font-mono text-[11px] tabular-nums text-ink-faint">
-          {author.tail}
-        </span>
+    <span
+      className={cn(
+        "font-mono text-[11px]",
+        author.kind === "system" ? "italic text-ink-soft" : "text-ink"
       )}
-      {author.kind === "unknown" && (
-        <span className="font-mono text-[11px] text-ink-faint">(unknown)</span>
-      )}
+    >
+      @{author.handle}
     </span>
   );
 }
@@ -515,9 +496,9 @@ function CommentRow({
           <span className="text-ink-faint">·</span>
           <span
             className="font-mono text-[11px] tabular-nums text-ink-faint"
-            title={formatRelativeFromUnix(comment.createdAt)}
+            title={formatAbsoluteFromUnix(comment.createdAt)}
           >
-            {formatAbsoluteFromUnix(comment.createdAt)}
+            {formatRelativeFromUnix(comment.createdAt)}
           </span>
         </div>
         <div className="mt-1 max-w-prose border-l border-paper-rule pl-3 text-sm text-ink">
@@ -547,9 +528,9 @@ function ResultRow({
           <span className="text-ink-faint">·</span>
           <span
             className="font-mono text-[11px] tabular-nums text-ink-faint"
-            title={formatRelativeFromUnix(comment.createdAt)}
+            title={formatAbsoluteFromUnix(comment.createdAt)}
           >
-            {formatAbsoluteFromUnix(comment.createdAt)}
+            {formatRelativeFromUnix(comment.createdAt)}
           </span>
         </div>
         <div className="mt-1.5 max-w-prose text-sm text-ink">
@@ -568,13 +549,13 @@ function SystemCommentRow({ comment }: { comment: Comment }) {
       </div>
       <div className="min-w-0">
         <div className="flex flex-wrap items-baseline gap-x-2 font-mono text-[11px] italic">
-          <span className="text-ink-soft">Scheduler</span>
+          <span className="text-ink-soft">@scheduler</span>
           <span className="text-ink-faint">·</span>
           <span
             className="tabular-nums text-ink-faint"
-            title={formatRelativeFromUnix(comment.createdAt)}
+            title={formatAbsoluteFromUnix(comment.createdAt)}
           >
-            {formatAbsoluteFromUnix(comment.createdAt)}
+            {formatRelativeFromUnix(comment.createdAt)}
           </span>
         </div>
         <div className="mt-0.5 whitespace-pre-wrap break-words font-mono text-[12px] italic text-ink-soft">
@@ -587,38 +568,35 @@ function SystemCommentRow({ comment }: { comment: Comment }) {
 
 function EventRow({
   event,
-  agentMap,
   titleByDepId,
 }: {
   event: TaskEvent;
-  agentMap: Map<string, string>;
   titleByDepId: Map<string, string>;
 }) {
   const payload = parseEventPayload(event.payload);
-  const actorLabel = event.actor ? resolveAgentName(event.actor, agentMap) : null;
+  const actorHandle = event.actor ? resolveAgentHandle(event.actor) : null;
   return (
     <div className="grid grid-cols-[12px_1fr] items-center gap-x-3">
       <div aria-hidden className="flex justify-center">
         <span className="font-mono text-[11px] leading-none text-ink-faint">›</span>
       </div>
       <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[12px] tabular-nums text-ink-soft">
-        <span
-          className="text-ink-faint"
-          title={formatRelativeFromUnix(event.createdAt)}
-        >
-          {formatAbsoluteFromUnix(event.createdAt)}
-        </span>
-        <span className="text-ink-faint">·</span>
-        {actorLabel && (
+        {actorHandle && (
           <>
-            <span className="text-ink">{actorLabel}</span>
+            <span className="text-ink">@{actorHandle}</span>
             <span className="text-ink-faint">·</span>
           </>
         )}
+        <span
+          className="text-ink-faint"
+          title={formatAbsoluteFromUnix(event.createdAt)}
+        >
+          {formatRelativeFromUnix(event.createdAt)}
+        </span>
+        <span className="text-ink-faint">·</span>
         <EventDescription
           event={event}
           payload={payload}
-          agentMap={agentMap}
           titleByDepId={titleByDepId}
         />
       </div>
@@ -626,30 +604,22 @@ function EventRow({
   );
 }
 
-function resolveAgentName(
-  id: string | undefined,
-  agentMap: Map<string, string>
-): string {
+function resolveAgentHandle(id: string | undefined): string {
   if (!id) return "?";
   if (id.startsWith("system:"))
     return id.slice("system:".length) || "system";
-  return agentMap.get(id) ?? id.slice(0, 8);
+  return id;
 }
 
 function EventDescription({
   event,
   payload,
-  agentMap,
   titleByDepId,
 }: {
   event: TaskEvent;
   payload: Record<string, unknown> | null;
-  agentMap: Map<string, string>;
   titleByDepId: Map<string, string>;
 }) {
-  const agentName = (id: string | undefined): string =>
-    resolveAgentName(id, agentMap);
-
   switch (event.kind) {
     case "status_changed": {
       const from = (payload?.from as TaskStatus | undefined) ?? undefined;
@@ -682,12 +652,12 @@ function EventDescription({
       );
     }
     case "task_assigned": {
-      const assignee = agentName(payload?.assignee as string | undefined);
-      const createdBy = agentName(payload?.created_by as string | undefined);
+      const assignee = resolveAgentHandle(payload?.assignee as string | undefined);
+      const createdBy = resolveAgentHandle(payload?.created_by as string | undefined);
       return (
         <span>
-          assigned to <span className="text-ink">{assignee}</span> by{" "}
-          <span className="text-ink">{createdBy}</span>
+          assigned to <span className="text-ink">@{assignee}</span> by{" "}
+          <span className="text-ink">@{createdBy}</span>
         </span>
       );
     }
