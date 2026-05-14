@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -10,6 +11,7 @@ import {
   Settings,
 } from "lucide-react";
 import { cn } from "@/app/lib/utils";
+import { API_BASE } from "@/app/lib/api";
 import { Logotype } from "@/app/components/Logotype";
 import { ThemeToggle } from "@/app/components/ThemeToggle";
 
@@ -29,6 +31,21 @@ const navItems: NavItem[] = [
 
 export function Sidebar({ children }: { children?: React.ReactNode }) {
   const pathname = usePathname();
+  const [version, setVersion] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`${API_BASE}/api/health`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (cancelled) return;
+        if (data && typeof data.version === "string") setVersion(data.version);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <aside className="flex w-60 shrink-0 flex-col border-r border-paper-rule bg-sidebar text-sidebar-foreground">
@@ -81,7 +98,7 @@ export function Sidebar({ children }: { children?: React.ReactNode }) {
 
       <div className="flex items-center justify-between gap-2 border-t border-paper-rule px-4 py-3">
         <div className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
-          v0.1.0
+          {version ? `v${version}` : "v—"}
         </div>
         <ThemeToggle />
       </div>
