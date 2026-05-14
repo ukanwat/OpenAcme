@@ -13,6 +13,7 @@ import {
   Trash2,
   Plus,
   FileJson,
+  FileText,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Sidebar } from "../components/Sidebar";
@@ -153,12 +154,18 @@ export default function SettingsPage() {
   const [mcpJsonError, setMcpJsonError] = useState<string | null>(null);
   const [mcpJsonSaving, setMcpJsonSaving] = useState(false);
 
+  // AGENTS.md — shared context for every agent. null = file absent.
+  const [agentsMd, setAgentsMd] = useState<string | null>(null);
+  const [agentsMdDraft, setAgentsMdDraft] = useState("");
+  const [agentsMdSaving, setAgentsMdSaving] = useState(false);
+
   useEffect(() => {
     const ctrl = new AbortController();
     loadConfig(ctrl.signal);
     loadProviders(ctrl.signal);
     loadConfiguredKeys(ctrl.signal);
     loadMcp(ctrl.signal);
+    loadAgentsMd(ctrl.signal);
     return () => ctrl.abort();
     // loadMcp is useCallback-stabilized; intentionally run-once at mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -204,6 +211,45 @@ export default function SettingsPage() {
       }
     } catch {
       // /api/keys may not exist on older servers — fail silently
+    }
+  };
+
+  const loadAgentsMd = async (signal?: AbortSignal) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/agents-md`, { signal });
+      if (!res.ok) return;
+      const data = (await res.json()) as { content: string | null };
+      setAgentsMd(data.content);
+      setAgentsMdDraft(data.content ?? "");
+    } catch (e) {
+      if ((e as Error).name === "AbortError") return;
+      // Fail silently; older servers may not have this endpoint.
+    }
+  };
+
+  const saveAgentsMd = async () => {
+    setAgentsMdSaving(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/agents-md`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: agentsMdDraft }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast.error(data.error || "Failed to save AGENTS.md");
+        return;
+      }
+      const data = (await res.json()) as { content: string | null };
+      setAgentsMd(data.content);
+      setAgentsMdDraft(data.content ?? "");
+      toast.success(
+        data.content === null ? "AGENTS.md cleared" : "AGENTS.md saved"
+      );
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setAgentsMdSaving(false);
     }
   };
 
@@ -443,6 +489,10 @@ export default function SettingsPage() {
                 <TabsTrigger value="mcp">
                   <Boxes className="size-3.5" />
                   MCP
+                </TabsTrigger>
+                <TabsTrigger value="context">
+                  <FileText className="size-3.5" />
+                  Context
                 </TabsTrigger>
               </TabsList>
 
@@ -832,6 +882,58 @@ export default function SettingsPage() {
                     </DialogBody>
                   </DialogContent>
                 </Dialog>
+              </TabsContent>
+
+              <TabsContent value="context">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Shared context (AGENTS.md)</CardTitle>
+                    <CardDescription>
+                      Optional. If set, prepended to every agent's system prompt
+                      after its persona. Leave blank to remove the file. Saves
+                      to{" "}
+                      <code className="border border-paper-rule bg-paper-sunk px-1 py-0.5 font-mono text-[11px] text-ink">
+                        {config?.dataDir || "~/.openacme"}/AGENTS.md
+                      </code>
+                      .
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <Textarea
+                      value={agentsMdDraft}
+                      onChange={(e) => setAgentsMdDraft(e.target.value)}
+                      placeholder="Describe what this setup is, what it's for, anything every agent should know…"
+                      rows={14}
+                      className="font-mono text-[12px]"
+                    />
+                    <div className="flex items-center justify-between">
+                      <div className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
+                        {agentsMd === null ? "Not set" : "Saved"} ·{" "}
+                        {agentsMdDraft.length} chars
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          variant="ghost"
+                          onClick={() => setAgentsMdDraft(agentsMd ?? "")}
+                          disabled={
+                            agentsMdSaving || agentsMdDraft === (agentsMd ?? "")
+                          }
+                        >
+                          Reset
+                        </Button>
+                        <Button
+                          onClick={saveAgentsMd}
+                          disabled={
+                            agentsMdSaving || agentsMdDraft === (agentsMd ?? "")
+                          }
+                        >
+                          {agentsMdSaving && <LoadingHairline inline />}
+                          Save
+                        </Button>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
               </TabsContent>
             </Tabs>
           </div>

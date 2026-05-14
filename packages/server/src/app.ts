@@ -883,6 +883,32 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
     return c.json({ success: true, name: safeName, skill }, 201);
   });
 
+  // ── AGENTS.md ──
+  app.get("/api/agents-md", (c) => {
+    return c.json({ content: manager.getAgentsMd() ?? null });
+  });
+
+  app.put("/api/agents-md", async (c) => {
+    let body: { content?: string };
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "Invalid JSON body" }, 400);
+    }
+    if (typeof body.content !== "string") {
+      return c.json({ error: "Body must be { content: string }" }, 400);
+    }
+    try {
+      manager.setAgentsMd(body.content);
+    } catch (e) {
+      return c.json(
+        { error: e instanceof Error ? e.message : String(e) },
+        500
+      );
+    }
+    return c.json({ content: manager.getAgentsMd() ?? null });
+  });
+
   // ── Config ──
   app.get("/api/config", (c) => {
     // Return safe subset (no API keys)
