@@ -48,14 +48,14 @@ describe("memory tool — memory_20250818 surface", () => {
       expect(t!.toolset).toBe("memory");
     });
 
-    it("uses Anthropic's verbatim MEMORY PROTOCOL as the tool description", () => {
+    it("ships an opt-in description, not the eager memory_20250818 preamble", () => {
       const t = registry.get("memory")!;
       expect(t.description).toContain(
-        "IMPORTANT: ALWAYS VIEW YOUR MEMORY DIRECTORY BEFORE DOING ANYTHING ELSE."
+        "Your MEMORY.md index is already in your system prompt"
       );
-      expect(t.description).toContain("MEMORY PROTOCOL:");
-      expect(t.description).toContain(
-        "ASSUME INTERRUPTION: Your context window might be reset at any moment"
+      expect(t.description).toContain("when it looks relevant");
+      expect(t.description).not.toContain(
+        "ALWAYS VIEW YOUR MEMORY DIRECTORY"
       );
     });
 

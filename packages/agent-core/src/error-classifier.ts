@@ -2,19 +2,12 @@ import { APICallError } from "ai";
 
 /**
  * Decide whether an error from a model call should trigger reactive
- * compression + retry. Mirrors the three compression-triggering branches of
- * Hermes's `classify_api_error` (`.hermes-ref/agent/error_classifier.py`):
+ * compression + retry. Three branches:
  *
  *   - 413 / `request entity too large` → payload_too_large
  *   - 400 + context-overflow phrasing → context_overflow
  *   - 429 + "extra usage" + "long context" → Anthropic long-context tier
  *     gate, recovered the same way as a plain context overflow
- *
- * Other reasons in Hermes's taxonomy (auth, billing, rate_limit, model_not_
- * found, provider_policy_blocked, image_too_large, ...) drive credential
- * rotation or provider fallback in Hermes — neither of which exists here on
- * top of the Vercel AI SDK. Adding them as informational classifications
- * would just be dead weight, so we don't.
  */
 
 export type CompressionReason = "payload_too_large" | "context_overflow";
