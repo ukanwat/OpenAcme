@@ -827,6 +827,7 @@ export class Agent {
       skillsIndex: this.config.skillsIndex,
       tasksContext,
       memorySnapshot,
+      agentsMd: this.config.agentsMd,
     });
     this.cachedSystemPrompts.set(sessionId, prompt);
 

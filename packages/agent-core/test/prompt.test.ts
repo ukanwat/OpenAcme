@@ -233,3 +233,59 @@ describe("Index truncation", () => {
     expect(prompt).not.toContain("WARNING: MEMORY.md");
   });
 });
+
+describe("AGENTS.md (shared background) injection", () => {
+  const AGENTS = "We run a small research lab focused on protein folding.";
+
+  it("injects content verbatim after the persona with a generic preface", () => {
+    const prompt = buildSystemPrompt({
+      persona: PERSONA,
+      toolNames: ["shell"],
+      agentsMd: AGENTS,
+    });
+    expect(prompt).toContain("Shared context (from AGENTS.md):");
+    expect(prompt).toContain(AGENTS);
+    // Ordering: preface must follow the persona, not precede it.
+    const personaIdx = prompt.indexOf(PERSONA);
+    const prefaceIdx = prompt.indexOf("Shared context");
+    expect(personaIdx).toBeGreaterThanOrEqual(0);
+    expect(prefaceIdx).toBeGreaterThan(personaIdx);
+  });
+
+  it("omits the section when agentsMd is undefined", () => {
+    const prompt = buildSystemPrompt({
+      persona: PERSONA,
+      toolNames: ["shell"],
+    });
+    expect(prompt).not.toContain("AGENTS.md");
+    expect(prompt).not.toContain("Shared context");
+  });
+
+  it("omits the section when agentsMd is empty or whitespace", () => {
+    const promptEmpty = buildSystemPrompt({
+      persona: PERSONA,
+      toolNames: ["shell"],
+      agentsMd: "",
+    });
+    const promptWhitespace = buildSystemPrompt({
+      persona: PERSONA,
+      toolNames: ["shell"],
+      agentsMd: "   \n\n  ",
+    });
+    expect(promptEmpty).not.toContain("Shared context for every agent");
+    expect(promptWhitespace).not.toContain("Shared context for every agent");
+  });
+
+  it("does not impose a markdown section header — file content speaks for itself", () => {
+    const prompt = buildSystemPrompt({
+      persona: PERSONA,
+      toolNames: ["shell"],
+      agentsMd: AGENTS,
+    });
+    // No `## Workforce` / `## Organization` / `## Context` injected by us;
+    // user owns whatever structure they put inside AGENTS.md.
+    expect(prompt).not.toMatch(/^## Workforce$/m);
+    expect(prompt).not.toMatch(/^## Organization$/m);
+    expect(prompt).not.toMatch(/^## Context$/m);
+  });
+});

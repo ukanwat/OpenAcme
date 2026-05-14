@@ -100,6 +100,9 @@ export interface AgentConfig {
   compression?: CompressionConfig;
   /** Wall-clock cap on a single autonomous turn (ms). */
   autonomousTurnTimeoutMs?: number;
+  /** `<dataDir>/AGENTS.md` contents — shared background context every
+   *  agent reads. Injected into the system prompt below the persona. */
+  agentsMd?: string;
 }
 
 export interface CompressionConfig {
