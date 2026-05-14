@@ -118,11 +118,11 @@ function statePillClass(state: McpServerStatus["state"]): string {
     case "connected":
       return "bg-paper text-ink border border-plot-red";
     case "awaiting_oauth":
-      return "bg-paper-sunk text-ink border border-ink-faint";
+      return "bg-paper text-warn-ochre border border-warn-ochre";
     case "failed":
       return "bg-paper text-destructive border border-destructive";
     case "connecting":
-      return "bg-paper text-plot-red border border-plot-red pulse-live";
+      return "bg-paper text-plot-red border border-plot-red";
     case "disabled":
       return "bg-paper-sunk text-ink-faint border border-paper-rule";
     default:

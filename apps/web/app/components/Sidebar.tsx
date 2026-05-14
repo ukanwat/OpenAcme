@@ -50,14 +50,8 @@ export function Sidebar({ children }: { children?: React.ReactNode }) {
 
   return (
     <aside className="flex w-60 shrink-0 flex-col border-r border-paper-rule bg-sidebar text-sidebar-foreground">
-      <div className="border-b border-paper-rule px-4 py-4">
+      <div className="border-b border-paper-rule px-4 py-5">
         <Logotype className="h-6 w-auto text-ink" />
-        <div className="mt-3 flex items-center gap-1.5">
-          <span className="status-dot pulse-live bg-plot-red" aria-hidden />
-          <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-soft">
-            Daemon · Live
-          </span>
-        </div>
       </div>
 
       <nav className="flex flex-col">

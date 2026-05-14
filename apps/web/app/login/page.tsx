@@ -67,11 +67,6 @@ export default function LoginPage() {
 
   return (
     <main className="paper-surface relative flex min-h-screen items-center justify-center bg-paper px-4">
-      <div className="absolute right-4 top-4 flex items-center gap-1.5">
-        <span aria-hidden className="status-dot pulse-live bg-plot-red" />
-        <span className="label-faceplate text-ink-faint">Daemon · Live</span>
-      </div>
-
       <div className="section-enter w-full max-w-sm border border-paper-rule bg-paper">
         <ScribedRule className="bg-ink" />
 

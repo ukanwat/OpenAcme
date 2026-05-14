@@ -862,7 +862,7 @@ function ChatPageInner() {
                   className={cn(
                     "mt-3 flex items-center gap-3 px-3 py-1.5 font-mono text-[12px] section-enter",
                     s.kind === "error" && "bg-paper-sunk text-destructive",
-                    s.kind === "warn" && "bg-paper-sunk text-ink",
+                    s.kind === "warn" && "bg-paper-sunk text-warn-ochre",
                     (s.kind === "info" ||
                       s.kind === "compressing" ||
                       s.kind === "compressed") &&

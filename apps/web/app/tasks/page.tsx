@@ -30,6 +30,7 @@ import {
   STATUS_ORDER,
   STATUS_VARIANT,
   formatDate,
+  formatRelativeFutureFromIso,
   type Task,
   type TaskStatus,
 } from "./types";
@@ -401,9 +402,14 @@ function TasksPageInner() {
                               {t.due_at && (
                                 <span>due {formatDate(t.due_at)}</span>
                               )}
-                              {t.start_at && (
-                                <span>starts {formatDate(t.start_at)}</span>
-                              )}
+                              {t.start_at &&
+                                (new Date(t.start_at).getTime() > Date.now() ? (
+                                  <span className="text-signal-blue">
+                                    starts {formatRelativeFutureFromIso(t.start_at)}
+                                  </span>
+                                ) : (
+                                  <span>starts {formatDate(t.start_at)}</span>
+                                ))}
                               {t.depends_on.length > 0 && (
                                 <span>
                                   {t.depends_on.length} dep
@@ -563,7 +569,45 @@ function explainAutoCorrect(actual: TaskStatus, requested: TaskStatus): string {
   return `Server returned status ${actual} instead of ${requested}.`;
 }
 
+// One-pass vocabulary scribe-in: open → in_progress → done, then settle on
+// in_progress (the most informative state). Not an eternal loop — §7.4's
+// "choreographed motion" anti-pattern targets staggered/multi-curve flourish;
+// a single bounded pass through the vocabulary is the §7.3 designed-empty-
+// state primitive ("scribes in to demonstrate the format").
+const EMPTY_DEMO_STATES: { label: string; dot: string }[] = [
+  { label: "OPEN",        dot: "bg-ink" },
+  { label: "IN PROGRESS", dot: "bg-plot-red" },
+  { label: "DONE",        dot: "bg-ink-soft" },
+];
+// Settle index = IN PROGRESS (the live state). After the cycle, the demo
+// row freezes here so the empty state's primary teaching is "this is what
+// active work looks like."
+const EMPTY_DEMO_SETTLE_IDX = 1;
+const EMPTY_DEMO_STEP_MS = 1500;
+
 function EmptyTasksState() {
+  const [idx, setIdx] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    let step = 0;
+    const tick = () => {
+      if (cancelled) return;
+      if (step >= EMPTY_DEMO_STATES.length - 1) {
+        // Final settle frame.
+        setIdx(EMPTY_DEMO_SETTLE_IDX);
+        return;
+      }
+      step += 1;
+      setIdx(step);
+      window.setTimeout(tick, EMPTY_DEMO_STEP_MS);
+    };
+    const t = window.setTimeout(tick, EMPTY_DEMO_STEP_MS);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
+  }, []);
+  const current = EMPTY_DEMO_STATES[idx] ?? EMPTY_DEMO_STATES[EMPTY_DEMO_SETTLE_IDX]!;
   return (
     <div className="mx-auto w-full max-w-2xl px-6 pt-12">
       <SectionEyebrow meta="0 tasks">Empty board</SectionEyebrow>
@@ -578,8 +622,10 @@ function EmptyTasksState() {
             <div className="mt-1 meta-row">@your-agent · filed just now</div>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
-            <span aria-hidden className="status-dot bg-plot-red" />
-            <span className="label-faceplate">IN PROGRESS</span>
+            <span aria-hidden className={cn("status-dot", current.dot)} />
+            <span key={idx} className="label-faceplate tick">
+              {current.label}
+            </span>
           </div>
         </div>
       </div>

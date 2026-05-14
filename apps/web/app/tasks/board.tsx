@@ -24,6 +24,7 @@ import {
   STATUS_LABEL,
   STATUS_ORDER,
   formatDate,
+  formatRelativeFutureFromIso,
   shortRecurrenceLabel,
   type Task,
   type TaskStatus,
@@ -180,7 +181,14 @@ function BoardCard({
         <div className="flex flex-wrap gap-x-3 gap-y-0.5 font-mono text-[11px] tabular-nums text-ink-faint">
           <span>@{task.assignee}</span>
           {task.due_at && <span>due {formatDate(task.due_at)}</span>}
-          {task.start_at && <span>starts {formatDate(task.start_at)}</span>}
+          {task.start_at &&
+            (new Date(task.start_at).getTime() > Date.now() ? (
+              <span className="text-signal-blue">
+                starts {formatRelativeFutureFromIso(task.start_at)}
+              </span>
+            ) : (
+              <span>starts {formatDate(task.start_at)}</span>
+            ))}
           {task.depends_on.length > 0 && (
             <span>
               {task.depends_on.length} dep

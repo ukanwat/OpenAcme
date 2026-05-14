@@ -8,6 +8,11 @@ import { cn } from "@/app/lib/utils"
  * Lab/instrument badge — sharp, hairline-bordered, mono UPPERCASE label.
  * Use for status tags, IDs, and category labels. Pair color with text per
  * the no-color-only-state rule.
+ *
+ * Badges do not carry leading status dots. The standalone status-indicator
+ * primitive (DESIGN.md §5) — a 6px dot + mono label, used in empty-state
+ * previews and equivalent surfaces — is a separate vocabulary and should
+ * not be nested inside a badge.
  */
 const badgeVariants = cva(
   "inline-flex w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-none px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em] whitespace-nowrap transition-colors focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-1 focus-visible:outline-plot-red [&>svg]:pointer-events-none [&>svg]:size-3",
