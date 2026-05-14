@@ -419,7 +419,10 @@ function ActivityTimeline({
                       author={resolveAuthor(it.comment.author, agentMap)}
                     />
                   ) : it.comment.kind === "system" ? (
-                    <SystemCommentRow comment={it.comment} />
+                    <SystemCommentRow
+                      comment={it.comment}
+                      author={resolveAuthor(it.comment.author, agentMap)}
+                    />
                   ) : (
                     <CommentRow
                       comment={it.comment}
@@ -427,7 +430,11 @@ function ActivityTimeline({
                     />
                   )
                 ) : (
-                  <EventRow event={it.event} titleByDepId={titleByDepId} />
+                  <EventRow
+                    event={it.event}
+                    titleByDepId={titleByDepId}
+                    agentMap={agentMap}
+                  />
                 )}
               </li>
             );
@@ -452,28 +459,33 @@ interface ResolvedAuthor {
   handle: string;
 }
 
+// Disambiguation: agents render as `@<handle>` (regular ink), non-agent
+// authors render as `<handle>` italic without `@`. An agent literally
+// named "user" therefore reads as `@user` and stays distinct from the
+// human user (which renders as plain italic `user`). All `system:*`
+// actors other than `system:user` collapse to the `system` handle —
+// callers that need finer detail (e.g., scheduler_action message body)
+// surface it via the description, not the actor label.
 function resolveAuthor(
   id: string,
   agentMap: Map<string, string>
 ): ResolvedAuthor {
   if (id === "system:user") return { kind: "user", handle: "user" };
-  if (id.startsWith("system:")) {
-    const sub = id.slice("system:".length);
-    return { kind: "system", handle: sub || "system" };
-  }
+  if (id.startsWith("system:")) return { kind: "system", handle: "system" };
   if (agentMap.has(id)) return { kind: "agent", handle: id };
   return { kind: "unknown", handle: id.slice(0, 8) };
 }
 
 function AuthorChip({ author }: { author: ResolvedAuthor }) {
+  const isAgent = author.kind === "agent";
   return (
     <span
       className={cn(
         "font-mono text-[11px]",
-        author.kind === "system" ? "italic text-ink-soft" : "text-ink"
+        isAgent ? "text-ink" : "italic text-ink-soft"
       )}
     >
-      @{author.handle}
+      {isAgent ? `@${author.handle}` : author.handle}
     </span>
   );
 }
@@ -541,7 +553,13 @@ function ResultRow({
   );
 }
 
-function SystemCommentRow({ comment }: { comment: Comment }) {
+function SystemCommentRow({
+  comment,
+  author,
+}: {
+  comment: Comment;
+  author: ResolvedAuthor;
+}) {
   return (
     <div className="grid grid-cols-[12px_1fr] gap-x-3">
       <div aria-hidden className="flex justify-center">
@@ -549,7 +567,7 @@ function SystemCommentRow({ comment }: { comment: Comment }) {
       </div>
       <div className="min-w-0">
         <div className="flex flex-wrap items-baseline gap-x-2 font-mono text-[11px] italic">
-          <span className="text-ink-soft">@scheduler</span>
+          <span className="text-ink-soft">{author.handle}</span>
           <span className="text-ink-faint">·</span>
           <span
             className="tabular-nums text-ink-faint"
@@ -569,21 +587,31 @@ function SystemCommentRow({ comment }: { comment: Comment }) {
 function EventRow({
   event,
   titleByDepId,
+  agentMap,
 }: {
   event: TaskEvent;
   titleByDepId: Map<string, string>;
+  agentMap: Map<string, string>;
 }) {
   const payload = parseEventPayload(event.payload);
-  const actorHandle = resolveEventActor(event, payload);
+  const actor = resolveEventActor(event, payload, agentMap);
   return (
     <div className="grid grid-cols-[12px_1fr] items-center gap-x-3">
       <div aria-hidden className="flex justify-center">
         <span className="font-mono text-[11px] leading-none text-ink-faint">›</span>
       </div>
       <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[12px] tabular-nums text-ink-soft">
-        {actorHandle && (
+        {actor && (
           <>
-            <span className="text-ink">@{actorHandle}</span>
+            <span
+              className={cn(
+                actor.kind === "agent"
+                  ? "text-ink"
+                  : "italic text-ink-soft"
+              )}
+            >
+              {actor.kind === "agent" ? `@${actor.handle}` : actor.handle}
+            </span>
             <span className="text-ink-faint">·</span>
           </>
         )}
@@ -604,6 +632,9 @@ function EventRow({
   );
 }
 
+// Agent handle for inline references in event descriptions (e.g.
+// "assigned to @<assignee>"). Strips the `system:` prefix; callers
+// decide whether to prepend `@` (agents) or not (system actors).
 function resolveAgentHandle(id: string | undefined): string {
   if (!id) return "?";
   if (id.startsWith("system:"))
@@ -611,19 +642,23 @@ function resolveAgentHandle(id: string | undefined): string {
   return id;
 }
 
-// Leading handle per event row. `event.actor` is the canonical source, but a
-// couple of kinds null it out (task_assigned echo-suppresses; some scheduler
-// emits don't set it). Derive from payload so every row leads with @handle.
+// Leading speaker per event row. `event.actor` is the canonical source,
+// but a couple of kinds null it out (task_assigned echo-suppresses;
+// some scheduler emits don't set it). Derive from payload / event kind
+// so every row leads with a consistent speaker.
 function resolveEventActor(
   event: TaskEvent,
-  payload: Record<string, unknown> | null
-): string | null {
-  if (event.actor) return resolveAgentHandle(event.actor);
+  payload: Record<string, unknown> | null,
+  agentMap: Map<string, string>
+): ResolvedAuthor | null {
+  if (event.actor) return resolveAuthor(event.actor, agentMap);
   if (event.kind === "task_assigned") {
     const createdBy = payload?.created_by as string | undefined;
-    if (createdBy) return resolveAgentHandle(createdBy);
+    if (createdBy) return resolveAuthor(createdBy, agentMap);
   }
-  if (event.kind === "scheduler_action") return "scheduler";
+  if (event.kind === "scheduler_action") {
+    return { kind: "system", handle: "system" };
+  }
   return null;
 }
 
