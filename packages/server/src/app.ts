@@ -3,7 +3,6 @@ import { cors } from "hono/cors";
 import * as crypto from "node:crypto";
 import {
   createUIMessageStream,
-  createUIMessageStreamResponse,
   type UIMessage,
 } from "ai";
 import {
@@ -71,6 +70,12 @@ const PKG_VERSION: string = (() => {
 export async function createApp(config: Config): Promise<{ app: Hono; manager: AgentManager }> {
   const app = new Hono();
   const manager = new AgentManager(config);
+
+  // Per-session abort handles for in-flight interactive turns. Survives
+  // the HTTP request that initiated the turn — SSE-only streaming means
+  // the POST returns before the agent finishes; cancel is the only
+  // remaining path. Cleared on completion or DELETE active-turn.
+  const activeTurns = new Map<string, AbortController>();
 
   // Middleware
   app.use("/*", cors());
@@ -263,12 +268,11 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
     return c.json({ success: true });
   });
 
-  // ── Chat (UIMessage stream) ──
-  // SDK protocol — we wrap streamText inside createUIMessageStream so we
-  // can emit a custom `data-session` part for session-id pinning before
-  // the model starts producing tokens. The web client reads this part
-  // via useChat's onData. The handler does not persist incrementally;
-  // onFinish writes the new user UIMessage + the assembled response.
+  // ── Chat ──
+  // Client owns sessionId + user-message id; the server uses both
+  // verbatim so the optimistic upsert in the originating tab converges
+  // with the `messages_appended` echo. Caller must subscribe SSE before
+  // posting — chunks flow there, not over this response.
   app.post("/api/chat", async (c) => {
     let body: Record<string, unknown>;
     try {
@@ -429,190 +433,49 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
       }
     }
 
-    const signal = c.req.raw.signal;
+    // One in-flight interactive turn per session — the new send wins.
+    const previousController = activeTurns.get(effectiveSessionId);
+    if (previousController) previousController.abort();
+    const controller = new AbortController();
+    activeTurns.set(effectiveSessionId, controller);
+    const signal = controller.signal;
 
-    const stream = createUIMessageStream<OpenAcmeUIMessage>({
-      execute: async ({ writer }) => {
-        // Surface the resolved sessionId for the client. `transient: true`
-        // keeps it out of the persisted parts (only useChat's onData fires).
-        writer.write({
-          type: "data-session",
-          data: { sessionId: effectiveSessionId },
-          transient: true,
-        });
-        // Block autonomous wakes for the duration of this interactive
-        // turn. Cleared in the finally below; onFinish clears too
-        // (idempotent) for the writer.merge success path.
-        manager.taskScheduler.markInteractiveBusy(effectiveSessionId);
-        // Tell SSE subscribers (other tabs on this session, the home
-        // view) the session is now Running. Mirrors what the scheduler
-        // does for autonomous turns; without this, /api/home's
-        // "Running" bucket misses interactive turns and other tabs
-        // never see the activity indicator.
-        manager.broadcaster.broadcast(effectiveSessionId, {
-          kind: "session_state",
-          state: "running",
-        });
-        try {
-          const agent = manager.getAgent(agentId);
+    // Used for both the streamed `start` chunk and the final
+    // `messages_appended` so per-tab assemblers and the end-of-turn
+    // upsert refer to the same row.
+    const responseMessageId = randomUUID();
 
-          const recall = await agent.applyMemoryRecall({
-            history: committed,
-            signal,
-          });
-          // Attach to the new user msg before runStream: the model sees
-          // it via uiToModelMessages this turn; persisted in onFinish so
-          // future loads replay identical bytes (prefix cache).
-          const recallPart = agent.buildRelevantMemoryPart(
-            recall.entries,
-            recall.modelContent
-          );
-          if (recallPart) {
-            const lastUser = committed[committed.length - 1];
-            if (lastUser?.role === "user") {
-              lastUser.parts = [
-                ...(lastUser.parts as UIMessage["parts"]),
-                recallPart as unknown as UIMessage["parts"][number],
-              ];
-            }
-          }
-
-          const result = await agent.runStream({
-            sessionId: effectiveSessionId,
-            history: committed,
-            signal,
-          });
-          // Fan each UIMessage chunk to both the SDK writer (the
-          // originating client via useChat) and the broadcaster (other
-          // tabs). Default `sendStart: true` is required — the SSE
-          // channel is long-lived across turns, so without start/finish
-          // markers the subscriber-side assembler would merge every
-          // turn's chunks into one ever-growing message.
-          const uiStream = result.toUIMessageStream();
-          const reader = (
-            uiStream as ReadableStream<unknown>
-          ).getReader();
-          try {
-            for (;;) {
-              const r = await reader.read();
-              if (r.done) break;
-              try {
-                writer.write(r.value as Parameters<typeof writer.write>[0]);
-              } catch (e) {
-                console.warn(
-                  `/api/chat writer.write failed: ${e instanceof Error ? e.message : String(e)}`
-                );
-              }
-              try {
-                manager.broadcaster.broadcast(effectiveSessionId, {
-                  kind: "ui_message_part",
-                  part: r.value,
-                });
-              } catch (e) {
-                console.warn(
-                  `/api/chat broadcaster forward failed: ${e instanceof Error ? e.message : String(e)}`
-                );
-              }
-            }
-          } finally {
-            reader.releaseLock();
-          }
-        } catch (e) {
-          manager.taskScheduler.clearInteractiveBusy(effectiveSessionId);
-          manager.broadcaster.broadcast(effectiveSessionId, {
-            kind: "session_state",
-            state: "idle",
-          });
-          throw e;
-        }
-      },
-      originalMessages: committed as unknown as OpenAcmeUIMessage[],
-      generateId: () => randomUUID(),
-      onFinish: ({ responseMessage }) => {
-        // Lift the interactive-busy gate before persistence so any wakes
-        // queued during the turn fire promptly. Idempotent.
-        manager.taskScheduler.clearInteractiveBusy(effectiveSessionId);
-        manager.broadcaster.broadcast(effectiveSessionId, {
-          kind: "session_state",
-          state: "idle",
-        });
-        // User message was pre-persisted above; only persist the
-        // assistant response here.
-        try {
-          const sanitizedParts = ensureStepBoundaries(
-            finalizeOrphanToolParts(
-              responseMessage.parts as UIMessage["parts"]
-            )
-          );
-          manager.messageStore.append(effectiveSessionId, {
-            id: responseMessage.id,
-            role: responseMessage.role as "user" | "assistant",
-            parts: sanitizedParts as unknown[],
-          });
-          // Final broadcast of the assembled assistant message so SSE
-          // subscribers settle on the deterministic shape the DB sees.
-          // Streaming `ui_message_part` arrivals already produced an
-          // upserted UIMessage with the same id; this is a no-op for
-          // tabs that received the live stream and the canonical
-          // arrival for any that just connected.
-          manager.broadcaster.broadcast(effectiveSessionId, {
-            kind: "messages_appended",
-            messages: [
-              {
-                id: responseMessage.id,
-                role: responseMessage.role as "user" | "assistant",
-                parts: sanitizedParts as unknown[],
-              },
-            ],
-          });
-
-          manager.sessionStore.touch(effectiveSessionId);
-        } catch (e) {
-          console.error(
-            `Failed to persist chat turn: ${
-              e instanceof Error ? e.message : String(e)
-            }`
-          );
-        }
-
-        // Phase-3 extractor — fire-and-forget. Agent owns the cursor +
-        // in-progress guard so re-entrant fires (multiple turns
-        // arriving fast) coalesce into one fork. Skip-paths inside the
-        // extractor cover main-agent-already-wrote / no-new-content.
-        const turnHistory = [
-          ...committed,
-          responseMessage as unknown as UIMessage,
-        ];
-        try {
-          const agent = manager.getAgent(agentId);
-          agent.fireExtractor({
-            sessionId: effectiveSessionId,
-            sessionMessages: turnHistory,
-          });
-        } catch (e) {
-          console.warn(
-            `[memory.extractor] launch failed for agent=${agentId}: ${e instanceof Error ? e.message : String(e)}`
-          );
-        }
-
-        // Session title — fire-and-forget. LLM (structured subagent)
-        // primary; slice-of-first-assistant-text fallback. No-op once
-        // the session has a title.
-        try {
-          const agent = manager.getAgent(agentId);
-          agent.fireTitle({
-            sessionId: effectiveSessionId,
-            sessionMessages: turnHistory,
-          });
-        } catch (e) {
-          console.warn(
-            `[title] launch failed for agent=${agentId}: ${e instanceof Error ? e.message : String(e)}`
-          );
-        }
-      },
+    void runChatTurn({
+      manager,
+      agentId,
+      sessionId: effectiveSessionId,
+      committed,
+      responseMessageId,
+      signal,
+    }).finally(() => {
+      if (activeTurns.get(effectiveSessionId) === controller) {
+        activeTurns.delete(effectiveSessionId);
+      }
     });
 
-    return createUIMessageStreamResponse({ stream });
+    const lastUser = committed[committed.length - 1];
+    return c.json({
+      sessionId: effectiveSessionId,
+      userMessageId: lastUser?.id ?? null,
+      assistantMessageId: responseMessageId,
+    });
+  });
+
+  // The server-owned agent run is decoupled from the HTTP request that
+  // initiated it (SSE-only streaming), so this is the only way for the
+  // UI to cancel without closing the tab. 404 = no turn was running.
+  app.delete("/api/sessions/:id/active-turn", (c) => {
+    const id = c.req.param("id");
+    const ctrl = activeTurns.get(id);
+    if (!ctrl) return c.json({ ok: false, reason: "no active turn" }, 404);
+    ctrl.abort();
+    activeTurns.delete(id);
+    return c.json({ ok: true });
   });
 
   // ── Models ──
@@ -1132,4 +995,193 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
   }
 
   return { app, manager };
+}
+
+/**
+ * Run one interactive chat turn in the background. SSE is the only
+ * delivery channel; `createUIMessageStream` is used purely for its
+ * onFinish assembly — the wrapper's stream output is drained and
+ * discarded since the POST already returned.
+ */
+async function runChatTurn(args: {
+  manager: AgentManager;
+  agentId: string;
+  sessionId: string;
+  committed: UIMessage[];
+  responseMessageId: string;
+  signal: AbortSignal;
+}): Promise<void> {
+  const { manager, agentId, sessionId, committed, responseMessageId, signal } = args;
+
+  manager.taskScheduler.markInteractiveBusy(sessionId);
+  manager.broadcaster.broadcast(sessionId, {
+    kind: "session_state",
+    state: "running",
+  });
+
+  const wrapper = createUIMessageStream<OpenAcmeUIMessage>({
+    execute: async ({ writer }) => {
+      const agent = manager.getAgent(agentId);
+
+      const recall = await agent.applyMemoryRecall({
+        history: committed,
+        signal,
+      });
+      // Attach to the new user msg before runStream: the model sees it
+      // via uiToModelMessages this turn; persisted in onFinish so future
+      // loads replay identical bytes (prefix cache).
+      const recallPart = agent.buildRelevantMemoryPart(
+        recall.entries,
+        recall.modelContent
+      );
+      if (recallPart) {
+        const lastUser = committed[committed.length - 1];
+        if (lastUser?.role === "user") {
+          lastUser.parts = [
+            ...(lastUser.parts as UIMessage["parts"]),
+            recallPart as unknown as UIMessage["parts"][number],
+          ];
+        }
+      }
+
+      const result = await agent.runStream({
+        sessionId,
+        history: committed,
+        signal,
+      });
+      // Synthetic start so SSE assemblers and `onFinish`'s
+      // `responseMessage.id` agree on the same row.
+      manager.broadcaster.broadcast(sessionId, {
+        kind: "ui_message_part",
+        part: { type: "start", messageId: responseMessageId },
+      });
+      const uiStream = result.toUIMessageStream({
+        sendStart: false,
+        sendFinish: false,
+      });
+      const reader = (uiStream as ReadableStream<unknown>).getReader();
+      try {
+        for (;;) {
+          const r = await reader.read();
+          if (r.done) break;
+          try {
+            writer.write(r.value as Parameters<typeof writer.write>[0]);
+          } catch {
+            /* wrapper closed (abort race) */
+          }
+          try {
+            manager.broadcaster.broadcast(sessionId, {
+              kind: "ui_message_part",
+              part: r.value,
+            });
+          } catch (e) {
+            console.warn(
+              `runChatTurn broadcaster forward failed: ${e instanceof Error ? e.message : String(e)}`
+            );
+          }
+        }
+      } finally {
+        reader.releaseLock();
+      }
+      manager.broadcaster.broadcast(sessionId, {
+        kind: "ui_message_part",
+        part: { type: "finish" },
+      });
+    },
+    originalMessages: committed as unknown as OpenAcmeUIMessage[],
+    generateId: () => responseMessageId,
+    onFinish: ({ responseMessage }) => {
+      manager.taskScheduler.clearInteractiveBusy(sessionId);
+      try {
+        const sanitizedParts = ensureStepBoundaries(
+          finalizeOrphanToolParts(
+            responseMessage.parts as UIMessage["parts"]
+          )
+        );
+        manager.messageStore.append(sessionId, {
+          id: responseMessage.id,
+          role: responseMessage.role as "user" | "assistant",
+          parts: sanitizedParts as unknown[],
+        });
+        // Final canonical broadcast — chunks already produced the live
+        // assembly; this settles late subscribers + applies sanitization
+        // (orphan tool parts, step boundaries) that the chunk path didn't.
+        manager.broadcaster.broadcast(sessionId, {
+          kind: "messages_appended",
+          messages: [
+            {
+              id: responseMessage.id,
+              role: responseMessage.role as "user" | "assistant",
+              parts: sanitizedParts as unknown[],
+            },
+          ],
+        });
+        manager.sessionStore.touch(sessionId);
+      } catch (e) {
+        console.error(
+          `Failed to persist chat turn: ${
+            e instanceof Error ? e.message : String(e)
+          }`
+        );
+      }
+      // Idle goes AFTER persist + messages_appended so the client's
+      // running→idle refetch can't race the DB write.
+      manager.broadcaster.broadcast(sessionId, {
+        kind: "session_state",
+        state: "idle",
+      });
+
+      const turnHistory = [
+        ...committed,
+        responseMessage as unknown as UIMessage,
+      ];
+      try {
+        manager.getAgent(agentId).fireExtractor({
+          sessionId,
+          sessionMessages: turnHistory,
+        });
+      } catch (e) {
+        console.warn(
+          `[memory.extractor] launch failed for agent=${agentId}: ${e instanceof Error ? e.message : String(e)}`
+        );
+      }
+      try {
+        manager.getAgent(agentId).fireTitle({
+          sessionId,
+          sessionMessages: turnHistory,
+        });
+      } catch (e) {
+        console.warn(
+          `[title] launch failed for agent=${agentId}: ${e instanceof Error ? e.message : String(e)}`
+        );
+      }
+    },
+  });
+
+  // Drain the wrapper to drive its onFinish assembly; nothing reads
+  // the output (SSE is the delivery channel).
+  const drainReader = (wrapper as ReadableStream<unknown>).getReader();
+  try {
+    for (;;) {
+      const r = await drainReader.read();
+      if (r.done) break;
+    }
+  } catch (e) {
+    // execute() threw before onFinish ran — emit idle so observers
+    // unstick. Chunks up to the failure point already broadcast.
+    manager.taskScheduler.clearInteractiveBusy(sessionId);
+    manager.broadcaster.broadcast(sessionId, {
+      kind: "session_state",
+      state: "idle",
+    });
+    console.warn(
+      `runChatTurn errored for session=${sessionId}: ${e instanceof Error ? e.message : String(e)}`
+    );
+  } finally {
+    try {
+      drainReader.releaseLock();
+    } catch {
+      /* already released */
+    }
+  }
 }

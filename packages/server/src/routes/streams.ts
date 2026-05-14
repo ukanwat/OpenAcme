@@ -79,9 +79,10 @@ function sseResponse(
 export function registerStreamRoutes(app: Hono, manager: AgentManager): void {
   app.get("/api/sessions/:id/stream", (c) => {
     const sessionId = c.req.param("id");
-    if (!manager.sessionStore.get(sessionId)) {
-      return c.json({ error: "Session not found" }, 404);
-    }
+    // No 404 on unknown session — the web subscribes BEFORE the first
+    // POST to /api/chat creates the row (SSE has to be open before send
+    // so the agent's first chunks aren't missed). The broadcaster
+    // handles lazy session state internally.
     const sinceSeq = parseSinceSeq(c.req.header("last-event-id"));
     // Replay the ring buffer only on real reconnects (Last-Event-ID
     // present). Fresh connections get forward-only — replaying old

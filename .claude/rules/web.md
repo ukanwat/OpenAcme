@@ -7,29 +7,38 @@ paths:
 
 Next.js 16 App Router. Pages: `/` (chat), `/agents`, `/settings`, `/skills`. Tailwind + Radix primitives + react-markdown. Static-built into `packages/server/web/` and served by Hono.
 
-## `useChat` + `DefaultChatTransport` is the chat contract
+## Chat is SSE-only. The page owns `messages` state directly.
 
-`apps/web/app/page.tsx` uses `@ai-sdk/react`'s `useChat` with a `DefaultChatTransport({ api, prepareSendMessagesRequest })`. The transport callback injects `agentId` + `sessionId` into the body each send so the server route can resolve the right agent. Streaming is the SDK's UIMessageStream protocol — the SDK parses; we don't.
+`apps/web/app/page.tsx` does NOT use `useChat`. Agent runs are server-owned; every observer (the originating tab included) reads them over the per-session SSE channel via `useLiveSession`. `messages` is plain `useState<OpenAcmeUIMessage[]>` — that's the canonical render source.
 
-- `messages` from `useChat` IS the canonical render source. Do not maintain a parallel state.
-- `sendMessage({ role: "user", parts: [...] })` is the canonical send shape. Files are `{type:"file", url, mediaType, filename}` — `url` is the pending `/api/attachments/__pending__/<id>/<filename>` until the chat handler commits it.
-- `setMessages(history)` repopulates after a session switch (history fetched from `/api/sessions/:id/messages`).
-- `status` is `"submitted" | "streaming" | "ready" | "error"`. The send button + textarea disable on the first two.
+The send flow:
 
-## Session-id pinning via `data-session` transient part
+1. `crypto.randomUUID()` mints a sessionId when there's no active one. The client owns it; the server creates the row from whatever is passed.
+2. Set `activeSessionId(sid)` → `useLiveSession` effect opens the EventSource → `liveConnectedRef.current` flips to true on `onopen`.
+3. `await waitForCondition(() => liveConnectedRef.current, 2000)` so the agent's first chunks can't be missed.
+4. Optimistic `setMessages(prev => [...prev, userMsg])` with a client-generated user-message id; the server uses that id when it persists + echoes, so the SSE `messages_appended` upserts in place.
+5. `POST /api/chat` with `{agentId, sessionId, messages: historyForServer}`. Returns JSON `{sessionId, userMessageId, assistantMessageId}` — no response body to read.
+6. Everything else (chunks, status, final message) arrives via SSE.
 
-Server emits `{type: "data-session", data: {sessionId}, transient: true}` BEFORE the model produces tokens. `useChat({ onData: ({type, data}) => ... })` reads it and the page pins `activeSessionId`. Transient parts never appear in `messages` — only `onData` sees them.
+- Don't reintroduce `useChat`. The same-tab + cross-tab observer paths are now one code path; reintroducing the HTTP-response reader reintroduces the same-id coordination dance (`responseMessageId`, `suppressPartAssembly`) the SSE-only refactor removed.
+- `freshSessionIdRef` flags client-generated sessions so the history + metadata fetches skip them — the server row doesn't exist until /api/chat lands.
+- The running→idle effect refetches `/messages` to pick up server-side sanitization + the recall part attached to the user message. Don't drop that refetch.
 
-- Don't try to read `sessionId` from the `messages` array — it isn't there.
-- New custom data parts: pick `data-${name}`, decide transient vs persistent (transient = ephemeral signal, non-transient = lands in `responseMessage.parts`).
+## Stop button → `DELETE /api/sessions/:id/active-turn`
+
+The HTTP request that started the turn already returned; the agent run lives in the server's `activeTurns` map. Stop calls the DELETE endpoint. Idempotent.
+
+## Custom data parts arrive via `useLiveSession({onDataPart})`
+
+Transient parts (e.g. `data-status`) are stripped by `readUIMessageStream` so they never land in `messages`. `useLiveSession` peeks at raw `ui_message_part` chunks and surfaces `data-*` parts through `onDataPart` for the page to handle (e.g. the `statusBoard`). Non-transient data parts land in `messages` as ordinary parts.
 
 ## Attachments: pending → committed flow
 
 1. User picks/drops files (textarea container has `onDragOver/Drop` gated on `dataTransfer.types.includes("Files")` AND `acceptsAttachments`).
 2. `uploadFiles(files)` POSTs multipart to `/api/uploads`. Server returns `{pendingId, url: "/api/attachments/__pending__/<id>/<file>", kind, mediaType, size, filename}` per file.
 3. Web stages chips with the pending URL + a local `URL.createObjectURL(file)` preview for image MIME types.
-4. On send: `sendMessage({role:"user", parts:[ {type:"text",text}, {type:"file", url: pendingUrl, mediaType, filename}, ... ]})`.
-5. Server's `/api/chat` validates pendings, moves files to `<sessionId>/<attId>/<file>`, rewrites URLs in the messages it persists. The web's local optimistic chip stays the same — useChat's `messages[lastUser]` carries the new URL after streaming finishes.
+4. On send: include `{type:"file", url: pendingUrl, mediaType, filename}` in the optimistic user message's `parts`. The pending URL travels into `historyForServer` and the POST body.
+5. Server's `/api/chat` validates pendings, moves files to `<sessionId>/<attId>/<file>`, rewrites URLs in the user message it persists, and echoes the rewritten version via `messages_appended` (same id) — the SSE handler upserts in place.
 
 - Provider-gate the picker via `activeModalities` from `/api/models` (each preset carries `inputModalities` from the bundled registry). Disable picker + drag-drop overlay when the active model is text-only.
 - Per-file blob preview URL — `URL.revokeObjectURL` after send to avoid leaking object URLs.
