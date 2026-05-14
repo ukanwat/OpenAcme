@@ -9,6 +9,9 @@ import {
   resolveResourcePath,
   type AgentResource,
 } from "./resources.js";
+import { createLogger } from "./logger.js";
+
+const log = createLogger("config.agent-store");
 
 /**
  * File-based agent store. Each agent lives in its own folder under
@@ -103,9 +106,7 @@ function parseAgentFile(filePath: string): AgentDefinition | null {
     void _ignoredFrontmatterId;
     return AgentDefinitionSchema.parse({ ...rest, id, persona });
   } catch (e) {
-    console.warn(
-      `Skipping malformed agent file ${filePath}: ${e instanceof Error ? e.message : String(e)}`
-    );
+    log.warn({ err: e, filePath }, "skipping malformed agent file");
     return null;
   }
 }

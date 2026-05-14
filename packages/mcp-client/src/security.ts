@@ -1,4 +1,7 @@
 import * as os from "node:os";
+import { createLogger } from "@openacme/config/logger";
+
+const log = createLogger("mcp-client.security");
 
 /**
  * Environment variables that are safe to pass through to MCP stdio subprocesses.
@@ -68,8 +71,9 @@ export function scanDescription(
     }
   }
   if (findings.length > 0) {
-    console.warn(
-      `MCP server '${serverName}' tool '${toolName}': suspicious description — ${findings.join("; ")}`
+    log.warn(
+      { server: serverName, tool: toolName, findings },
+      "suspicious MCP tool description"
     );
   }
   return findings;

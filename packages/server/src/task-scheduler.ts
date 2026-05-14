@@ -16,8 +16,11 @@ import { Cron } from "croner";
 import type { TaskStore, Task, TaskEvent } from "@openacme/tasks";
 import { AutonomousTurnTimeout } from "@openacme/agent-core";
 import type { SessionStore } from "@openacme/db";
+import { createLogger } from "@openacme/config/logger";
 import type { AgentManager } from "./agent-manager.js";
 import type { SessionBroadcaster } from "./broadcaster.js";
+
+const log = createLogger("server.task-scheduler");
 
 const SESSION_WAKE_DEBOUNCE_MS = 7_000;
 // Floor between successive wakes on one session. Events arriving inside
@@ -104,14 +107,10 @@ export class TaskScheduler {
     try {
       const reset = await this.taskStore.sweepStale(this.now());
       if (reset.length > 0) {
-        console.log(
-          `TaskScheduler: reset ${reset.length} stale in-progress task(s) on startup`
-        );
+        log.info({ count: reset.length }, "reset stale in-progress tasks on startup");
       }
     } catch (e) {
-      console.warn(
-        `TaskScheduler: startup sweep failed: ${e instanceof Error ? e.message : String(e)}`
-      );
+      log.warn({ err: e }, "startup sweep failed");
     }
     await this.startupSweep();
   }
@@ -263,9 +262,7 @@ export class TaskScheduler {
         sessionId = session.id;
         isNewSession = true;
       } catch (e) {
-        console.warn(
-          `TaskScheduler: failed to allocate session for ${task.id}: ${e instanceof Error ? e.message : String(e)}`
-        );
+        log.warn({ err: e, taskId: task.id }, "failed to allocate session for task");
         return;
       }
     }
@@ -284,8 +281,9 @@ export class TaskScheduler {
             { actor: "system:scheduler" }
           );
         } catch (e) {
-          console.warn(
-            `TaskScheduler: failed to clear dangling session_id for ${task.id}: ${e instanceof Error ? e.message : String(e)}`
+          log.warn(
+            { err: e, taskId: task.id },
+            "failed to clear dangling session_id"
           );
         }
       }
@@ -411,9 +409,7 @@ export class TaskScheduler {
         });
         await this.taskStore.update(t.id, { session_id: session.id });
       } catch (e) {
-        console.warn(
-          `TaskScheduler: failed to bind session for task ${t.id}: ${e instanceof Error ? e.message : String(e)}`
-        );
+        log.warn({ err: e, taskId: t.id }, "failed to bind session for task");
       }
     }
 
@@ -489,9 +485,7 @@ export class TaskScheduler {
           this.armed.delete(id);
           if (this.stopped) return;
           this.fireArmed(id).catch((e) => {
-            console.warn(
-              `TaskScheduler: armed wake for ${id} failed: ${e instanceof Error ? e.message : String(e)}`
-            );
+            log.warn({ err: e, taskId: id }, "armed wake failed");
           });
         }
       );
@@ -546,9 +540,7 @@ export class TaskScheduler {
           this.probeArmed.delete(sid);
           if (this.stopped) return;
           this.fireProbe(sid).catch((e) => {
-            console.warn(
-              `TaskScheduler: probe wake for ${sid} failed: ${e instanceof Error ? e.message : String(e)}`
-            );
+            log.warn({ err: e, sessionId: sid }, "probe wake failed");
           });
         }
       );
@@ -564,9 +556,7 @@ export class TaskScheduler {
     try {
       this.sessionStore.setNextCheckAt(sessionId, null);
     } catch (e) {
-      console.warn(
-        `TaskScheduler: failed to clear next_check_at for ${sessionId}: ${e instanceof Error ? e.message : String(e)}`
-      );
+      log.warn({ err: e, sessionId }, "failed to clear next_check_at");
     }
     if (!this.sessionHasEligibleWork(sessionId)) return;
     const session = this.sessionStore.get(sessionId);
@@ -600,9 +590,7 @@ export class TaskScheduler {
     try {
       this.sessionStore.setNextCheckAt(sessionId, target);
     } catch (e) {
-      console.warn(
-        `TaskScheduler: failed to arm heartbeat for ${sessionId}: ${e instanceof Error ? e.message : String(e)}`
-      );
+      log.warn({ err: e, sessionId }, "failed to arm heartbeat");
     }
     this.reconcileProbes(this.now());
   }
@@ -643,9 +631,7 @@ export class TaskScheduler {
         await this.taskStore.update(task.id, { session_id: session.id });
         sessionId = session.id;
       } catch (e) {
-        console.warn(
-          `TaskScheduler: armed alloc for ${task.id} failed: ${e instanceof Error ? e.message : String(e)}`
-        );
+        log.warn({ err: e, taskId: task.id }, "armed alloc failed");
         return;
       }
     }
@@ -664,8 +650,9 @@ export class TaskScheduler {
     if (!this.agentExists(agentId)) {
       if (!this.missingAgentsLogged.has(agentId)) {
         this.missingAgentsLogged.add(agentId);
-        console.warn(
-          `TaskScheduler: agent ${agentId} is referenced by sessions/tasks but no longer exists — wakes for that agent will be skipped. Reassign or delete those sessions/tasks to clean up.`
+        log.warn(
+          { agentId },
+          "agent referenced by sessions/tasks but no longer exists — wakes skipped; reassign or delete to clean up"
         );
       }
       this.dropWakeState(sessionId);
@@ -732,8 +719,9 @@ export class TaskScheduler {
       // and bail; the next tick will retry. If the agent stays missing
       // permanently, a human is the right escalation path — auto-blocking
       // every task assigned to a vanished agent would be too aggressive.
-      console.warn(
-        `TaskScheduler: agent ${agentId} not available for session ${sessionId}: ${msg}`
+      log.warn(
+        { agentId, sessionId, message: msg },
+        "agent not available for session"
       );
       return;
     }
@@ -767,9 +755,7 @@ export class TaskScheduler {
       const message = e instanceof Error ? e.message : String(e);
       const isTimeout = e instanceof AutonomousTurnTimeout;
       if (!isTimeout) {
-        console.warn(
-          `TaskScheduler: turn in session ${sessionId} failed: ${message}`
-        );
+        log.warn({ sessionId, message }, "autonomous turn failed");
       }
       await this.parkInProgress(sessionId, {
         action: isTimeout ? "timeout" : "error",
@@ -803,9 +789,7 @@ export class TaskScheduler {
         reason: `watchdog: ${streak} consecutive turns produced no claim — review this task`,
       });
     } catch (e) {
-      console.warn(
-        `TaskScheduler: watchdogPark failed for ${head.id}: ${e instanceof Error ? e.message : String(e)}`
-      );
+      log.warn({ err: e, taskId: head.id }, "watchdogPark failed");
     }
   }
 
@@ -838,9 +822,7 @@ export class TaskScheduler {
           reason: `[${note.action}] ${note.message}`,
         });
       } catch (e) {
-        console.warn(
-          `TaskScheduler: parkInProgress failed for ${task.id}: ${e instanceof Error ? e.message : String(e)}`
-        );
+        log.warn({ err: e, taskId: task.id }, "parkInProgress failed");
       }
     }
   }

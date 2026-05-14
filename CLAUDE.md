@@ -221,7 +221,7 @@ Never log raw tokens. Never write tokens anywhere except via `store.ts`.
 
 `loader.ts:loadConfig(dataDirOverride?)` resolves the data dir, reads `config.yaml` (or `.json`), merges with defaults, validates with Zod. **Always go through the schema** — don't read raw config elsewhere.
 
-Env vars: `OPENACME_DATA_DIR` (set early by CLI so `auth.json` is findable without threading), `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GOOGLE_GENERATIVE_AI_API_KEY` / `OPENROUTER_API_KEY`, `OPENACME_DEBUG`. Dev-only telemetry: `OPENACME_TELEMETRY=1` enables OTel/Logfire export; off by default so user installs ship inert. Currently on in this repo — when testing or checking logs/traces, use the `logfire` MCP server.
+Env vars: `OPENACME_DATA_DIR` (set early by CLI so `auth.json` is findable without threading), `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GOOGLE_GENERATIVE_AI_API_KEY` / `OPENROUTER_API_KEY`, `OPENACME_DEBUG` (drops the pino logger to `debug` level globally — any non-empty value works, including the historical `=auth`), `OPENACME_LOG_FILE` (override pino's destination; the CLI sets this to `<dataDir>/openacme-tui.log` in TUI mode so Ink owns the terminal cleanly). Dev-only telemetry: `OPENACME_TELEMETRY=1` enables OTel/Logfire export; off by default so user installs ship inert. Currently on in this repo — when testing or checking logs/traces, use the `logfire` MCP server.
 
 ---
 

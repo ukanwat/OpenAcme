@@ -1,8 +1,12 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import * as util from "node:util";
 import { config as loadDotenv } from "dotenv";
 import { NodeSDK } from "@opentelemetry/sdk-node";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
+import { OTLPLogExporter } from "@opentelemetry/exporter-logs-otlp-http";
+import { BatchLogRecordProcessor } from "@opentelemetry/sdk-logs";
+import { logs, SeverityNumber } from "@opentelemetry/api-logs";
 import { getNodeAutoInstrumentations } from "@opentelemetry/auto-instrumentations-node";
 import { Resource } from "@opentelemetry/resources";
 import { ATTR_SERVICE_NAME } from "@opentelemetry/semantic-conventions";
@@ -61,20 +65,29 @@ if (enabled) {
     // `logfire-{us,eu}.pydantic.dev` hosts are UI/MCP — they accept OTLP
     // requests but reject every token as "Unknown token", silently
     // swallowing telemetry. EU users override via `LOGFIRE_ENDPOINT`.
-    const endpoint =
+    const tracesEndpoint =
       process.env["LOGFIRE_ENDPOINT"] ??
       "https://api-us.pydantic.dev/v1/traces";
+    const logsEndpoint =
+      process.env["LOGFIRE_LOGS_ENDPOINT"] ??
+      "https://api-us.pydantic.dev/v1/logs";
     const serviceName =
       process.env["OPENACME_TELEMETRY_SERVICE_NAME"] ?? "openacme";
+    const headers = { Authorization: `Bearer ${token}` };
 
     const sdk = new NodeSDK({
       resource: new Resource({
         [ATTR_SERVICE_NAME]: serviceName,
       }),
       traceExporter: new OTLPTraceExporter({
-        url: endpoint,
-        headers: { Authorization: `Bearer ${token}` },
+        url: tracesEndpoint,
+        headers,
       }),
+      logRecordProcessors: [
+        new BatchLogRecordProcessor(
+          new OTLPLogExporter({ url: logsEndpoint, headers })
+        ),
+      ],
       instrumentations: [
         getNodeAutoInstrumentations({
           // fs/dns instrumentation generates very noisy spans for an
@@ -83,11 +96,70 @@ if (enabled) {
           // Vercel AI SDK uses for OpenAI/Anthropic/OpenRouter).
           "@opentelemetry/instrumentation-fs": { enabled: false },
           "@opentelemetry/instrumentation-dns": { enabled: false },
+          // Server-side request tracing produces one span per /api/* call,
+          // plus a tree of tcp.connect / tls.connect children. The web
+          // poll cycles (/api/agents, /api/sessions, /api/home,
+          // /api/messages, /api/keys, /api/mcp/status, ...) flood Logfire
+          // with low-value spans. We already have the AI SDK spans
+          // (ai.streamText etc.) for the chat-loop story and undici for
+          // outbound provider calls. The http instrumentation also covers
+          // outbound calls via the http/https module, which only matters
+          // for libraries that bypass fetch (none currently).
+          "@opentelemetry/instrumentation-http": { enabled: false },
         }),
       ],
     });
 
     sdk.start();
+
+    // Catch stray `console.error/warn/info` from third-party libraries
+    // (Vercel AI SDK retry paths, MCP transports, dotenv) and mirror them
+    // into OTel logs. App code uses `@openacme/config/logger` directly —
+    // pino writes to stderr, not console, so there's no double-emission
+    // risk. console.log is left alone — too noisy in this codebase to
+    // ship without a separate filter.
+    const logger = logs.getLogger(serviceName);
+    const formatArgs = (args: unknown[]): string =>
+      args
+        .map((a) =>
+          typeof a === "string"
+            ? a
+            : util.inspect(a, { depth: 4, breakLength: Infinity })
+        )
+        .join(" ");
+    const wrap =
+      (
+        orig: (...args: unknown[]) => void,
+        severityNumber: SeverityNumber,
+        severityText: string
+      ) =>
+      (...args: unknown[]) => {
+        orig(...args);
+        try {
+          logger.emit({
+            body: formatArgs(args),
+            severityNumber,
+            severityText,
+          });
+        } catch {
+          // swallow — never let logging break the app
+        }
+      };
+    console.error = wrap(
+      console.error.bind(console),
+      SeverityNumber.ERROR,
+      "ERROR"
+    );
+    console.warn = wrap(
+      console.warn.bind(console),
+      SeverityNumber.WARN,
+      "WARN"
+    );
+    console.info = wrap(
+      console.info.bind(console),
+      SeverityNumber.INFO,
+      "INFO"
+    );
 
     // Flush spans on exit. The server registers its own SIGINT/SIGTERM
     // handler that calls `process.exit(0)` synchronously — by registering

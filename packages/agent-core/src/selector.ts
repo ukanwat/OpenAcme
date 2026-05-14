@@ -6,6 +6,7 @@
  */
 
 import { z } from "zod";
+import { createLogger } from "@openacme/config/logger";
 import {
   formatMemoryManifest,
   scanMemoryFiles,
@@ -13,6 +14,8 @@ import {
 } from "@openacme/memory";
 import type { Agent } from "./agent.js";
 import { runSubagent } from "./subagent.js";
+
+const log = createLogger("agent-core.selector");
 
 export interface RelevantMemory {
   path: string;
@@ -92,8 +95,9 @@ async function selectFilenames(
 
   if (result.status !== "completed" || !result.object) {
     if (result.status === "failed") {
-      console.warn(
-        `[memory.selector] agent=${args.parent.config.id}: ${result.error ?? "unknown"}`
+      log.warn(
+        { agentId: args.parent.config.id, error: result.error ?? "unknown" },
+        "memory.selector failed"
       );
     }
     return [];

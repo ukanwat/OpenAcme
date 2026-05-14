@@ -3,6 +3,7 @@ import * as path from "node:path";
 import * as os from "node:os";
 import matter from "gray-matter";
 import { downloadTemplate } from "giget";
+import { createLogger } from "@openacme/config/logger";
 import type {
   SkillBundle,
   SkillBundleFile,
@@ -10,6 +11,8 @@ import type {
   SkillSource,
   TrustLevel,
 } from "../types.js";
+
+const log = createLogger("skills.hub.github");
 import type { GitHubAuth } from "../github-auth.js";
 import type { IndexCache } from "../index-cache.js";
 import type { Tap } from "../types.js";
@@ -100,9 +103,7 @@ export class GitHubSource implements SkillSource {
           results.push(meta);
         }
       } catch (err) {
-        console.warn(
-          `GitHubSource: tap ${tap.repo} search failed: ${err instanceof Error ? err.message : String(err)}`
-        );
+        log.warn({ err, tap: tap.repo }, "tap search failed");
       }
       if (results.length >= limit) break;
     }

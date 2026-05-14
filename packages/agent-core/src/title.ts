@@ -7,8 +7,11 @@
 
 import { z } from "zod";
 import type { UIMessage } from "ai";
+import { createLogger } from "@openacme/config/logger";
 import { runSubagent } from "./subagent.js";
 import type { Agent } from "./agent.js";
+
+const log = createLogger("agent-core.title");
 
 const TITLE_SYSTEM = [
   "Write a concise topic title for a chat conversation.",
@@ -54,8 +57,9 @@ export async function runTitle(args: RunTitleArgs): Promise<string | null> {
 
   if (res.status !== "completed" || !res.object) {
     if (res.status === "failed") {
-      console.warn(
-        `[title] agent=${args.parent.config.id}: ${res.error ?? "unknown"}`
+      log.warn(
+        { agentId: args.parent.config.id, error: res.error ?? "unknown" },
+        "title generation failed"
       );
     }
     return null;

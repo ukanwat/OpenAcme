@@ -1,6 +1,9 @@
 import { z } from "zod";
+import { createLogger } from "@openacme/config/logger";
 import type { ToolEntry, ToolDefinition, ToolInfo } from "./types.js";
 import { SYSTEM_TOOLS } from "./system.js";
+
+const log = createLogger("tools.registry");
 
 const SYSTEM_TOOL_SET = new Set<string>(SYSTEM_TOOLS);
 
@@ -25,8 +28,13 @@ export class ToolRegistry {
       const bothMcp =
         existing.toolset.startsWith("mcp-") && entry.toolset.startsWith("mcp-");
       if (!bothMcp) {
-        console.error(
-          `Tool registration REJECTED: '${entry.name}' (toolset '${entry.toolset}') would shadow existing tool from toolset '${existing.toolset}'`
+        log.error(
+          {
+            tool: entry.name,
+            toolset: entry.toolset,
+            existingToolset: existing.toolset,
+          },
+          "tool registration rejected: would shadow existing tool"
         );
         return;
       }

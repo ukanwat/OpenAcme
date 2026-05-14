@@ -2,7 +2,10 @@ import type Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { and, desc, eq, gt, inArray, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
+import { createLogger } from "@openacme/config/logger";
 import { taskEvents, type TaskEventRow } from "../schema.js";
+
+const log = createLogger("db.event-store");
 
 export type { TaskEventRow } from "../schema.js";
 
@@ -84,9 +87,7 @@ export function createEventStore(db: Database.Database) {
             try {
               fn(row);
             } catch (e) {
-              console.warn(
-                `EventStore listener threw: ${e instanceof Error ? e.message : String(e)}`
-              );
+              log.warn({ err: e }, "event listener threw");
             }
           }
         });
@@ -98,9 +99,7 @@ export function createEventStore(db: Database.Database) {
           try {
             fn(row);
           } catch (e) {
-            console.warn(
-              `EventStore listener threw: ${e instanceof Error ? e.message : String(e)}`
-            );
+            log.warn({ err: e }, "event listener threw");
           }
         }
       } finally {

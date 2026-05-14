@@ -4,7 +4,10 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { createLogger } from "@openacme/config/logger";
 import { sessions, type Session } from "../schema.js";
+
+const log = createLogger("db.session-store");
 
 export type { Session } from "../schema.js";
 
@@ -213,8 +216,9 @@ export function createSessionStore(
         .where(eq(sessions.id, id))
         .run();
       if (result.changes === 0) {
-        console.warn(
-          `markEventsSeen: session ${id} not found — cursor not advanced`
+        log.warn(
+          { sessionId: id },
+          "markEventsSeen: session not found — cursor not advanced"
         );
       }
     },
@@ -231,8 +235,9 @@ export function createSessionStore(
         .where(eq(sessions.id, id))
         .run();
       if (result.changes === 0) {
-        console.warn(
-          `setNextCheckAt: session ${id} not found — value not stored`
+        log.warn(
+          { sessionId: id },
+          "setNextCheckAt: session not found — value not stored"
         );
       }
     },
@@ -271,11 +276,7 @@ export function createSessionStore(
         try {
           fs.rmSync(dir, { recursive: true, force: true });
         } catch (e) {
-          console.error(
-            `Failed to remove attachment dir ${dir}: ${
-              e instanceof Error ? e.message : String(e)
-            }`
-          );
+          log.error({ err: e, dir }, "failed to remove attachment dir");
         }
       }
     },

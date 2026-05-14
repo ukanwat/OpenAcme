@@ -15,7 +15,7 @@ Vercel AI SDK model factory + OAuth-aware dispatch. Each provider is a factory f
 - Otherwise: missing `apiKey` **and** a non-empty access_token in `auth.json` (`:61`) → silently fall back to OAuth. This is intentional — `openacme login` "just works" without config edits.
 - API key present → API key, even if a token also exists. Explicit wins.
 
-`OPENACME_DEBUG=auth` logs the chosen branch. When debugging "why is it using my key/token", set this first.
+`OPENACME_DEBUG=1` (or any non-empty value like `=auth`) drops the pino logger to `debug` level globally — provider request/response details, account-swap notes, and 401/429 retries flow to stderr and Logfire. Filter in Logfire via `otel_scope_name = 'llm-provider'` or `attributes->>'provider' = 'anthropic'`.
 
 ## Transforms are correctness, not polish
 

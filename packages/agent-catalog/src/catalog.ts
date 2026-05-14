@@ -6,6 +6,9 @@ import {
   AgentDefinitionSchema,
   type AgentDefinition,
 } from "@openacme/config";
+import { createLogger } from "@openacme/config/logger";
+
+const log = createLogger("agent-catalog");
 import {
   AgentTemplateMetaFrontmatterSchema,
   type AgentTemplate,
@@ -92,8 +95,9 @@ function loadTemplate(templateDir: string): AgentTemplate | null {
 
   const metaParsed = AgentTemplateMetaFrontmatterSchema.safeParse(metaInput);
   if (!metaParsed.success) {
-    console.warn(
-      `[agent-catalog] Skipping ${templateDir}: invalid template metadata — ${metaParsed.error.message}`
+    log.warn(
+      { templateDir, err: metaParsed.error.message },
+      "skipping template: invalid metadata"
     );
     return null;
   }
@@ -115,8 +119,9 @@ function loadTemplate(templateDir: string): AgentTemplate | null {
     id: metaParsed.data.default_id_hint,
   });
   if (!agentParsed.success) {
-    console.warn(
-      `[agent-catalog] Skipping ${templateDir}: invalid agent fields — ${agentParsed.error.message}`
+    log.warn(
+      { templateDir, err: agentParsed.error.message },
+      "skipping template: invalid agent fields"
     );
     return null;
   }
