@@ -348,6 +348,7 @@ function TasksPageInner() {
                     saving={saving}
                     dirty={dirty}
                     agents={agents}
+                    tasks={tasks}
                     onChange={setDraft}
                     onSave={() => void save()}
                     onDeleteClick={() => setConfirmDelete(selected.id)}
@@ -457,6 +458,7 @@ function TasksPageInner() {
                   saving={saving}
                   dirty={dirty}
                   agents={agents}
+                  tasks={tasks}
                   onChange={setDraft}
                   onSave={() => void save()}
                   onDeleteClick={() => setConfirmDelete(selected.id)}

@@ -32,6 +32,7 @@ import {
   STATUS_LABEL,
   STATUS_ORDER,
   STATUS_VARIANT,
+  formatAbsoluteFromUnix,
   formatDate,
   formatRelativeFromUnix,
   type Comment,
@@ -54,6 +55,8 @@ export interface TaskDetailPanelProps {
   saving: boolean;
   dirty: boolean;
   agents: AgentOption[];
+  /** Full task list (for resolving dep / parent ids to titles). */
+  tasks: Task[];
   onChange: (next: Task) => void;
   onSave: () => void;
   onDeleteClick: () => void;
@@ -68,11 +71,16 @@ export function TaskDetailPanel({
   saving,
   dirty,
   agents,
+  tasks,
   onChange,
   onSave,
   onDeleteClick,
   onClose,
 }: TaskDetailPanelProps) {
+  const titleByDepId = useMemo(
+    () => new Map(tasks.map((t) => [t.id, t.title])),
+    [tasks]
+  );
   const [copiedTask, setCopiedTask] = useState(false);
   const [copiedSession, setCopiedSession] = useState(false);
 
@@ -234,7 +242,11 @@ export function TaskDetailPanel({
           />
         </div>
 
-        <ActivityTimeline taskId={selected.id} agents={agents} />
+        <ActivityTimeline
+          taskId={selected.id}
+          agents={agents}
+          titleByDepId={titleByDepId}
+        />
       </div>
 
       {/* Fixed footer with audit metadata */}
@@ -264,8 +276,18 @@ export function TaskDetailPanel({
             <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
               Deps
             </span>
-            <span className="col-span-3 truncate text-ink-soft">
-              {selected.depends_on.map((id) => id.slice(0, 8)).join(", ")}
+            <span className="col-span-3 flex min-w-0 flex-wrap gap-x-3 gap-y-0.5 text-ink-soft">
+              {selected.depends_on.map((id) => (
+                <span
+                  key={id}
+                  className="inline-flex items-baseline gap-1.5"
+                >
+                  <span className="text-ink-soft">{id.slice(0, 8)}</span>
+                  <span className="truncate text-ink-faint">
+                    {titleByDepId.get(id) ?? "(unknown)"}
+                  </span>
+                </span>
+              ))}
             </span>
           </>
         )}
@@ -274,8 +296,11 @@ export function TaskDetailPanel({
             <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
               Parent
             </span>
-            <span className="col-span-3 truncate text-ink-soft">
-              {selected.parent_id.slice(0, 8)}
+            <span className="col-span-3 inline-flex min-w-0 items-baseline gap-1.5 text-ink-soft">
+              <span>{selected.parent_id.slice(0, 8)}</span>
+              <span className="truncate text-ink-faint">
+                {titleByDepId.get(selected.parent_id) ?? "(unknown)"}
+              </span>
             </span>
           </>
         )}
@@ -295,9 +320,11 @@ export function TaskDetailPanel({
 function ActivityTimeline({
   taskId,
   agents,
+  titleByDepId,
 }: {
   taskId: string;
   agents: AgentOption[];
+  titleByDepId: Map<string, string>;
 }) {
   const [comments, setComments] = useState<Comment[]>([]);
   const [events, setEvents] = useState<TaskEvent[]>([]);
@@ -400,7 +427,11 @@ function ActivityTimeline({
                     />
                   )
                 ) : (
-                  <EventRow event={it.event} agentMap={agentMap} />
+                  <EventRow
+                    event={it.event}
+                    agentMap={agentMap}
+                    titleByDepId={titleByDepId}
+                  />
                 )}
               </li>
             );
@@ -482,8 +513,11 @@ function CommentRow({
         <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
           <AuthorChip author={author} />
           <span className="text-ink-faint">·</span>
-          <span className="font-mono text-[11px] tabular-nums text-ink-faint">
-            {formatRelativeFromUnix(comment.createdAt)}
+          <span
+            className="font-mono text-[11px] tabular-nums text-ink-faint"
+            title={formatRelativeFromUnix(comment.createdAt)}
+          >
+            {formatAbsoluteFromUnix(comment.createdAt)}
           </span>
         </div>
         <div className="mt-1 max-w-prose border-l border-paper-rule pl-3 text-sm text-ink">
@@ -511,8 +545,11 @@ function ResultRow({
           <Badge variant="signal">Result</Badge>
           <AuthorChip author={author} />
           <span className="text-ink-faint">·</span>
-          <span className="font-mono text-[11px] tabular-nums text-ink-faint">
-            {formatRelativeFromUnix(comment.createdAt)}
+          <span
+            className="font-mono text-[11px] tabular-nums text-ink-faint"
+            title={formatRelativeFromUnix(comment.createdAt)}
+          >
+            {formatAbsoluteFromUnix(comment.createdAt)}
           </span>
         </div>
         <div className="mt-1.5 max-w-prose text-sm text-ink">
@@ -533,8 +570,11 @@ function SystemCommentRow({ comment }: { comment: Comment }) {
         <div className="flex flex-wrap items-baseline gap-x-2 font-mono text-[11px] italic">
           <span className="text-ink-soft">Scheduler</span>
           <span className="text-ink-faint">·</span>
-          <span className="tabular-nums text-ink-faint">
-            {formatRelativeFromUnix(comment.createdAt)}
+          <span
+            className="tabular-nums text-ink-faint"
+            title={formatRelativeFromUnix(comment.createdAt)}
+          >
+            {formatAbsoluteFromUnix(comment.createdAt)}
           </span>
         </div>
         <div className="mt-0.5 whitespace-pre-wrap break-words font-mono text-[12px] italic text-ink-soft">
@@ -548,42 +588,67 @@ function SystemCommentRow({ comment }: { comment: Comment }) {
 function EventRow({
   event,
   agentMap,
+  titleByDepId,
 }: {
   event: TaskEvent;
   agentMap: Map<string, string>;
+  titleByDepId: Map<string, string>;
 }) {
   const payload = parseEventPayload(event.payload);
+  const actorLabel = event.actor ? resolveAgentName(event.actor, agentMap) : null;
   return (
     <div className="grid grid-cols-[12px_1fr] items-center gap-x-3">
       <div aria-hidden className="flex justify-center">
         <span className="font-mono text-[11px] leading-none text-ink-faint">›</span>
       </div>
       <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[12px] tabular-nums text-ink-soft">
-        <span className="text-ink-faint">
-          {formatRelativeFromUnix(event.createdAt)}
+        <span
+          className="text-ink-faint"
+          title={formatRelativeFromUnix(event.createdAt)}
+        >
+          {formatAbsoluteFromUnix(event.createdAt)}
         </span>
         <span className="text-ink-faint">·</span>
-        <EventDescription event={event} payload={payload} agentMap={agentMap} />
+        {actorLabel && (
+          <>
+            <span className="text-ink">{actorLabel}</span>
+            <span className="text-ink-faint">·</span>
+          </>
+        )}
+        <EventDescription
+          event={event}
+          payload={payload}
+          agentMap={agentMap}
+          titleByDepId={titleByDepId}
+        />
       </div>
     </div>
   );
+}
+
+function resolveAgentName(
+  id: string | undefined,
+  agentMap: Map<string, string>
+): string {
+  if (!id) return "?";
+  if (id.startsWith("system:"))
+    return id.slice("system:".length) || "system";
+  return agentMap.get(id) ?? id.slice(0, 8);
 }
 
 function EventDescription({
   event,
   payload,
   agentMap,
+  titleByDepId,
 }: {
   event: TaskEvent;
   payload: Record<string, unknown> | null;
   agentMap: Map<string, string>;
+  titleByDepId: Map<string, string>;
 }) {
-  const agentName = (id: string | undefined): string => {
-    if (!id) return "?";
-    if (id.startsWith("system:"))
-      return id.slice("system:".length) || "system";
-    return agentMap.get(id) ?? id.slice(0, 8);
-  };
+  const agentName = (id: string | undefined): string =>
+    resolveAgentName(id, agentMap);
 
   switch (event.kind) {
     case "status_changed": {
@@ -604,13 +669,15 @@ function EventDescription({
     }
     case "dep_unblocked": {
       const depId = payload?.blocked_by_task_id as string | undefined;
+      const depTitle = depId ? titleByDepId.get(depId) : undefined;
       return (
-        <span>
-          dep{" "}
-          <span className="text-ink">
+        <span className="flex flex-wrap items-baseline gap-1">
+          <span className="text-ink-faint">dep</span>
+          <span className="text-ink-soft">
             {depId ? depId.slice(0, 8) : "?"}
-          </span>{" "}
-          done — now runnable
+          </span>
+          {depTitle && <span className="text-ink">{depTitle}</span>}
+          <span className="text-ink-faint">done, now runnable</span>
         </span>
       );
     }
