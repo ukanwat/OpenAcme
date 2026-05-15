@@ -19,7 +19,13 @@ function applyTheme(choice: Choice) {
   document.documentElement.classList.toggle("dark", dark);
 }
 
-export function ThemeToggle({ className }: { className?: string }) {
+export function ThemeToggle({
+  className,
+  compact = false,
+}: {
+  className?: string;
+  compact?: boolean;
+}) {
   const [choice, setChoice] = useState<Choice>("system");
   // Avoid hydration mismatch — render placeholder until mounted, then read.
   const [mounted, setMounted] = useState(false);
@@ -53,11 +59,32 @@ export function ThemeToggle({ className }: { className?: string }) {
     return () => mq.removeEventListener("change", onChange);
   }, [choice, mounted]);
 
-  const options: { value: Choice; icon: typeof Sun; label: string }[] = [
+  const options = [
     { value: "system", icon: Monitor, label: "System" },
     { value: "light", icon: Sun, label: "Light" },
     { value: "dark", icon: Moon, label: "Dark" },
-  ];
+  ] as const satisfies readonly { value: Choice; icon: typeof Sun; label: string }[];
+
+  if (compact) {
+    const idx = options.findIndex((o) => o.value === choice);
+    const current = options[idx === -1 ? 0 : idx]!;
+    const Icon = current.icon;
+    const next = options[(idx + 1) % options.length]!;
+    return (
+      <button
+        type="button"
+        aria-label={`Theme: ${current.label}. Click for ${next.label}.`}
+        title={`Theme: ${current.label}`}
+        onClick={() => setChoice(next.value)}
+        className={cn(
+          "flex size-6 items-center justify-center border border-paper-rule bg-paper text-ink-soft transition-colors hover:bg-paper-sunk hover:text-ink focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-[-1px] focus-visible:outline-plot-red",
+          className
+        )}
+      >
+        <Icon className="size-3" />
+      </button>
+    );
+  }
 
   return (
     <div

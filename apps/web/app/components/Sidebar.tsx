@@ -15,6 +15,7 @@ import {
 import { cn } from "@/app/lib/utils";
 import { API_BASE } from "@/app/lib/api";
 import { Logotype } from "@/app/components/Logotype";
+import { Logomark } from "@/app/components/Logomark";
 import { ThemeToggle } from "@/app/components/ThemeToggle";
 import { ActiveMarker } from "@/app/components/ui/active-marker";
 
@@ -107,7 +108,7 @@ export function Sidebar({ children }: { children?: React.ReactNode }) {
       <div
         className={cn(
           "flex items-center border-b border-paper-rule py-5",
-          collapsed ? "justify-center px-3" : "px-4"
+          collapsed ? "justify-center px-3" : "justify-between px-4"
         )}
       >
         {collapsed ? (
@@ -115,22 +116,21 @@ export function Sidebar({ children }: { children?: React.ReactNode }) {
             onClick={toggle}
             title="Expand sidebar"
             aria-label="Expand sidebar"
-            className="rounded p-1 text-ink-soft hover:text-ink focus:text-ink focus:outline-none"
+            className="group/logo relative flex size-7 items-center justify-center text-ink transition-colors hover:text-plot-red focus:outline-none focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-1 focus-visible:outline-plot-red"
           >
-            <PanelLeftOpen className="size-4" />
+            <Logomark className="size-5 group-hover/logo:hidden" />
+            <PanelLeftOpen className="hidden size-4 group-hover/logo:block" />
           </button>
         ) : (
           <>
             <Logotype className="h-6 w-auto text-ink" />
-            {/* Collapse toggle as a small absolute-positioned icon so
-                it doesn't compete with the logo for header real estate. */}
             <button
               onClick={toggle}
               title="Collapse sidebar"
               aria-label="Collapse sidebar"
-              className="absolute right-2 top-2 rounded p-1 text-ink-faint opacity-60 hover:text-ink hover:opacity-100 focus:text-ink focus:opacity-100 focus:outline-none"
+              className="-mr-1 flex size-6 items-center justify-center rounded text-ink-soft hover:bg-paper hover:text-ink focus:outline-none focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-1 focus-visible:outline-plot-red"
             >
-              <PanelLeftClose className="size-3.5" />
+              <PanelLeftClose className="size-4" />
             </button>
           </>
         )}
@@ -185,7 +185,7 @@ export function Sidebar({ children }: { children?: React.ReactNode }) {
             {version ? `v${version}` : "v—"}
           </div>
         )}
-        <ThemeToggle />
+        <ThemeToggle compact={collapsed} />
       </div>
     </aside>
   );
