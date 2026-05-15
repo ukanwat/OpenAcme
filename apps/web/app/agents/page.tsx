@@ -76,6 +76,51 @@ interface SkillIndexEntry {
   tags?: string[];
 }
 
+interface CatalogTemplateMeta {
+  id: string;
+  name: string;
+  description: string;
+  tags: string[];
+  defaultIdHint: string;
+  counts: { resources: number; skills: number; mcpServers: number };
+}
+
+interface CatalogTemplate {
+  meta: CatalogTemplateMeta;
+  agentFields: {
+    name: string;
+    role?: string;
+    persona: string;
+    tools: string[];
+    skills: string[];
+    memoryCharLimit: number;
+    model?: { provider: string; model: string };
+    mcpServers?: Record<string, MCPServerConfigDto>;
+    mcpDisabled?: string[];
+  };
+  resources: Array<{ relPath: string; size: number }>;
+  recommendedSkills: Array<{ name: string; source: string; identifier: string }>;
+  recommendedMcpServers: Array<{ name: string; config: MCPServerConfigDto }>;
+}
+
+interface CatalogPreview {
+  templateId: string;
+  assignedId: string;
+  agent: {
+    name: string;
+    resourceFiles: Array<{ relPath: string; size: number }>;
+  };
+  workforce: {
+    skills: Array<{
+      name: string;
+      source: string;
+      identifier: string;
+      status: "new" | "kept";
+    }>;
+    mcpServers: Array<{ name: string; status: "new" | "kept" }>;
+  };
+}
+
 interface FormState {
   id: string;
   name: string;
@@ -120,6 +165,7 @@ function AgentsPageInner() {
   const searchParams = useSearchParams();
   const urlId = searchParams.get("id");
   const urlCreate = searchParams.get("create") === "1";
+  const urlImportTemplate = searchParams.get("import");
 
   const [agents, setAgents] = useState<Agent[]>([]);
   const [tools, setTools] = useState<ToolInfo[]>([]);
@@ -140,6 +186,18 @@ function AgentsPageInner() {
     | null
   >(null);
 
+  // Catalog state — bundled agent templates the user can import. Two-step
+  // creation modal: "choose" picks scratch vs catalog; "catalog" shows the
+  // template grid.
+  const [creationModal, setCreationModal] = useState<
+    "closed" | "choose" | "catalog"
+  >("closed");
+  const [catalogTemplates, setCatalogTemplates] = useState<CatalogTemplateMeta[]>([]);
+  // Set when in import mode (?import=<id>): the full template + the preview
+  // diff so the form can prefill values + render the "will install" summary.
+  const [importTemplate, setImportTemplate] = useState<CatalogTemplate | null>(null);
+  const [importPreview, setImportPreview] = useState<CatalogPreview | null>(null);
+
   // ── Loaders ──────────────────────────────────────────────────────────────
   useEffect(() => {
     const ctrl = new AbortController();
@@ -149,13 +207,14 @@ function AgentsPageInner() {
 
   const loadAll = async (signal?: AbortSignal) => {
     try {
-      const [agentsRes, toolsRes, providersRes, mcpRes, skillsRes] =
+      const [agentsRes, toolsRes, providersRes, mcpRes, skillsRes, catalogRes] =
         await Promise.all([
           fetch(`${API_BASE}/api/agents`, { signal }),
           fetch(`${API_BASE}/api/tools`, { signal }),
           fetch(`${API_BASE}/api/models`, { signal }),
           fetch(`${API_BASE}/api/mcp/global`, { signal }),
           fetch(`${API_BASE}/api/skills`, { signal }),
+          fetch(`${API_BASE}/api/agents/catalog`, { signal }),
         ]);
       if (agentsRes.ok) setAgents(await agentsRes.json());
       if (toolsRes.ok) {
@@ -173,6 +232,11 @@ function AgentsPageInner() {
       }
       if (skillsRes.ok) {
         setAllSkills((await skillsRes.json()) as SkillIndexEntry[]);
+      }
+      if (catalogRes.ok) {
+        setCatalogTemplates(
+          (await catalogRes.json()) as CatalogTemplateMeta[]
+        );
       }
     } catch (e) {
       if ((e as Error).name === "AbortError") return;
@@ -312,6 +376,77 @@ function AgentsPageInner() {
   // ── CRUD ─────────────────────────────────────────────────────────────────
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Import-from-catalog path: POST /import with the user's edits as
+    // overrides. The server auto-installs recommended skills + MCP and
+    // copies template resources into the agent folder.
+    if (urlImportTemplate && importTemplate) {
+      try {
+        const res = await fetch(
+          `${API_BASE}/api/agents/catalog/${encodeURIComponent(urlImportTemplate)}/import`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              idOverride: formData.id || undefined,
+              nameOverride: formData.name || undefined,
+              overrides: buildAgentBody(),
+            }),
+          }
+        );
+        if (!res.ok) {
+          const data = await res.json();
+          toast.error("Failed to import agent", { description: data.error });
+          return;
+        }
+        const out = (await res.json()) as {
+          agent: Agent;
+          manifest: {
+            agent: { id: string; resourceFiles: Array<{ relPath: string; size: number }> };
+            workforce: {
+              skills: Array<
+                | { name: string; action: "installed" | "kept" }
+                | { name: string; action: "failed"; error: string }
+              >;
+              mcpServers: Array<{ name: string; action: "added" | "kept" }>;
+            };
+          };
+        };
+        const installed = out.manifest.workforce.skills.filter(
+          (s) => s.action === "installed"
+        ).length;
+        const failedSkills = out.manifest.workforce.skills.filter(
+          (s) => s.action === "failed"
+        );
+        const added = out.manifest.workforce.mcpServers.filter(
+          (m) => m.action === "added"
+        ).length;
+        toast.success(`Imported ${out.agent.name} as ${out.agent.id}`, {
+          description: [
+            `${out.manifest.agent.resourceFiles.length} resource file(s)`,
+            installed ? `${installed} skill(s) installed` : null,
+            added ? `${added} MCP server(s) added` : null,
+          ]
+            .filter(Boolean)
+            .join(" · "),
+        });
+        if (failedSkills.length > 0) {
+          toast.error(
+            `${failedSkills.length} recommended skill(s) failed to install`,
+            { description: failedSkills.map((s) => s.name).join(", ") }
+          );
+        }
+        await reloadAgents();
+        router.push(`/agents?id=${encodeURIComponent(out.agent.id)}`);
+      } catch (err) {
+        toast.error("Failed to import agent", {
+          description: err instanceof Error ? err.message : String(err),
+        });
+      }
+      return;
+    }
+
+    // Scratch path: POST /api/agents
     try {
       const res = await fetch(`${API_BASE}/api/agents`, {
         method: "POST",
@@ -415,8 +550,71 @@ function AgentsPageInner() {
     setIsCustomModel(defaultModel === "");
   };
 
-  // URL → selection state. ?id=<id> selects an agent; ?create=1 starts create.
+  // URL → selection state. ?id=<id> selects an agent; ?create=1 starts
+  // create-from-scratch; ?import=<templateId> starts catalog-import.
   useEffect(() => {
+    if (urlImportTemplate) {
+      // Catalog-import flow: fetch the full template + preview, prefill form.
+      void (async () => {
+        try {
+          const [tplRes, prevRes] = await Promise.all([
+            fetch(
+              `${API_BASE}/api/agents/catalog/${encodeURIComponent(urlImportTemplate)}`
+            ),
+            fetch(
+              `${API_BASE}/api/agents/catalog/${encodeURIComponent(urlImportTemplate)}/preview`
+            ),
+          ]);
+          if (!tplRes.ok || !prevRes.ok) {
+            toast.error("Template not found");
+            router.replace("/agents");
+            return;
+          }
+          const tpl = (await tplRes.json()) as CatalogTemplate;
+          const prev = (await prevRes.json()) as CatalogPreview;
+          setImportTemplate(tpl);
+          setImportPreview(prev);
+          setSelectedAgent(null);
+          setIsCreating(true);
+          setIsEditing(false);
+          const provider =
+            tpl.agentFields.model?.provider ??
+            providers[0]?.id ??
+            FALLBACK_FORM.provider;
+          const provPresets =
+            providers.find((p) => p.id === provider)?.models ?? [];
+          const model =
+            tpl.agentFields.model?.model ?? provPresets[0]?.id ?? "";
+          setFormData({
+            id: prev.assignedId,
+            name: tpl.agentFields.name,
+            role: tpl.agentFields.role ?? "",
+            provider,
+            model,
+            persona: tpl.agentFields.persona,
+            tools: tpl.agentFields.tools,
+            skills: tpl.agentFields.skills,
+            memoryCharLimit:
+              tpl.agentFields.memoryCharLimit ?? DEFAULT_MEMORY_CHAR_LIMIT,
+            mcpServers: tpl.agentFields.mcpServers ?? {},
+            mcpDisabled: tpl.agentFields.mcpDisabled ?? [],
+          });
+          setIsCustomModel(
+            model !== "" && !provPresets.some((m) => m.id === model)
+          );
+        } catch {
+          toast.error("Failed to load template");
+          router.replace("/agents");
+        }
+      })();
+      return;
+    }
+    // Leaving the import flow → drop the cached template + preview so the
+    // "will install" block doesn't render on the scratch / edit paths.
+    if (importTemplate || importPreview) {
+      setImportTemplate(null);
+      setImportPreview(null);
+    }
     if (urlCreate) {
       setSelectedAgent(null);
       setIsCreating(true);
@@ -467,11 +665,27 @@ function AgentsPageInner() {
     setSelectedAgent(null);
     setIsCreating(false);
     setIsEditing(false);
-  }, [urlId, urlCreate, agents, providers, router]);
+  }, [urlId, urlCreate, urlImportTemplate, agents, providers, router]);
 
   const selectAgent = (agent: Agent) =>
     router.push(`/agents?id=${encodeURIComponent(agent.id)}`);
-  const startCreate = () => router.push("/agents?create=1");
+  const startCreate = () => {
+    // Catalog has at least one template → ask the user; otherwise jump
+    // straight to scratch.
+    if (catalogTemplates.length > 0) {
+      setCreationModal("choose");
+    } else {
+      router.push("/agents?create=1");
+    }
+  };
+  const startScratchFromModal = () => {
+    setCreationModal("closed");
+    router.push("/agents?create=1");
+  };
+  const startImportFromModal = (templateId: string) => {
+    setCreationModal("closed");
+    router.push(`/agents?import=${encodeURIComponent(templateId)}`);
+  };
 
   // View vs edit: existing agents open in a read-only detail view; the
   // user clicks "Edit" to switch into the form. Creating an agent goes
@@ -568,12 +782,22 @@ function AgentsPageInner() {
             ) : showForm ? (
               <form
                 onSubmit={isCreating ? handleCreate : handleUpdate}
-                className="mx-auto max-w-2xl"
+                className="mx-auto max-w-2xl space-y-4"
               >
+                {urlImportTemplate && importTemplate && importPreview && (
+                  <ImportPreviewBlock
+                    template={importTemplate}
+                    preview={importPreview}
+                  />
+                )}
                 <Card>
                   <CardHeader>
                     <CardTitle>
-                      {isCreating ? "Create agent" : "Edit agent"}
+                      {urlImportTemplate
+                        ? `Import: ${importTemplate?.agentFields.name ?? urlImportTemplate}`
+                        : isCreating
+                          ? "Create agent"
+                          : "Edit agent"}
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-5">
@@ -785,7 +1009,11 @@ function AgentsPageInner() {
                     )}
                     <Button type="submit">
                       <Save className="size-4" />
-                      {isCreating ? "Create" : "Save changes"}
+                      {urlImportTemplate
+                        ? "Import"
+                        : isCreating
+                          ? "Create"
+                          : "Save changes"}
                     </Button>
                   </div>
                 </div>
@@ -858,6 +1086,119 @@ function AgentsPageInner() {
                 onTest={handleMcpTest}
               />
             </DialogBody>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={creationModal !== "closed"}
+        onOpenChange={(open) => !open && setCreationModal("closed")}
+      >
+        <DialogContent className="max-w-2xl">
+          {creationModal === "choose" ? (
+            <>
+              <DialogHeader>
+                <DialogTitle>New agent</DialogTitle>
+                <DialogDescription>
+                  Build one from scratch, or start with a bundled template.
+                </DialogDescription>
+              </DialogHeader>
+              <DialogBody className="grid gap-3 md:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={startScratchFromModal}
+                  className="flex flex-col gap-2 rounded-md border border-paper-rule p-4 text-left transition-colors hover:bg-paper-sunk"
+                >
+                  <div className="flex items-center gap-2">
+                    <Plus className="size-4 text-ink-soft" />
+                    <span className="text-sm font-medium text-ink">
+                      Start from scratch
+                    </span>
+                  </div>
+                  <p className="text-xs text-ink-faint">
+                    Empty form. Pick a name, model, persona, and tools yourself.
+                  </p>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCreationModal("catalog")}
+                  className="flex flex-col gap-2 rounded-md border border-paper-rule p-4 text-left transition-colors hover:bg-paper-sunk"
+                >
+                  <div className="flex items-center gap-2">
+                    <BookOpen className="size-4 text-ink-soft" />
+                    <span className="text-sm font-medium text-ink">
+                      Import from catalog
+                    </span>
+                  </div>
+                  <p className="text-xs text-ink-faint">
+                    Bundled templates ({catalogTemplates.length}) ship with the
+                    platform. Auto-installs recommended skills + MCP servers.
+                  </p>
+                </button>
+              </DialogBody>
+              <DialogFooter>
+                <Button
+                  variant="outline"
+                  onClick={() => setCreationModal("closed")}
+                >
+                  Cancel
+                </Button>
+              </DialogFooter>
+            </>
+          ) : (
+            <>
+              <DialogHeader>
+                <DialogTitle>Import from catalog</DialogTitle>
+                <DialogDescription>
+                  Pick a template. You can rename and customize after.
+                </DialogDescription>
+              </DialogHeader>
+              <DialogBody className="grid gap-3 md:grid-cols-2">
+                {catalogTemplates.map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => startImportFromModal(t.id)}
+                    className="flex flex-col gap-2 rounded-md border border-paper-rule p-4 text-left transition-colors hover:bg-paper-sunk"
+                  >
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="text-sm font-medium text-ink">
+                        {t.name}
+                      </span>
+                      <span className="font-mono text-[10px] uppercase tracking-[0.06em] text-ink-faint">
+                        {t.id}
+                      </span>
+                    </div>
+                    <p className="text-xs text-ink-soft">{t.description}</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {t.tags.map((tag) => (
+                        <Badge key={tag} variant="secondary">
+                          {tag}
+                        </Badge>
+                      ))}
+                    </div>
+                    <div className="font-mono text-[11px] text-ink-faint">
+                      {t.counts.resources} files · {t.counts.skills} skills ·{" "}
+                      {t.counts.mcpServers} MCP
+                    </div>
+                  </button>
+                ))}
+              </DialogBody>
+              <DialogFooter className="gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => setCreationModal("choose")}
+                >
+                  Back
+                </Button>
+                <Button
+                  variant="ghost"
+                  onClick={() => setCreationModal("closed")}
+                >
+                  Cancel
+                </Button>
+              </DialogFooter>
+            </>
           )}
         </DialogContent>
       </Dialog>
@@ -1124,6 +1465,91 @@ function ToolToggle({
         </div>
       </div>
     </button>
+  );
+}
+
+function ImportPreviewBlock({
+  template,
+  preview,
+}: {
+  template: CatalogTemplate;
+  preview: CatalogPreview;
+}) {
+  const sizeOf = (b: number): string =>
+    b >= 1024 ? `${(b / 1024).toFixed(1)} KB` : `${b} B`;
+  return (
+    <Card className="border-paper-rule">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-sm">
+          What this template lands on disk
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4 text-xs">
+        <section>
+          <div className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
+            The agent — ~/.openacme/agents/{preview.assignedId}/
+          </div>
+          <ul className="mt-1 space-y-0.5 font-mono text-[12px] text-ink-soft">
+            <li>
+              <span className="text-ink">AGENT.md</span>{" "}
+              <span className="text-ink-faint">
+                — {template.agentFields.name} persona, tools, role
+              </span>
+            </li>
+            {preview.agent.resourceFiles.length > 0 && (
+              <li>
+                <span className="text-ink">resources/</span>
+                <ul className="ml-4 space-y-0.5">
+                  {preview.agent.resourceFiles.map((r) => (
+                    <li key={r.relPath}>
+                      <span className="text-ink-soft">{r.relPath}</span>{" "}
+                      <span className="text-ink-faint">({sizeOf(r.size)})</span>
+                    </li>
+                  ))}
+                </ul>
+              </li>
+            )}
+          </ul>
+        </section>
+
+        {(preview.workforce.skills.length > 0 ||
+          preview.workforce.mcpServers.length > 0) && (
+          <section>
+            <div className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
+              Workforce installs — outside the agent folder
+            </div>
+            <ul className="mt-1 space-y-0.5 font-mono text-[12px] text-ink-soft">
+              {preview.workforce.skills.map((s) => (
+                <li key={`skill-${s.name}`}>
+                  <span className="text-ink-faint">skill · </span>
+                  <span className="text-ink">{s.name}</span>{" "}
+                  <span
+                    className={cn(
+                      s.status === "new" ? "text-ink-soft" : "text-ink-faint"
+                    )}
+                  >
+                    · {s.status === "new" ? "new" : "already installed"}
+                  </span>
+                </li>
+              ))}
+              {preview.workforce.mcpServers.map((m) => (
+                <li key={`mcp-${m.name}`}>
+                  <span className="text-ink-faint">mcp · </span>
+                  <span className="text-ink">{m.name}</span>{" "}
+                  <span
+                    className={cn(
+                      m.status === "new" ? "text-ink-soft" : "text-ink-faint"
+                    )}
+                  >
+                    · {m.status === "new" ? "new" : "already present"}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
