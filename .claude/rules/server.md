@@ -5,26 +5,32 @@ paths:
 
 # server
 
-Hono HTTP API + AgentManager (multi-agent orchestrator). Routes are thin; AgentManager owns state. The chat route uses AI SDK v6's `createUIMessageStream`. Read this before touching `/api/chat`, uploads, or session lifecycle.
+Hono HTTP API + AgentManager (multi-agent orchestrator). Routes are thin; AgentManager owns state. The chat route is SSE-only — POST initiates, SSE delivers. Read this before touching `/api/chat`, uploads, or session lifecycle.
 
-## `/api/chat` is `createUIMessageStream` over `Agent.runStream`
+## `/api/chat` is fire-and-forget; SSE is the delivery channel
 
-The route receives `{ agentId, sessionId?, messages: UIMessage[] }` (sent by `useChat` via `prepareSendMessagesRequest`). Flow:
+The route receives `{ agentId, sessionId, messages: UIMessage[] }`. The client owns the sessionId AND the user-message id (`messages[last].id`); the server uses both verbatim. Flow:
 
 1. Validate-then-commit pending file URLs (see "Uploads" below).
 2. Provider-gate non-text parts via `lookupModelMetadata(...).inputModalities`.
-3. Ensure the session row exists with the **caller-supplied id** (or a fresh UUID).
-4. `createUIMessageStream({ execute: ({writer}) => { writer.write({type:"data-session", data, transient:true}); const result = await agent.runStream(...); writer.merge(result.toUIMessageStream({sendStart:false})); }, originalMessages, generateId, onFinish: ({responseMessage}) => save(...) })`.
-5. Return `createUIMessageStreamResponse({ stream })`.
+3. Ensure the session row exists with the **caller-supplied id**.
+4. Persist + broadcast the user message (`messages_appended`) BEFORE the agent run starts — so its DB timestamp predates any `ping_user` event and other tabs see it land at the same instant the assistant starts.
+5. Store an `AbortController` in `activeTurns` keyed by sessionId (cancels the previous turn if one was still running).
+6. Kick off `runChatTurn(...)` in the **background**; return `{ sessionId, userMessageId, assistantMessageId }` JSON immediately.
 
-Don't call `agent.runStream` outside a `createUIMessageStream` execute callback in this route — direct iteration of `result.fullStream` would skip the SDK's UIMessageStream protocol that `useChat` expects.
+`runChatTurn` (helper at bottom of `app.ts`) wraps `Agent.runStream` chunks with `createUIMessageStream` purely for its onFinish assembly: each chunk is broadcast as `ui_message_part`; the wrapper's own output stream is drained and discarded. On finish: persist assistant, broadcast `messages_appended`, then broadcast `session_state: idle`.
 
-## Session-id pinning via the `data-session` transient part
+- **`session_state: idle` must come AFTER persist + `messages_appended`.** Client's running→idle effect refetches `/messages`; reversing this order races the DB write.
+- **Don't await `runChatTurn` from the route handler.** The whole point of SSE-only is that the POST returns before the agent runs. Awaiting holds the HTTP request open and reintroduces the old coupling.
+- **One in-flight turn per session.** Re-POST cancels the previous controller. The new send wins.
 
-The `data-session` part is `transient: true`, so it never lands in `responseMessage.parts` — it's a one-shot signal to `useChat`'s `onData`. The web reads it and pins `activeSessionId` for the next send.
+## Stop button: `DELETE /api/sessions/:id/active-turn`
 
-- The session row is created BEFORE `runStream` so the FK in `onFinish`'s `messageStore.append` can't fail.
-- If you remove the `data-session` write, every new chat would create a fresh session on every send — the client would lose its pin.
+Aborts the controller in `activeTurns`. Idempotent; 404 just means no turn was running. The HTTP request that started the turn already returned, so this is the only cancel path from the UI.
+
+## `/api/sessions/:id/stream` is lazy on session existence
+
+The web subscribes BEFORE the first POST creates the session row (for a fresh chat, the client mints the sessionId client-side and subscribes up-front so the agent's first chunks can't be missed). Don't add a `sessionStore.get(id)` 404 to this route — the broadcaster handles unknown sessions lazily via `stateFor`.
 
 ## Uploads: validate-then-commit (no partial-failure orphans)
 

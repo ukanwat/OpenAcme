@@ -51,38 +51,44 @@ Default server: `127.0.0.1:3210`. Default model: `openrouter` + `anthropic/claud
 
 ## The agent loop — request path
 
-User message → response, end-to-end.
+User message → response, end-to-end. **SSE is the only delivery channel for an agent turn** — interactive and autonomous turns share one streaming model. The originating tab is just another subscriber to the per-session SSE channel.
 
-1. **Web** `apps/web/app/page.tsx` uses `useChat` (`@ai-sdk/react`) + `DefaultChatTransport` with `prepareSendMessagesRequest` to POST `{ agentId, sessionId?, messages: UIMessage[] }` to `/api/chat`.
-2. **Server route** `packages/server/src/app.ts` (`/api/chat`):
-   - Validates pending FileUIPart URLs, then `commit()`s them (moves bytes from `<dataDir>/attachments/__pending__/` under `<sessionId>/<attId>/<filename>`) and rewrites each part's URL.
+1. **Web** `apps/web/app/page.tsx` manages `messages` state directly; `useLiveSession` opens an `EventSource` to `/api/sessions/:id/stream` keyed on `activeSessionId` and waits for `connected: true` before posting. For a fresh chat the client mints sessionId + user-message id (`crypto.randomUUID`) so the SSE subscription can open BEFORE the first POST.
+2. **POST** `/api/chat` with `{ agentId, sessionId, messages: UIMessage[] }`:
+   - Validates pending FileUIPart URLs, then `commit()`s them (moves bytes from `<dataDir>/attachments/__pending__/` to `<sessionId>/<attId>/<filename>`) and rewrites each part's URL.
    - Provider-gates non-text parts via `lookupModelMetadata(...).inputModalities`.
-   - Wraps `Agent.runStream` inside `createUIMessageStream({ execute, originalMessages, generateId, onFinish })`.
-   - Writes a transient `data-session` part **before** the model produces tokens so the client can pin the resolved sessionId.
-   - `merge`s `result.toUIMessageStream({ sendStart: false })`.
-   - In `onFinish({ responseMessage })`: persists the **new** user message + the assembled assistant UIMessage (prior history was already in the DB; the client just sent it back), sets a session title from the first text-part, touches `updated_at`.
-3. **AgentManager** `packages/server/src/agent-manager.ts` lazy-creates the `Agent` from the agent definition.
-4. **Agent.runStream** (`packages/agent-core/src/agent.ts`):
+   - Ensures the session row exists with the caller-supplied id; persists + broadcasts the user message (`messages_appended`).
+   - Stores an `AbortController` in the per-session `activeTurns` map.
+   - Kicks off `runChatTurn(...)` in the **background** and returns `{ sessionId, userMessageId, assistantMessageId }` JSON immediately.
+3. **`runChatTurn`** (helper at bottom of `app.ts`):
+   - Marks interactive-busy, broadcasts `session_state: running`.
+   - Wraps `Agent.runStream` chunks with `createUIMessageStream` purely for its onFinish assembly. Each chunk is broadcast as `ui_message_part`; the wrapper's own output stream is drained and discarded.
+   - On finish: persists the assistant UIMessage, broadcasts `messages_appended` for it, broadcasts `session_state: idle` (**after** persist — the client's running→idle refetch must not race the DB write).
+   - Fires extractor + title fire-and-forget.
+4. **Cancel:** `DELETE /api/sessions/:id/active-turn` aborts the controller. The stop button uses this; it's the only cancel path because the POST already returned.
+5. **AgentManager** `packages/server/src/agent-manager.ts` lazy-creates the `Agent` from the agent definition.
+6. **Agent.runStream** (`packages/agent-core/src/agent.ts`):
    - `uiToModelMessages(history, { attachmentsRoot, tools })` — `inlineFileAttachments` rewrites `/api/attachments/...` URLs to `data:` URLs (providers can't reach 127.0.0.1), then defers to SDK's `convertToModelMessages`.
    - Builds + caches the system prompt per `sessionId` (`prompt.ts`); persisted via `sessionStore.updateSystemPrompt`. **Manual** invalidation via `invalidateSystemPromptCache()`.
    - `streamText({ model, system, messages, tools, stopWhen: stepCountIs(maxSteps), abortSignal })`.
-   - Returns the `StreamTextResult`; the caller (server route or CLI) drives the stream.
-5. **Web** consumes the UIMessageStream automatically via `useChat`. Renders parts (text via react-markdown, tool-${name} as collapsible blocks, file as image preview or chip).
+   - Returns the `StreamTextResult`; the caller drives the stream.
+7. **Client SSE** (`useLiveSession`): feeds `ui_message_part` chunks into `readUIMessageStream` for live assembly, upserts by id into `messages`. `messages_appended` upserts by id too — chunks and the end-of-turn canonical broadcast converge to one row. After running→idle the page refetches `/messages` to pick up sanitization + the server-side memory-recall part attached to the user message.
 
 `UIMessage` (from `ai`) is the canonical shape across **DB rows, persistence layer, agent input, server response, web render**. We don't define our own message types — re-exported from `@openacme/agent-core` for convenience.
 
+### Why SSE-only
+
+Pre-refactor, interactive turns streamed over the HTTP response (`useChat` + `createUIMessageStreamResponse`) while autonomous turns went only via SSE — two execution models. The originating tab was BOTH the HTTP-response reader AND an SSE subscriber, which forced a same-id coordination dance (`responseMessageId` on the server, `suppressPartAssembly` on the client) to keep two assemblers from racing. Folding interactive into SSE collapses that to one path: agent runs are server-owned, tabs (including the originator) are observers. The TUI still runs its agent in-process via `agent.runStream` — that path doesn't touch the HTTP server, so no migration needed.
+
 ### Custom data parts
 
-`OpenAcmeDataParts` (in `@openacme/agent-core/src/types.ts`) maps named data-part types to their payload shapes. `OpenAcmeUIMessage = UIMessage<…, OpenAcmeDataParts>` is the type-narrowed variant — both server (`createUIMessageStream<OpenAcmeUIMessage>`) and web (`useChat<OpenAcmeUIMessage>`) use it so `writer.write({type: "data-X", data})` and the matching `onData` callback are end-to-end type-checked.
+`OpenAcmeDataParts` (in `@openacme/agent-core/src/types.ts`) maps named data-part types to their payload shapes. `OpenAcmeUIMessage = UIMessage<…, OpenAcmeDataParts>` is the type-narrowed variant — the server uses it on `createUIMessageStream<OpenAcmeUIMessage>` so `writer.write({type: "data-X", data})` is type-checked.
 
 The web's mirror in `apps/web/app/lib/types.ts` must be kept in sync (web can't import server packages — `// mirrored (not imported)` is the existing pattern).
 
-Two parts today:
+Today only `data-status` is wired — mid-stream reconciliation hook. **Same `id` from the server replaces the previous part** on the client; empty `message` clears the entry. No path emits it yet; it's the expansion seat for proactive-compression and tool-prelude UI when those return. (`data-session` existed before the SSE-only refactor to ferry the server-assigned session id back to `useChat`; gone now that the client owns sessionIds.)
 
-- `data-session` — resolved session id; emitted **transient** before any tokens stream so `useChat`'s `onData` can pin `activeSessionId`. Never persisted.
-- `data-status` — mid-stream reconciliation hook. **Same `id` from the server replaces the previous part** in `useChat`'s view; useful for "compressing context…" → "done" preludes. Empty `message` clears the entry on the client. Today the type is wired but no path emits it; it's the expansion seat for proactive-compression and tool-prelude UI when those return.
-
-Adding a new data part: extend `OpenAcmeDataParts` in agent-core, mirror in web's `lib/types.ts`, handle it in `useChat({onData})`. Persisted (non-transient) data parts also need a renderer in `MessageBubble`.
+Adding a new data part: extend `OpenAcmeDataParts` in agent-core, mirror in web's `lib/types.ts`, handle it via `useLiveSession({onDataPart})` (transient parts are surfaced there since the assembler strips them from `messages`). Persisted (non-transient) data parts also need a renderer in `MessageBubble`.
 
 ---
 
@@ -184,7 +190,7 @@ TUI (`apps/cli/src/tui/`) is React-on-Ink. `render.tsx` mounts the app; `state.t
 OPENACME_DATA_DIR=~/.openacme-test pnpm dev   # → :3219 + :3229
 ```
 
-The chat page uses `@ai-sdk/react`'s `useChat` with a `DefaultChatTransport` configured via `prepareSendMessagesRequest` to inject `agentId` + `sessionId` into the body each send. Streaming is the SDK's UIMessageStream protocol — the SDK handles parsing; we don't write our own. Custom data parts (`data-session`) arrive via the `onData` callback; `useChat`'s `messages` is the canonical render source.
+The chat page owns its `messages` state directly (no `useChat` — agent runs are server-owned and observed via SSE; see the agent-loop section). `useLiveSession` opens the per-session `EventSource`, feeds chunks into `readUIMessageStream` for live assembly, and surfaces transient data-* parts via `onDataPart`. `messages` from `useState` is the canonical render source.
 
 There is **no auth on the web ↔ server channel** today — assumes a trusted local environment. Don't add UI features that imply otherwise without first introducing a session/token layer.
 
@@ -215,7 +221,7 @@ Never log raw tokens. Never write tokens anywhere except via `store.ts`.
 
 `loader.ts:loadConfig(dataDirOverride?)` resolves the data dir, reads `config.yaml` (or `.json`), merges with defaults, validates with Zod. **Always go through the schema** — don't read raw config elsewhere.
 
-Env vars: `OPENACME_DATA_DIR` (set early by CLI so `auth.json` is findable without threading), `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GOOGLE_GENERATIVE_AI_API_KEY` / `OPENROUTER_API_KEY`, `OPENACME_DEBUG`. Dev-only telemetry: `OPENACME_TELEMETRY=1` enables OTel/Logfire export, `LOGFIRE_TOKEN` is the bearer token (loaded from repo-root `.env`); off by default so user installs ship inert.
+Env vars: `OPENACME_DATA_DIR` (set early by CLI so `auth.json` is findable without threading), `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GOOGLE_GENERATIVE_AI_API_KEY` / `OPENROUTER_API_KEY`, `OPENACME_DEBUG`. Dev-only telemetry: `OPENACME_TELEMETRY=1` enables OTel/Logfire export; off by default so user installs ship inert. Currently on in this repo — when testing or checking logs/traces, use the `logfire` MCP server.
 
 ---
 
@@ -362,8 +368,9 @@ Lives at `packages/server/test/task-scheduler.test.ts` (real DB + temp filesyste
 
 ## Non-obvious gotchas
 
-- **Session id pinning via transient data part** — server emits `data-session` (transient) inside `createUIMessageStream` BEFORE merging `result.toUIMessageStream()`. useChat's `onData` reads it and pins `activeSessionId` for subsequent sends. The session row is created up-front in the route so the FK in the message persist on `onFinish` doesn't fail. Don't move the row creation; don't drop the transient `data-session`.
-- **Reactive 413 retry is currently disabled** — aborting a partly-merged `createUIMessageStream` writer was non-trivial. 413s surface as stream errors today.
+- **Client owns sessionIds.** `crypto.randomUUID()` on the web mints a session id for a fresh chat; the server creates the row from whatever is passed. The SSE subscription is keyed on `activeSessionId` so it can open BEFORE the first POST; `send` waits for `liveConnectedRef.current === true` (capped 2s) so the agent's first chunks can't be missed. Stream route (`/api/sessions/:id/stream`) does NOT 404 on unknown sessionIds for this reason — broadcaster state is lazy.
+- **Idle after persist, not before.** In `runChatTurn.onFinish`, the order is: persist assistant → broadcast `messages_appended` → broadcast `session_state: idle`. The client's running→idle effect refetches `/messages`; flipping that order races the DB write and the refetch lands an assistant-less history. Keep this order.
+- **Reactive 413 retry is currently disabled** — 413s surface as stream errors today.
 - **System-prompt cache invalidation is manual.** Changing an agent's tools / skills mid-process won't take effect until you call `invalidateSystemPromptCache()` or restart. AgentManager evicts the cached `Agent` on agent-definition mutation.
 - **Attachment URLs round-trip to disk paths** — `/api/attachments/<sessionId>/<attId>/<filename>` serves directly from `<dataDir>/attachments/<sessionId>/<attId>/<filename>`. No DB sidecar lookup. Pre-chat uploads land under `__pending__/<pendingId>/...` and `commit()` (in `routes/uploads.ts`) moves them under the real session at `/api/chat` time.
 - **`inlineFileAttachments` is required at chat time.** Providers can't fetch our local URLs; the agent reads the bytes off disk and rewrites to a `data:` URL before `convertToModelMessages`. If you add a new local-URL scheme, extend `parseAttachmentUrl` in `messages.ts`.
@@ -432,7 +439,7 @@ pnpm agent status  --data-dir ~/.openacme-test --no-service
 
 This serves the bundled UI if you've run `pnpm build` first (Hono falls back to `apps/web/out/` when `OPENACME_DEV_PROXY_TARGET` is unset). `--no-service` keeps it as a detached process; always `restart` rather than spawning a second daemon on the same slot.
 
-**Driving the browser for UI tests.** Playwright is global. One-time: `mkdir -p /tmp/pwt && cd /tmp/pwt && npm i @playwright/test && npx playwright install chromium`. Drive from one-shot `.mjs` via `chromium.launch()`, screenshot, open via Read, verify visually — don't trust narrative without looking at the render.
+**Driving the browser for UI tests.** Two options, both fine — pick whichever fits the loop. (1) The `playwright-cli` skill drives a live browser interactively: click, type, navigate, screenshot, observe console + network, all without writing a script. Best for "open the page, do the thing, look at the render." (2) For repeatable scripted checks, drive Playwright directly: one-time install `mkdir -p /tmp/pwt && cd /tmp/pwt && npm i @playwright/test && npx playwright install chromium`, then run one-shot `.mjs` files via `chromium.launch()`. Either way, **screenshot and open via Read to verify visually** — don't trust narrative without looking at the render.
 
 ---
 
@@ -453,7 +460,7 @@ Manual via Changesets — see `CONTRIBUTING.md`. Workflow `.github/workflows/rel
 | Add an HTTP route | `packages/server/src/app.ts` |
 | Add a slash command | `apps/cli/src/tui/commands.ts` + a reducer action in `state.ts` |
 | Touch chat UI | `apps/web/app/page.tsx` (+ `app/components/`) |
-| Add a custom UIMessage data part | server: `writer.write({type:"data-X", data, transient?})`; web: read in `useChat({ onData })` |
+| Add a custom UIMessage data part | server: `writer.write({type:"data-X", data, transient?})`; web: read transient in `useLiveSession({ onDataPart })`, non-transient renders from `messages` |
 | Wire a new MCP server | per-agent `mcpServers` in config; nothing code-side if transport is stdio/SSE |
 | Add an OAuth provider | `packages/auth/src/oauth-<name>.ts` + `transforms-<name>.ts` + plug into `llm-provider` factory |
 | Persist a new field | `packages/db/src/schema.ts` + `pnpm db:generate` + the relevant store |

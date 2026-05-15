@@ -10,11 +10,7 @@ import {
 } from "react";
 import { ArrowUp, Square, Paperclip } from "lucide-react";
 import { toast } from "sonner";
-import { useChat } from "@ai-sdk/react";
-import { DefaultChatTransport, type UIMessage } from "ai";
-// `OpenAcmeUIMessage` carries our typed `data-*` parts (session, status).
-// useChat<OpenAcmeUIMessage>() type-checks the onData callback below and
-// any future `sendMessage` consumers that read message metadata.
+import type { UIMessage } from "ai";
 import type { MessageMetadata, OpenAcmeUIMessage } from "./lib/types";
 import { Sidebar } from "./components/Sidebar";
 import { HomeView } from "./components/HomeView";
@@ -85,6 +81,16 @@ interface PendingAttachment {
 
 type Part = UIMessage["parts"][number];
 
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
+  return Promise.race([p.then((v) => v), new Promise<null>((r) => setTimeout(() => r(null), ms))]);
+}
+
+function statusLabel(submitting: boolean, running: boolean, hasAgent: boolean): string {
+  if (submitting) return "Submitting";
+  if (running) return "Running";
+  return hasAgent ? "Ready" : "No agent";
+}
+
 export default function ChatPage() {
   return (
     <Suspense fallback={null}>
@@ -122,14 +128,12 @@ function ChatPageInner() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const atBottomRef = useRef(true);
   const justSentRef = useRef(false);
-  // Refs to keep the transport's `body` callback in sync with current
-  // session/agent state without re-creating the transport on every render.
   const activeAgentIdRef = useRef("");
   const activeSessionIdRef = useRef("");
-  // Set when the server pins a new session id mid-stream via `data-session`.
-  // The history-loading effect would otherwise fetch /messages before the
-  // stream's `onFinish` persists anything and wipe the optimistic user bubble.
-  const skipNextHistoryFetchRef = useRef(false);
+  // Client-generated sessions don't exist server-side until the first
+  // POST; the history + metadata fetches skip these to avoid 404s and
+  // clobbering the optimistic user bubble with an empty array.
+  const freshSessionIdRef = useRef<string | null>(null);
   useEffect(() => {
     activeAgentIdRef.current = activeAgentId;
   }, [activeAgentId]);
@@ -169,25 +173,11 @@ function ChatPageInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionFromUrl, agentFromUrl]);
 
-  // ── Chat state via useChat ────────────────────────────────────────────
-  const transport = useMemo(
-    () =>
-      new DefaultChatTransport({
-        api: `${API_BASE}/api/chat`,
-        prepareSendMessagesRequest: ({ messages }) => ({
-          body: {
-            agentId: activeAgentIdRef.current,
-            sessionId: activeSessionIdRef.current || undefined,
-            messages,
-          },
-        }),
-      }),
-    []
-  );
+  const [messages, setMessages] = useState<OpenAcmeUIMessage[]>([]);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
 
-  // Active server-side status messages, keyed by `data-status.id`. Same id
-  // arriving again replaces the entry — the SDK's `data-${name}` parts
-  // reconciliation pattern (see CLAUDE.md "Custom data parts").
+  // `data-status` board: same id replaces; empty message clears.
   const [statusBoard, setStatusBoard] = useState<
     Record<
       string,
@@ -198,77 +188,48 @@ function ChatPageInner() {
     >
   >({});
 
-  const {
-    messages,
-    sendMessage,
-    setMessages,
-    status,
-    stop,
-    error,
-  } = useChat<OpenAcmeUIMessage>({
-    transport,
-    onData: (part) => {
-      // Typed by OpenAcmeDataParts: `part.type` narrows `part.data`.
-      if (part.type === "data-session") {
-        const newId = part.data.sessionId;
-        if (newId && newId !== activeSessionIdRef.current) {
-          skipNextHistoryFetchRef.current = true;
-          setActiveSessionId(newId);
-        }
-        return;
-      }
-      if (part.type === "data-status") {
-        // Reconcile by id — same `id` from the server replaces an existing
-        // entry. Empty `message` clears the entry.
-        const { id, kind, message } = part.data;
-        setStatusBoard((prev) => {
-          if (!message) {
-            const { [id]: _drop, ...rest } = prev;
-            return rest;
-          }
-          return { ...prev, [id]: { kind, message } };
-        });
-      }
-    },
-    onError: (err) => {
-      toast.error("Chat failed", { description: err.message });
-    },
-    onFinish: () => {
-      // Refetch — server modifies the user message (commits attachment
-      // URLs, appends recall data part) but useChat's local snapshot
-      // doesn't reflect that.
-      const sid = activeSessionIdRef.current;
-      if (!sid) return;
-      fetch(`${API_BASE}/api/sessions/${sid}/messages`)
-        .then((r) => r.json())
-        .then((data: OpenAcmeUIMessage[]) => setMessages(data))
-        .catch(() => {});
-    },
-  });
-
-  const isStreaming = status === "submitted" || status === "streaming";
-
-  // Live session subscription. Drives cross-tab + autonomous-turn live
-  // streaming into useChat's `messages` via setMessages-by-id upsert.
-  // Same tab as the originating /api/chat send also receives an SSE
-  // echo, but the upsert-by-id is idempotent — useChat's own response
-  // assembler and the SSE assembler produce the same UIMessage shape
-  // with the same id, so one overwrites the other harmlessly.
   const liveSession = useLiveSession(
     activeSessionId || null,
-    activeSessionId ? setMessages : null
+    activeSessionId ? setMessages : null,
+    {
+      onDataPart: (part) => {
+        if (part.type === "data-status") {
+          const data = part.data as {
+            id: string;
+            kind: "info" | "warn" | "error" | "compressing" | "compressed";
+            message: string;
+          };
+          setStatusBoard((prev) => {
+            if (!data.message) {
+              const next = { ...prev };
+              delete next[data.id];
+              return next;
+            }
+            return { ...prev, [data.id]: { kind: data.kind, message: data.message } };
+          });
+        }
+      },
+    }
   );
   const isLiveRunning = liveSession.state === "running";
+  const isStreaming = submitting || isLiveRunning;
 
-  // Refresh title on each running → idle transition. `agent.fireTitle`
-  // runs fire-and-forget after the first turn, so the title may have
-  // been written server-side between mount and now.
+  // On running → idle, refetch canonical history (DB carries
+  // sanitization + server-side recall part the chunk path doesn't) and
+  // the session title (set fire-and-forget post-turn).
   const prevLiveRunningRef = useRef(false);
   useEffect(() => {
     const wasRunning = prevLiveRunningRef.current;
     prevLiveRunningRef.current = isLiveRunning;
     if (!activeSessionId || !wasRunning || isLiveRunning) return;
-    fetch(`${API_BASE}/api/sessions/${activeSessionId}`)
+    const sid = activeSessionId;
+    fetch(`${API_BASE}/api/sessions/${sid}/messages`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: OpenAcmeUIMessage[] | null) => {
+        if (data) setMessages(data);
+      })
+      .catch(() => {});
+    fetch(`${API_BASE}/api/sessions/${sid}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((data: { title?: string | null } | null) => {
         if (data) setActiveSessionTitle(data.title ?? null);
@@ -276,12 +237,17 @@ function ChatPageInner() {
       .catch(() => {});
   }, [isLiveRunning, activeSessionId]);
 
-  // Abort any in-flight stream when the page unmounts.
-  useEffect(() => {
-    return () => {
-      if (status === "streaming") stop();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  // Server-owned turn — survives tab close; explicit cancel only.
+  const stop = useCallback(async () => {
+    const sid = activeSessionIdRef.current;
+    if (!sid) return;
+    try {
+      await fetch(`${API_BASE}/api/sessions/${sid}/active-turn`, {
+        method: "DELETE",
+      });
+    } catch {
+      /* best-effort */
+    }
   }, []);
 
   const loadAgents = useCallback(
@@ -365,12 +331,15 @@ function ChatPageInner() {
   // empty state after the fetch completes.
   const [historyLoading, setHistoryLoading] = useState(false);
 
-  // Load session metadata (title) when activeSessionId changes.
   useEffect(() => {
     if (!activeSessionId) {
       setActiveSessionTitle(null);
       return;
     }
+    // Skip the fetch for freshly-created sessions — the row doesn't
+    // exist server-side until /api/chat lands, and the running→idle
+    // effect refetches title after the first turn anyway.
+    if (freshSessionIdRef.current === activeSessionId) return;
     const ctrl = new AbortController();
     fetch(`${API_BASE}/api/sessions/${activeSessionId}`, { signal: ctrl.signal })
       .then((r) => (r.ok ? r.json() : null))
@@ -391,11 +360,12 @@ function ChatPageInner() {
       setHistoryLoading(false);
       return;
     }
-    if (skipNextHistoryFetchRef.current) {
-      // Server-pinned id arrived mid-stream; useChat already holds the
-      // optimistic user msg + the streaming assistant. Fetching now races
-      // with `onFinish`'s persist and would clobber the live state.
-      skipNextHistoryFetchRef.current = false;
+    if (freshSessionIdRef.current === activeSessionId) {
+      // Session was just created locally by `send` — there's nothing
+      // persisted yet, and we already appended the optimistic user
+      // bubble. Fetching would clobber that with an empty array.
+      freshSessionIdRef.current = null;
+      setHistoryLoading(false);
       return;
     }
     // Clear synchronously before the new history lands — otherwise the
@@ -602,7 +572,7 @@ function ChatPageInner() {
     [uploadFiles, acceptsAttachments]
   );
 
-  const send = useCallback(() => {
+  const send = useCallback(async () => {
     if (!input.trim() && pendingAttachments.length === 0) return;
     if (isStreaming || !activeAgentId) return;
     if (pendingAttachments.some((p) => p.status === "uploading")) {
@@ -616,31 +586,73 @@ function ChatPageInner() {
     atBottomRef.current = true;
     justSentRef.current = true;
     setInput("");
-    // Free preview blobs — the chat now renders via /api/attachments URLs.
+    setError(null);
     for (const p of pendingAttachments) {
       if (p.previewUrl) URL.revokeObjectURL(p.previewUrl);
     }
     setPendingAttachments([]);
 
-    void sendMessage({
+    // Client-owned sessionId — the server creates the row from
+    // whatever we pass, so the SSE subscription connects up-front and
+    // can't miss the agent's first chunks.
+    let sid = activeSessionIdRef.current;
+    const isNewSession = !sid;
+    if (!sid) {
+      sid = crypto.randomUUID();
+      freshSessionIdRef.current = sid;
+      activeSessionIdRef.current = sid;
+      setActiveSessionId(sid);
+    }
+
+    const userMessageId = crypto.randomUUID();
+    const userParts: UIMessage["parts"] = [
+      ...(text ? [{ type: "text" as const, text }] : []),
+      ...ready.map((p) => ({
+        type: "file" as const,
+        url: p.url!,
+        mediaType: p.mediaType,
+        filename: p.filename,
+      })),
+    ];
+    const optimisticUser: OpenAcmeUIMessage = {
+      id: userMessageId,
       role: "user",
-      parts: [
-        ...(text ? [{ type: "text" as const, text }] : []),
-        ...ready.map((p) => ({
-          type: "file" as const,
-          url: p.url!,
-          mediaType: p.mediaType,
-          filename: p.filename,
-        })),
-      ],
-    });
-  }, [input, isStreaming, activeAgentId, pendingAttachments, sendMessage]);
+      parts: userParts as OpenAcmeUIMessage["parts"],
+    };
+    const historyForServer = [...messages, optimisticUser];
+    setMessages(historyForServer);
+
+    setSubmitting(true);
+    try {
+      if (isNewSession) await withTimeout(liveSession.whenConnected(), 2000);
+
+      const res = await fetch(`${API_BASE}/api/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          agentId: activeAgentIdRef.current,
+          sessionId: sid,
+          messages: historyForServer,
+        }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error || res.statusText);
+      }
+    } catch (err) {
+      const e = err instanceof Error ? err : new Error(String(err));
+      setError(e);
+      toast.error("Send failed", { description: e.message });
+    } finally {
+      setSubmitting(false);
+    }
+  }, [input, isStreaming, activeAgentId, pendingAttachments, messages, liveSession]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.nativeEvent.isComposing) return;
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      send();
+      void send();
     }
   };
 
@@ -685,20 +697,12 @@ function ChatPageInner() {
               <span
                 className={cn(
                   "status-dot transition-colors",
-                  isStreaming || isLiveRunning
-                    ? "bg-plot-red pulse-live"
-                    : "bg-ink"
+                  isStreaming ? "bg-plot-red pulse-live" : "bg-ink"
                 )}
                 aria-hidden
               />
               <span className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-soft">
-                {isStreaming
-                  ? "Streaming"
-                  : isLiveRunning
-                    ? "Running"
-                    : activeAgent
-                      ? "Ready"
-                      : "No agent"}
+                {statusLabel(submitting, isLiveRunning, !!activeAgent)}
               </span>
             </div>
             <span className="h-3 w-px bg-paper-rule" aria-hidden />
@@ -924,7 +928,7 @@ function ChatPageInner() {
                 ) : (
                   <Button
                     size="icon"
-                    onClick={send}
+                    onClick={() => void send()}
                     disabled={
                       (!input.trim() && pendingAttachments.length === 0) ||
                       !activeAgentId ||

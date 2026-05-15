@@ -6,12 +6,14 @@ import type { OpenAcmeUIMessage } from "./types";
 import { API_BASE } from "./api";
 
 /**
- * Subscribe to a per-session SSE channel; feed `ui_message_part`
- * chunks into `readUIMessageStream` for live assembly and accept
- * pre-assembled UIMessages via `messages_appended`. Both paths
- * upsert into `setMessages` by id, so the same message arriving via
- * the originating tab's useChat response AND the SSE echo converges
- * to one row.
+ * Subscribe to a per-session SSE channel. Feeds `ui_message_part` chunks
+ * into `readUIMessageStream` for live assembly; accepts pre-assembled
+ * UIMessages via `messages_appended`. Both upsert by id so chunks and
+ * the end-of-turn canonical broadcast converge.
+ *
+ * `whenConnected()` resolves on the EventSource's `open` event for the
+ * current sessionId — callers await it before posting /api/chat so the
+ * agent's first chunks aren't missed.
  */
 export function useLiveSession(
   sessionId: string | null | undefined,
@@ -25,24 +27,43 @@ export function useLiveSession(
       taskId: string | null;
       payload: string | null;
     }) => void;
+    /** Transient data-* parts are stripped by the assembler, surfaced
+     *  here instead. */
+    onDataPart?: (part: { type: string; data: unknown }) => void;
   }
-): { state: "running" | "idle" } {
+): { state: "running" | "idle"; whenConnected: () => Promise<void> } {
   const [state, setState] = useState<"running" | "idle">("idle");
   // Latest opts via ref so the SSE handlers aren't part of the
   // resubscribe key (only sessionId is).
   const setMessagesRef = useRef(setMessages);
   const onTaskEventRef = useRef(opts?.onTaskEvent);
-  useEffect(() => {
-    setMessagesRef.current = setMessages;
-    onTaskEventRef.current = opts?.onTaskEvent;
-  });
+  const onDataPartRef = useRef(opts?.onDataPart);
+  setMessagesRef.current = setMessages;
+  onTaskEventRef.current = opts?.onTaskEvent;
+  onDataPartRef.current = opts?.onDataPart;
+  // Promise that resolves on the current EventSource's `open`. Replaced
+  // on every sessionId change so callers always await the live one.
+  const connectedRef = useRef<{ promise: Promise<void>; resolve: () => void }>(
+    (() => {
+      let resolve!: () => void;
+      const promise = new Promise<void>((r) => (resolve = r));
+      return { promise, resolve };
+    })()
+  );
+  const whenConnected = () => connectedRef.current.promise;
 
   useEffect(() => {
     if (!sessionId) return;
+    let resolveConnected!: () => void;
+    connectedRef.current = {
+      promise: new Promise<void>((r) => (resolveConnected = r)),
+      resolve: () => resolveConnected(),
+    };
     const es = new EventSource(
       `${API_BASE}/api/sessions/${sessionId}/stream`,
       { withCredentials: true }
     );
+    es.onopen = () => resolveConnected();
 
     // Feed `readUIMessageStream` via a manually-controlled
     // ReadableStream. SSE handlers enqueue chunks; the assembler
@@ -58,6 +79,11 @@ export function useLiveSession(
         for await (const message of readUIMessageStream<OpenAcmeUIMessage>({
           stream: stream as ReadableStream<never>,
         })) {
+          // Late-joining subscribers miss the `start` chunk (SSE doesn't
+          // replay on fresh connect), so the assembler emits with an
+          // empty-string id. Drop those — `messages_appended` for the
+          // real id will arrive at the end of the turn.
+          if (!message.id) continue;
           setMessagesRef.current?.((prev) => upsertById(prev, message));
         }
       } catch {
@@ -69,7 +95,23 @@ export function useLiveSession(
       ui_message_part: (e) => {
         try {
           const env = JSON.parse(e.data) as { part?: unknown };
-          if (env.part !== undefined) controller?.enqueue(env.part);
+          if (env.part === undefined) return;
+          const part = env.part as { type?: unknown; data?: unknown };
+          if (
+            typeof part.type === "string" &&
+            part.type.startsWith("data-") &&
+            part.data !== undefined
+          ) {
+            try {
+              onDataPartRef.current?.({
+                type: part.type,
+                data: part.data,
+              });
+            } catch {
+              /* surface-only; never break assembly */
+            }
+          }
+          controller?.enqueue(env.part);
         } catch {
           /* ignore */
         }
@@ -128,10 +170,9 @@ export function useLiveSession(
         /* already closed */
       }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
-  return { state };
+  return { state, whenConnected };
 }
 
 function upsertById(
