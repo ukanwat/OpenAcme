@@ -49,7 +49,7 @@ import {
   openBrowser,
   looksHeadless,
 } from "@openacme/auth";
-import { SkillHub, SkillRegistry, type SkillIndexEntry } from "@openacme/skills";
+import { HubError, SkillHub, SkillRegistry, type SkillIndexEntry } from "@openacme/skills";
 import {
   AgentCatalog,
   buildAgentFromTemplate,
@@ -573,6 +573,15 @@ export class AgentManager {
           });
           manifest.workforce.skills.push({ name: s.name, action: "installed" });
         } catch (err) {
+          // ALREADY_INSTALLED means the lockfile says it's there — the
+          // user's intent (skill present in workforce) is already met,
+          // so record `kept`, not `failed`. SkillHub self-heals stale
+          // lockfile entries below, so we shouldn't normally see this
+          // case for a missing-on-disk install, only true repeats.
+          if (err instanceof HubError && err.code === "ALREADY_INSTALLED") {
+            manifest.workforce.skills.push({ name: s.name, action: "kept" });
+            continue;
+          }
           manifest.workforce.skills.push({
             name: s.name,
             action: "failed",
