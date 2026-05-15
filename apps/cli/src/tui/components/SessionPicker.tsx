@@ -8,7 +8,7 @@ export interface SessionRow {
   updatedAt: number;
 }
 
-const TITLE_MAX = 60;
+const TITLE_MAX = 50;
 
 function timeAgo(unixSeconds: number): string {
   const s = Math.floor(Date.now() / 1000) - unixSeconds;
@@ -31,6 +31,8 @@ export function SessionPicker({
   onSelect: (session: SessionRow) => void;
   onCancel: () => void;
 }) {
+  // Sessions arrive sorted by recency (`listAllActive` orders by
+  // updated_at desc), so the head of the list is "most recent."
   const items = sessions.map((s) => {
     const rawTitle = s.title ?? "(untitled)";
     const label =
@@ -38,11 +40,12 @@ export function SessionPicker({
         ? rawTitle.slice(0, TITLE_MAX - 1) + "…"
         : rawTitle;
     const agent = agentsById.get(s.agentId);
-    const agentName = agent?.name ?? "[deleted agent]";
+    const agentName = agent?.name ?? "(deleted agent)";
     return {
       key: s.id,
       label,
-      hint: `${agentName} · ${timeAgo(s.updatedAt)}`,
+      prefix: agentName,
+      hint: timeAgo(s.updatedAt),
     };
   });
 
