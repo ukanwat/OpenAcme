@@ -352,11 +352,17 @@ Per-package: `pnpm --filter @openacme/<pkg> <script>`.
 
 ### Running a daemon to test changes
 
-Default — reuse the user's existing daemon: `pnpm agent restart` (or `stop` then `start`) on the default port `3210` and data dir `~/.openacme`. This keeps the user's real config + sessions and avoids accumulating background processes.
+**Default — use the dev server against the test slot.** Code changes (server *and* web) hot-reload, so you don't have to rebuild after every edit. Drive it like:
 
-If you need an isolated daemon (don't want to touch the user's data, or need to keep the default daemon alive in parallel), use **one fixed test slot** — `~/.openacme-test` with port `3211`. Don't invent a new port/dir each run.
+```
+OPENACME_DATA_DIR=~/.openacme-test pnpm dev
+```
 
-The port lives in `config.yaml` (`server.port`), not a CLI flag — first time, write `~/.openacme-test/config.yaml` with `server: { port: 3211 }`, then:
+Pre-reqs (one time): write `~/.openacme-test/config.yaml` with `server: { port: 3211 }` and create at least one agent under `~/.openacme-test/agents/`. The web dev port is derived from `server.port + 10` automatically — no port flags. The user's real daemon on `:3210` (if running) is untouched because both `server.port` and the derived web port differ.
+
+Don't `pnpm agent start` against the user's real data dir to "test" something — it kills their running daemon and dirties their sessions. Reach for the production daemon path only if you specifically need to validate the bundled-static install path.
+
+For pure API smoke tests (no UI), the bundled-daemon path still works against the test slot:
 
 ```
 pnpm agent start   --data-dir ~/.openacme-test --no-service --no-browser
@@ -365,9 +371,9 @@ pnpm agent stop    --data-dir ~/.openacme-test --no-service
 pnpm agent status  --data-dir ~/.openacme-test --no-service
 ```
 
-`--no-service` keeps it as a one-off detached process (no launchd/systemd unit installed on the user's machine). Always `restart` (or `stop` then `start`) — never spawn a second test daemon without stopping the first.
+This serves the bundled UI if you've run `pnpm build` first (Hono falls back to `apps/web/out/` when `OPENACME_DEV_PROXY_TARGET` is unset). `--no-service` keeps it as a detached process; always `restart` rather than spawning a second daemon on the same slot.
 
-The test daemon is API-only by default. If you need to exercise the UI from the test slot, run `pnpm build` first — Hono will pick up `apps/web/out/` as a workspace fallback (only when `OPENACME_DEV_PROXY_TARGET` is unset, so the main `pnpm dev` is unaffected). For a parallel **dev** session (HMR) against the test slot, just `OPENACME_DATA_DIR=~/.openacme-test pnpm dev` — the web dev port is derived from the test slot's `server.port` (API+10), so no port-collision setup is required.
+**Driving the browser for UI tests.** Playwright CLI is available globally; install Chromium once in a scratch dir (`mkdir -p /tmp/pwt && cd /tmp/pwt && npm i @playwright/test && npx playwright install chromium`) and drive the UI from a one-shot `.mjs` calling `chromium.launch()`. Take screenshots, open them via the Read tool, and verify visually — don't trust the agent's narrative without looking at the actual render.
 
 ---
 

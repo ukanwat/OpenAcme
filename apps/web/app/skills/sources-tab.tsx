@@ -19,6 +19,7 @@ import {
 } from "@/app/components/ui/select";
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -188,7 +189,7 @@ export function SourcesTab() {
               catalog. Searches across taps include this one going forward.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
+          <DialogBody className="space-y-4">
             <div className="grid gap-2">
               <Label>Source</Label>
               <Select
@@ -226,7 +227,7 @@ export function SourcesTab() {
                 placeholder="skills/"
               />
             </div>
-          </div>
+          </DialogBody>
           <DialogFooter className="gap-2">
             <Button variant="outline" onClick={() => setDialogOpen(false)}>
               Cancel
