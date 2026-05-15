@@ -23,23 +23,18 @@ Staff it the way you'd staff a small team — one agent doing research, another 
 
 You write the briefs. They do the work. You read the summary when you check in.
 
-### Today vs direction
+### What's wired
 
-|  | Today | Direction |
-|---|---|---|
-| Multiple agent definitions | yes — per-agent model / tools / skills / MCP / system prompt | — |
-| Per-agent chat (web + TUI) | yes | — |
-| Local SQLite + FTS5 history | yes | — |
-| ChatGPT / Claude OAuth (no double-paying) | yes | — |
-| MCP tools, skills, file attachments | yes | — |
-| Daemon (launchd / systemd-user) — auto-start, auto-restart | yes | — |
-| Remote founder access via `--expose` + secret | yes | per-agent push notifications |
-| **Autonomous wake-ups** | not yet | each agent ticks on its own clock, drains a system-event inbox |
-| **Scheduled jobs (cron / at)** | not yet | per-agent recurring + one-shot, results into chat or notifications |
-| **Agent-to-agent collaboration** | not yet | inboxes accept events from other agents, not only the founder |
-| **Notification center** | not yet | catch up on what each agent did while you were away |
-
-The remainder of this README documents the *Today* column.
+- Multiple agent definitions — per-agent model / tools / skills / MCP / system prompt.
+- Per-agent chat in both web and TUI, backed by the same Hono server.
+- Local SQLite + FTS5 history; no cloud round-trip.
+- ChatGPT / Claude OAuth so subscribers don't double-pay.
+- MCP tools, skills, file attachments.
+- Daemon (launchd / systemd-user) with auto-start and auto-restart.
+- Remote founder access via `--expose` + secret cookie.
+- Autonomous wake-ups — the task scheduler runs `start_at` and recurring tasks (cron + interval) without a user in the loop.
+- Scheduled jobs — `task_create` accepts `start_at` (one-shot) and `recurrence` (cron / interval); deps + auto-blocked/unblocked transitions.
+- Cross-agent assignment — any agent can `task_create({assignee: other})` and the scheduler picks it up under the assignee's queue.
 
 ---
 
@@ -294,7 +289,7 @@ Turborepo + pnpm 9. `apps/*` for binaries and UIs, `packages/*` for libraries.
 | `execute_code` | Sandboxed code execution (Python REPL) |
 | `process` | Background process management |
 | `memory` | Read/write the agent's `MEMORY.md` |
-| `task_list` / `task_view` / `task_create` / `task_update` | Per-agent task store |
+| `task_list` / `task_view` / `task_create` / `task_update` | Per-agent task store — `start_at`, `depends_on`, `recurrence` (cron / interval) all execute via the scheduler |
 
 Plus any MCP-server tool, namespaced as `mcp-<server>__<tool>`.
 
