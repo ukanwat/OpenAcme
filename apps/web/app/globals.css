@@ -26,6 +26,7 @@
   /* Functional state */
   --signal-amber: oklch(78% 0.14 75);
   --signal-cyan: oklch(72% 0.10 215);
+  --signal-green: oklch(60% 0.13 150);
   --warn-ochre: oklch(72% 0.14 75);
 
   /* Code surface — slightly cooler than paper-sunk so prose/code reads as
@@ -107,6 +108,7 @@
    * visibly against the cool dark surface). */
   --signal-amber: oklch(80% 0.17 75);
   --signal-cyan: oklch(74% 0.13 215);
+  --signal-green: oklch(72% 0.16 150);
   --warn-ochre: oklch(74% 0.17 75);
 
   /* Code surface in dark — slightly cooler than paper-sunk (graphite-raised). */
@@ -195,6 +197,7 @@
   --color-plot-red-deep: var(--plot-red-deep);
   --color-signal-amber: var(--signal-amber);
   --color-signal-cyan: var(--signal-cyan);
+  --color-signal-green: var(--signal-green);
   --color-warn-ochre: var(--warn-ochre);
   --color-code-surface: var(--code-surface);
   --color-code-surface-rule: var(--code-surface-rule);
