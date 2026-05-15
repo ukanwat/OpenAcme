@@ -102,7 +102,7 @@ export function TaskDetailPanel({
   return (
     <>
       {/* Fixed header */}
-      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-paper-rule bg-paper-sunk px-4 py-2">
+      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-paper-rule px-4 py-2">
         <div className="flex min-w-0 items-center gap-3">
           <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
             Task
@@ -250,7 +250,7 @@ export function TaskDetailPanel({
       </div>
 
       {/* Fixed footer with audit metadata */}
-      <div className="grid shrink-0 grid-cols-[auto_1fr_auto_1fr] items-baseline gap-x-5 gap-y-1 border-t border-paper-rule bg-paper-sunk px-5 py-3 font-mono text-[12px] tabular-nums">
+      <div className="grid shrink-0 grid-cols-[auto_1fr_auto_1fr] items-baseline gap-x-5 gap-y-1 border-t border-paper-rule px-5 py-3 font-mono text-[12px] tabular-nums">
         <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
           By
         </span>
