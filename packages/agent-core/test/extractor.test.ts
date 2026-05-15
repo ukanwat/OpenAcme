@@ -48,7 +48,6 @@ function makeAgent(): Agent {
     persona: "test",
     tools: [],
     maxSteps: 1,
-    memoryCharLimit: 2200,
   };
   return new Agent(config, {
     sessionStore,

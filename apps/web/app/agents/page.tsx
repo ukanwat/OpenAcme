@@ -67,7 +67,6 @@ interface Agent {
   skills: string[];
   mcpServers?: Record<string, MCPServerConfigDto>;
   mcpDisabled?: string[];
-  memoryCharLimit?: number;
 }
 
 interface SkillIndexEntry {
@@ -93,14 +92,13 @@ interface CatalogTemplate {
     persona: string;
     tools: string[];
     skills: string[];
-    memoryCharLimit: number;
     model?: { provider: string; model: string };
     mcpServers?: Record<string, MCPServerConfigDto>;
     mcpDisabled?: string[];
   };
   resources: Array<{ relPath: string; size: number }>;
-  recommendedSkills: Array<{ name: string; source: string; identifier: string }>;
-  recommendedMcpServers: Array<{ name: string; config: MCPServerConfigDto }>;
+  bundledSkills: Array<{ name: string; source: string; identifier: string }>;
+  bundledMcpServers: Array<{ name: string; config: MCPServerConfigDto }>;
 }
 
 interface CatalogPreview {
@@ -111,13 +109,8 @@ interface CatalogPreview {
     resourceFiles: Array<{ relPath: string; size: number }>;
   };
   workforce: {
-    skills: Array<{
-      name: string;
-      source: string;
-      identifier: string;
-      status: "new" | "kept";
-    }>;
-    mcpServers: Array<{ name: string; status: "new" | "kept" }>;
+    skills: Array<{ name: string; source: string; identifier: string }>;
+    mcpServers: Array<{ name: string }>;
   };
 }
 
@@ -130,13 +123,11 @@ interface FormState {
   persona: string;
   tools: string[];
   skills: string[];
-  memoryCharLimit: number;
   mcpServers: Record<string, MCPServerConfigDto>;
   mcpDisabled: string[];
 }
 
 const CUSTOM_MODEL = "__custom__";
-const DEFAULT_MEMORY_CHAR_LIMIT = 2200;
 
 const FALLBACK_FORM: FormState = {
   id: "",
@@ -147,7 +138,6 @@ const FALLBACK_FORM: FormState = {
   persona: "You are a helpful AI assistant.",
   tools: [],
   skills: [],
-  memoryCharLimit: DEFAULT_MEMORY_CHAR_LIMIT,
   mcpServers: {},
   mcpDisabled: [],
 };
@@ -314,7 +304,6 @@ function AgentsPageInner() {
     persona: formData.persona,
     tools: formData.tools,
     skills: formData.skills,
-    memoryCharLimit: formData.memoryCharLimit,
     mcpServers: formData.mcpServers,
     mcpDisabled: formData.mcpDisabled,
   });
@@ -514,7 +503,6 @@ function AgentsPageInner() {
       persona: selectedAgent.persona,
       tools: selectedAgent.tools,
       skills: selectedAgent.skills ?? [],
-      memoryCharLimit: selectedAgent.memoryCharLimit ?? DEFAULT_MEMORY_CHAR_LIMIT,
       mcpServers: selectedAgent.mcpServers ?? {},
       mcpDisabled: selectedAgent.mcpDisabled ?? [],
     });
@@ -593,9 +581,10 @@ function AgentsPageInner() {
             model,
             persona: tpl.agentFields.persona,
             tools: tpl.agentFields.tools,
-            skills: tpl.agentFields.skills,
-            memoryCharLimit:
-              tpl.agentFields.memoryCharLimit ?? DEFAULT_MEMORY_CHAR_LIMIT,
+            // Imported agent's skills allowlist starts empty (sees all
+            // installed skills); the bundled_skills from the template are
+            // installed workforce-wide separately, not gated per-agent.
+            skills: [],
             mcpServers: tpl.agentFields.mcpServers ?? {},
             mcpDisabled: tpl.agentFields.mcpDisabled ?? [],
           });
@@ -653,7 +642,6 @@ function AgentsPageInner() {
           persona: found.persona,
           tools: found.tools,
           skills: found.skills ?? [],
-          memoryCharLimit: found.memoryCharLimit ?? DEFAULT_MEMORY_CHAR_LIMIT,
           mcpServers: found.mcpServers ?? {},
           mcpDisabled: found.mcpDisabled ?? [],
         });
@@ -946,36 +934,18 @@ function AgentsPageInner() {
                       onRemove={handleMcpRemove}
                     />
 
-                    <SkillsPicker
-                      all={allSkills}
-                      selected={formData.skills}
-                      onToggle={toggleSkill}
-                    />
-
-                    <div className="grid gap-2">
-                      <Label htmlFor="memory-char-limit">
-                        Memory char limit
-                        <span className="ml-2 font-normal text-ink-faint">
-                          write-cap on MEMORY.md
-                        </span>
-                      </Label>
-                      <Input
-                        id="memory-char-limit"
-                        type="number"
-                        min={500}
-                        max={50000}
-                        step={100}
-                        value={formData.memoryCharLimit}
-                        onChange={(e) =>
-                          setFormData({
-                            ...formData,
-                            memoryCharLimit:
-                              Number(e.target.value) || DEFAULT_MEMORY_CHAR_LIMIT,
-                          })
-                        }
-                        className="font-mono text-xs max-w-[12rem]"
+                    {/* The skills picker gates which workforce skills the
+                        agent sees in its prompt. Hidden during catalog
+                        import — bundled skills install workforce-wide and
+                        the imported agent's allowlist stays empty (sees
+                        all). Visible when editing / creating from scratch. */}
+                    {!urlImportTemplate && (
+                      <SkillsPicker
+                        all={allSkills}
+                        selected={formData.skills}
+                        onToggle={toggleSkill}
                       />
-                    </div>
+                    )}
 
                     {selectedAgent && (
                       <AgentResourcesPanel agentId={selectedAgent.id} />
@@ -1469,7 +1439,6 @@ function ToolToggle({
 }
 
 function ImportPreviewBlock({
-  template,
   preview,
 }: {
   template: CatalogTemplate;
@@ -1477,77 +1446,51 @@ function ImportPreviewBlock({
 }) {
   const sizeOf = (b: number): string =>
     b >= 1024 ? `${(b / 1024).toFixed(1)} KB` : `${b} B`;
+
+  type Row = { kind: string; name: string; detail: string };
+  const rows: Row[] = [
+    {
+      kind: "Agent",
+      name: preview.assignedId,
+      detail: `~/.openacme/agents/${preview.assignedId}/`,
+    },
+    ...preview.agent.resourceFiles.map((r) => ({
+      kind: "Resource",
+      name: r.relPath,
+      detail: `${sizeOf(r.size)} · agent's resources/`,
+    })),
+    ...preview.workforce.skills.map((s) => ({
+      kind: "Skill",
+      name: s.name,
+      detail: "workforce",
+    })),
+    ...preview.workforce.mcpServers.map((m) => ({
+      kind: "MCP",
+      name: m.name,
+      detail: "workforce",
+    })),
+  ];
+
   return (
     <Card className="border-paper-rule">
       <CardHeader className="pb-3">
-        <CardTitle className="text-sm">
-          What this template lands on disk
-        </CardTitle>
+        <CardTitle className="text-sm">This template installs</CardTitle>
       </CardHeader>
-      <CardContent className="space-y-4 text-xs">
-        <section>
-          <div className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
-            The agent — ~/.openacme/agents/{preview.assignedId}/
-          </div>
-          <ul className="mt-1 space-y-0.5 font-mono text-[12px] text-ink-soft">
-            <li>
-              <span className="text-ink">AGENT.md</span>{" "}
-              <span className="text-ink-faint">
-                — {template.agentFields.name} persona, tools, role
+      <CardContent>
+        <ul className="space-y-1 font-mono text-[12px]">
+          {rows.map((r, i) => (
+            <li
+              key={`${r.kind}-${r.name}-${i}`}
+              className="grid grid-cols-[5rem_minmax(0,1fr)_auto] items-baseline gap-3"
+            >
+              <span className="text-[10px] uppercase tracking-[0.08em] text-ink-faint">
+                {r.kind}
               </span>
+              <span className="truncate text-ink">{r.name}</span>
+              <span className="text-ink-faint">{r.detail}</span>
             </li>
-            {preview.agent.resourceFiles.length > 0 && (
-              <li>
-                <span className="text-ink">resources/</span>
-                <ul className="ml-4 space-y-0.5">
-                  {preview.agent.resourceFiles.map((r) => (
-                    <li key={r.relPath}>
-                      <span className="text-ink-soft">{r.relPath}</span>{" "}
-                      <span className="text-ink-faint">({sizeOf(r.size)})</span>
-                    </li>
-                  ))}
-                </ul>
-              </li>
-            )}
-          </ul>
-        </section>
-
-        {(preview.workforce.skills.length > 0 ||
-          preview.workforce.mcpServers.length > 0) && (
-          <section>
-            <div className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
-              Workforce installs — outside the agent folder
-            </div>
-            <ul className="mt-1 space-y-0.5 font-mono text-[12px] text-ink-soft">
-              {preview.workforce.skills.map((s) => (
-                <li key={`skill-${s.name}`}>
-                  <span className="text-ink-faint">skill · </span>
-                  <span className="text-ink">{s.name}</span>{" "}
-                  <span
-                    className={cn(
-                      s.status === "new" ? "text-ink-soft" : "text-ink-faint"
-                    )}
-                  >
-                    · {s.status === "new" ? "new" : "already installed"}
-                  </span>
-                </li>
-              ))}
-              {preview.workforce.mcpServers.map((m) => (
-                <li key={`mcp-${m.name}`}>
-                  <span className="text-ink-faint">mcp · </span>
-                  <span className="text-ink">{m.name}</span>{" "}
-                  <span
-                    className={cn(
-                      m.status === "new" ? "text-ink-soft" : "text-ink-faint"
-                    )}
-                  >
-                    · {m.status === "new" ? "new" : "already present"}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </section>
-        )}
+          ))}
+        </ul>
       </CardContent>
     </Card>
   );

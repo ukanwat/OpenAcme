@@ -23,7 +23,6 @@ import {
   loginWithSetupToken,
   looksHeadless,
 } from "@openacme/auth";
-import { DEFAULT_MEMORY_CHAR_LIMIT } from "@openacme/memory";
 
 const DEFAULT_PERSONA =
   "You are a helpful AI assistant. You can execute shell commands, read and write files, and search the filesystem to help users with their tasks.";
@@ -181,7 +180,6 @@ async function addAgentReusingProvider(
     mcpServers: {},
     mcpDisabled: [],
     skills: [],
-    memoryCharLimit: DEFAULT_MEMORY_CHAR_LIMIT,
   };
   try {
     agentStore.upsert(newAgent);
@@ -316,7 +314,6 @@ async function configureProviderAndCreateAgent(
       mcpServers: {},
       mcpDisabled: [],
       skills: [],
-      memoryCharLimit: DEFAULT_MEMORY_CHAR_LIMIT,
     };
     savedAction = `Added agent: ${newId}`;
   } else if (firstAgent) {
@@ -333,7 +330,6 @@ async function configureProviderAndCreateAgent(
       mcpServers: {},
       mcpDisabled: [],
       skills: [],
-      memoryCharLimit: DEFAULT_MEMORY_CHAR_LIMIT,
     };
     savedAction = `Created agent: ${savedAgent.id}`;
   }

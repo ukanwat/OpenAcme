@@ -92,11 +92,6 @@ export interface AgentConfig {
   tools: string[];
   maxSteps: number;
   skillsIndex?: string;
-  /** MEMORY.md (the index) char cap (Hermes default 2200). Resolved
-   *  from `AgentDefinition.memoryCharLimit`. Per-entry topic files
-   *  are uncapped — only the universal 999,999-line cap from
-   *  Anthropic's spec applies to them. */
-  memoryCharLimit: number;
   compression?: CompressionConfig;
   /** Wall-clock cap on a single autonomous turn (ms). */
   autonomousTurnTimeoutMs?: number;

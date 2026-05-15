@@ -179,16 +179,10 @@ export const AgentDefinitionSchema = z.object({
   // Names of global mcp.json servers this agent should NOT receive.
   // Empty (default) = inherit everything.
   mcpDisabled: z.array(z.string()).default([]),
+  // Per-agent skills allowlist. `[]` (default) means the agent sees every
+  // installed skill in the workforce. Non-empty restricts to just those
+  // names. Edit-form picker, not exposed in the catalog import form.
   skills: z.array(z.string()).default([]),
-  // WRITE-time cap on `MEMORY.md` (the index) so the agent has
-  // consolidation pressure rather than infinite append. Hermes default
-  // 2200. Per-entry topic files have no char cap (they're not
-  // auto-injected — only Anthropic's universal 999,999-line cap
-  // applies to them). Mirror of `DEFAULT_MEMORY_CHAR_LIMIT` in
-  // `@openacme/memory` — kept as a literal here to avoid a
-  // `config → memory` package dep. If you change this, update the
-  // constant there too.
-  memoryCharLimit: z.number().int().positive().default(2200),
 });
 export type AgentDefinition = z.infer<typeof AgentDefinitionSchema>;
 
