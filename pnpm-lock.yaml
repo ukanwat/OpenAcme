@@ -304,6 +304,31 @@ importers:
         specifier: 5.9.2
         version: 5.9.2
 
+  packages/agent-catalog:
+    dependencies:
+      '@openacme/config':
+        specifier: workspace:*
+        version: link:../config
+      gray-matter:
+        specifier: ^4.0.3
+        version: 4.0.3
+      zod:
+        specifier: ^4.1.8
+        version: 4.4.3
+    devDependencies:
+      '@repo/typescript-config':
+        specifier: workspace:*
+        version: link:../typescript-config
+      '@types/node':
+        specifier: ^22.15.3
+        version: 22.15.3
+      typescript:
+        specifier: 5.9.2
+        version: 5.9.2
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.15.3)(jsdom@25.0.1)(lightningcss@1.32.0)
+
   packages/agent-core:
     dependencies:
       '@openacme/config':
