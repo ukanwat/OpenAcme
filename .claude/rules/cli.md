@@ -11,7 +11,7 @@ Commander entrypoint + Ink TUI + Clack setup wizard. The `openacme` binary. Subc
 
 `commands/chat.ts` instantiates `AgentManager` directly. The TUI (or headless) calls `agent.runStream(...)` and consumes `result.fullStream` — no HTTP, no SSE, no UIMessageStream protocol. Server-only middleware/routes (CORS, body parsers, secret-cookie auth) **do not affect terminal chat behavior.**
 
-- Implication: changes to the agent loop must be verified against both `pnpm agent:chat` (CLI) and the web UI's `/api/chat` path. They share `Agent` but the wrapping plumbing differs (server uses `createUIMessageStream`; CLI consumes `fullStream` directly).
+- Implication: changes to the agent loop must be verified against both `pnpm agent chat` (CLI) and the web UI's `/api/chat` path. They share `Agent` but the wrapping plumbing differs (server uses `createUIMessageStream`; CLI consumes `fullStream` directly).
 - Don't move `chat` to HTTP "for consistency" — the in-process path is faster, doesn't need a server running, and is the canonical scripting path.
 
 ## TUI assembles the assistant UIMessage manually from `fullStream`
@@ -71,4 +71,4 @@ Match an existing component's font/border/spacing before adding a new banner or 
 
 ## No tests
 
-Verify TUI changes by running `pnpm agent:chat` against a real agent. There's no fixture path; reproducibility comes from a known config + a model that can run cheaply (Sonnet works).
+Verify TUI changes by running `pnpm agent chat` against a real agent. There's no fixture path; reproducibility comes from a known config + a model that can run cheaply (Sonnet works).

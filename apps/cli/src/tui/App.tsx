@@ -4,7 +4,12 @@ import { randomUUID } from "node:crypto";
 import type { AgentManager } from "@openacme/server";
 import type { AgentDefinition } from "@openacme/config";
 import { detectProviderCredentials } from "@openacme/llm-provider";
-import type { UIMessage } from "@openacme/agent-core";
+import {
+  ensureStepBoundaries,
+  finalizeOrphanToolParts,
+  sanitizeStoredHistory,
+  type UIMessage,
+} from "@openacme/agent-core";
 import { reducer, initState, type PendingAttachment } from "./state.js";
 import { COMMANDS, findCommand, filterCommands, type CommandCtx } from "./commands.js";
 import { MessageList } from "./components/MessageList.js";
@@ -16,6 +21,7 @@ import { AgentPicker } from "./components/AgentPicker.js";
 import { SessionPicker, type SessionRow } from "./components/SessionPicker.js";
 import { SkillsOverlay } from "./components/SkillsOverlay.js";
 import { MCPOverlay } from "./components/MCPOverlay.js";
+import { TasksOverlay } from "./components/TasksOverlay.js";
 import { PendingAttachmentsBar } from "./components/PendingAttachmentsBar.js";
 import { FilePathPicker } from "./components/FilePathPicker.js";
 import {
@@ -37,6 +43,18 @@ interface Props {
   manager: AgentManager;
   agent: AgentDefinition;
   dataDir: string;
+}
+
+function buildAssistantMessage(
+  id: string,
+  parts: UIMessage["parts"]
+): UIMessage | null {
+  if (parts.length === 0) return null;
+  return {
+    id,
+    role: "assistant",
+    parts: ensureStepBoundaries(finalizeOrphanToolParts(parts)),
+  } as UIMessage;
 }
 
 export function App({ manager, agent, dataDir }: Props) {
@@ -99,6 +117,10 @@ export function App({ manager, agent, dataDir }: Props) {
       const assistantId = randomUUID();
       dispatch({ type: "stream-start", assistantId });
 
+      // Hoisted so the catch block can finalize and persist whatever
+      // parts streamed before an abort or error.
+      const assistantParts: UIMessage["parts"] = [];
+
       try {
         // Ensure the session row exists before runStream — `getSystemPrompt`
         // updates it, and the message-append at the end has an FK to it.
@@ -115,7 +137,6 @@ export function App({ manager, agent, dataDir }: Props) {
 
         // Assemble the canonical assistant UIMessage from fullStream as we
         // also dispatch incremental updates to the reducer for live render.
-        const assistantParts: UIMessage["parts"] = [];
         let textBuf = "";
         const flushText = () => {
           if (!textBuf) return;
@@ -129,6 +150,19 @@ export function App({ manager, agent, dataDir }: Props) {
         for await (const part of result.fullStream) {
           const tp = part as { type?: string };
           switch (tp.type) {
+            case "start-step": {
+              // Persist the step boundary so a multi-step turn (text →
+              // tool → text) round-trips through `convertToModelMessages`
+              // as separate model messages. Without this, the post-tool
+              // text and pre-tool text collapse into one assistant block
+              // and Anthropic rejects with `tool_use ... without
+              // tool_result blocks immediately after`.
+              flushText();
+              assistantParts.push({
+                type: "step-start",
+              } as unknown as UIMessage["parts"][number]);
+              break;
+            }
             case "text-delta": {
               const text = (part as { text?: string }).text ?? "";
               if (text) {
@@ -208,14 +242,7 @@ export function App({ manager, agent, dataDir }: Props) {
         flushText();
 
         const usage = await result.usage;
-        const responseMessage: UIMessage | null =
-          assistantParts.length > 0
-            ? ({
-                id: assistantId,
-                role: "assistant",
-                parts: assistantParts,
-              } as UIMessage)
-            : null;
+        const responseMessage = buildAssistantMessage(assistantId, assistantParts);
 
         // Persist the user msg + assembled response to the session.
         manager.messageStore.append(state.sessionId, {
@@ -237,15 +264,30 @@ export function App({ manager, agent, dataDir }: Props) {
           usage: usage ?? undefined,
         });
       } catch (err) {
-        if ((err as Error)?.name === "AbortError") {
-          dispatch({ type: "stream-done", responseMessage: null });
-        } else {
+        const aborted = (err as Error)?.name === "AbortError";
+        // On abort, finalize any orphan tool parts so the next turn's
+        // history stays valid for the provider, then persist + commit
+        // the partial assistant.
+        const partial = buildAssistantMessage(assistantId, assistantParts);
+        if (partial) {
+          manager.messageStore.append(state.sessionId, {
+            id: userMsg.id,
+            role: "user",
+            parts: userMsg.parts as unknown[],
+          });
+          manager.messageStore.append(state.sessionId, {
+            id: assistantId,
+            role: "assistant",
+            parts: partial.parts as unknown[],
+          });
+        }
+        if (!aborted) {
           dispatch({
             type: "stream-error",
             error: err instanceof Error ? err.message : String(err),
           });
-          dispatch({ type: "stream-done", responseMessage: null });
         }
+        dispatch({ type: "stream-done", responseMessage: partial });
       } finally {
         if (abortRef.current === ctrl) abortRef.current = null;
         sendingRef.current = false;
@@ -304,7 +346,8 @@ export function App({ manager, agent, dataDir }: Props) {
     !state.agentPickerOpen &&
     !state.sessionPickerOpen &&
     !state.skillsOverlayOpen &&
-    !state.mcpOverlayOpen;
+    !state.mcpOverlayOpen &&
+    !state.tasksOverlayOpen;
   const matches = paletteOpen ? filterCommands(input) : [];
 
   // ── @-fuzzy file picker state ──────────────────────────────────────────
@@ -331,7 +374,8 @@ export function App({ manager, agent, dataDir }: Props) {
     !state.agentPickerOpen &&
     !state.sessionPickerOpen &&
     !state.skillsOverlayOpen &&
-    !state.mcpOverlayOpen;
+    !state.mcpOverlayOpen &&
+    !state.tasksOverlayOpen;
   const atMatches = useMemo(
     () => (atPickerOpen && ranker ? ranker(atQuery!) : []),
     [atPickerOpen, ranker, atQuery]
@@ -516,6 +560,7 @@ export function App({ manager, agent, dataDir }: Props) {
     state.sessionPickerOpen ||
     state.skillsOverlayOpen ||
     state.mcpOverlayOpen ||
+    state.tasksOverlayOpen ||
     state.status === "streaming";
 
   return (
@@ -597,7 +642,9 @@ export function App({ manager, agent, dataDir }: Props) {
                 dispatch({ type: "close-overlays" });
                 return;
               }
-              const dbHistory = manager.messageStore.getHistory(picked.id);
+              const dbHistory = sanitizeStoredHistory(
+                manager.messageStore.getHistory(picked.id)
+              );
               const committed = dbMessagesToTuiMessages(dbHistory);
               dispatch({
                 type: "set-session",
@@ -624,6 +671,14 @@ export function App({ manager, agent, dataDir }: Props) {
         <MCPOverlay
           mcpClient={manager.getMcpClient(state.agentId)}
           dataDir={dataDir}
+          onClose={() => dispatch({ type: "close-overlays" })}
+        />
+      )}
+
+      {state.tasksOverlayOpen && (
+        <TasksOverlay
+          agentId={state.agentId}
+          taskStore={manager.taskStore}
           onClose={() => dispatch({ type: "close-overlays" })}
         />
       )}

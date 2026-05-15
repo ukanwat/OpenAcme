@@ -1,5 +1,6 @@
 import {
   generateText,
+  readUIMessageStream,
   streamText,
   stepCountIs,
   type ToolSet,
@@ -12,11 +13,36 @@ import * as path from "node:path";
 import { getModel } from "@openacme/llm-provider";
 import { toolCallContext, type ToolRegistry } from "@openacme/tools";
 import { MemoryStore } from "@openacme/memory";
+import { TaskStore, TaskStoreError } from "@openacme/tasks";
 import type { SessionStore, MessageStore, StoredUIMessage } from "@openacme/db";
 import { buildSystemPrompt } from "./prompt.js";
 import { Compressor } from "./compression.js";
-import { uiToModelMessages, parseAttachmentUrl } from "./messages.js";
-import type { AgentConfig } from "./types.js";
+import {
+  uiToModelMessages,
+  parseAttachmentUrl,
+  sanitizeStoredHistory,
+  ensureStepBoundaries,
+  finalizeOrphanToolParts,
+} from "./messages.js";
+import type { AgentConfig, TokenUsage } from "./types.js";
+
+const DEFAULT_AUTONOMOUS_TIMEOUT_MS = 5 * 60 * 1000;
+
+export class AutonomousTurnTimeout extends Error {
+  readonly code = "autonomous_turn_timeout";
+  constructor(message: string) {
+    super(message);
+    this.name = "AutonomousTurnTimeout";
+  }
+}
+
+function buildAutonomousPrompt(title: string, body: string): string {
+  const trimmed = body.trim();
+  if (!trimmed) {
+    return `Autonomous task: ${title}\n\nWork on this task and report back when done. Use task_update to mark progress.`;
+  }
+  return `Autonomous task: ${title}\n\n${trimmed}\n\nWork on this task and report back when done. Use task_update to mark progress.`;
+}
 
 /**
  * Agent — thin wrapper around `streamText` that owns prompt assembly,
@@ -40,6 +66,7 @@ export class Agent {
   readonly toolRegistry: ToolRegistry;
   readonly attachmentsRoot: string;
   readonly memoryStore: MemoryStore;
+  readonly taskStore: TaskStore;
   readonly compressor = new Compressor();
   private cachedSystemPrompts = new Map<string, string>();
 
@@ -53,6 +80,9 @@ export class Agent {
       /** Per-agent memory store, shared with the `memory` tool's binding so
        *  both paths use the same in-process mutex. */
       memoryStore: MemoryStore;
+      /** Shared task store. Same instance is bound to the task tools and
+       *  driven by the server-side TaskScheduler. */
+      taskStore: TaskStore;
     }
   ) {
     this.config = config;
@@ -61,6 +91,7 @@ export class Agent {
     this.toolRegistry = deps.toolRegistry;
     this.attachmentsRoot = deps.attachmentsRoot;
     this.memoryStore = deps.memoryStore;
+    this.taskStore = deps.taskStore;
   }
 
   /**
@@ -110,6 +141,143 @@ export class Agent {
   }
 
   /**
+   * Run one autonomous turn for `taskId` in `sessionId`. Drains the
+   * stream server-side (no HTTP/SSE) and persists the user prompt +
+   * assistant response. Caller (TaskScheduler) is responsible for the
+   * task's status transitions; this method only times out after
+   * `autonomousTurnTimeoutMs` (default 5 min) and throws
+   * `AutonomousTurnTimeout` on expiry.
+   *
+   * Returns the assistant UIMessage that was persisted.
+   */
+  async runAutonomous(opts: {
+    sessionId: string;
+    taskId: string;
+    signal?: AbortSignal;
+  }): Promise<{ assistant: UIMessage; usage?: TokenUsage }> {
+    const task = this.taskStore.get(opts.taskId);
+    if (!task) {
+      throw new TaskStoreError(
+        "not_found",
+        `Task ${opts.taskId} not found`
+      );
+    }
+    // Catch a deleted-mid-flight session up front rather than letting
+    // the message-store FK trip mid-turn. The scheduler creates the
+    // session in its tick before calling here, so this is purely a
+    // guard against concurrent deletion.
+    if (!this.sessionStore.get(opts.sessionId)) {
+      throw new Error(
+        `Session ${opts.sessionId} no longer exists; aborting autonomous turn for task ${opts.taskId}`
+      );
+    }
+
+    const userMessage: UIMessage = {
+      id: randomUUID(),
+      role: "user",
+      parts: [
+        {
+          type: "text",
+          text: buildAutonomousPrompt(task.title, task.body),
+        },
+      ],
+    };
+
+    const history = [
+      ...(sanitizeStoredHistory(
+        this.messageStore.getHistory(opts.sessionId)
+      ) as unknown as UIMessage[]),
+      userMessage,
+    ];
+
+    const timeoutMs =
+      this.config.autonomousTurnTimeoutMs ?? DEFAULT_AUTONOMOUS_TIMEOUT_MS;
+    const timeoutAbort = new AbortController();
+    const timer = setTimeout(() => timeoutAbort.abort(), timeoutMs);
+    const externalAbort = opts.signal;
+    const onExternalAbort = () => timeoutAbort.abort();
+    if (externalAbort) {
+      if (externalAbort.aborted) timeoutAbort.abort();
+      else externalAbort.addEventListener("abort", onExternalAbort);
+    }
+
+    let timedOut = false;
+    let usage: TokenUsage | undefined;
+    let assistantMessage: UIMessage | null = null;
+
+    try {
+      const result = await this.runStream({
+        sessionId: opts.sessionId,
+        history,
+        signal: timeoutAbort.signal,
+      });
+
+      // Use the SDK's canonical UIMessage assembler — hand-rolling from
+      // `fullStream` skips step boundaries that downstream conversion
+      // relies on.
+      const uiStream = result.toUIMessageStream({ sendStart: false });
+      for await (const m of readUIMessageStream<UIMessage>({
+        stream: uiStream,
+      })) {
+        assistantMessage = m;
+        if (timeoutAbort.signal.aborted) {
+          timedOut = true;
+          break;
+        }
+      }
+
+      if (!timedOut) {
+        const u = await result.usage;
+        usage = {
+          inputTokens: u?.inputTokens,
+          outputTokens: u?.outputTokens,
+          totalTokens: u?.totalTokens,
+        };
+      }
+    } catch (e) {
+      if (timeoutAbort.signal.aborted) {
+        timedOut = true;
+      } else {
+        throw e;
+      }
+    } finally {
+      clearTimeout(timer);
+      if (externalAbort) {
+        externalAbort.removeEventListener("abort", onExternalAbort);
+      }
+    }
+
+    if (timedOut) {
+      throw new AutonomousTurnTimeout(
+        `Autonomous turn for ${opts.taskId} timed out after ${timeoutMs}ms`
+      );
+    }
+    if (!assistantMessage) {
+      throw new Error(
+        `Autonomous turn for ${opts.taskId} produced no assistant message`
+      );
+    }
+
+    this.messageStore.append(opts.sessionId, {
+      id: userMessage.id,
+      role: "user",
+      parts: userMessage.parts as unknown[],
+    });
+    if (assistantMessage.parts.length > 0) {
+      const sanitized = ensureStepBoundaries(
+        finalizeOrphanToolParts(assistantMessage.parts as UIMessage["parts"])
+      );
+      this.messageStore.append(opts.sessionId, {
+        id: assistantMessage.id ?? randomUUID(),
+        role: "assistant",
+        parts: sanitized as unknown[],
+      });
+    }
+
+    return { assistant: assistantMessage, usage };
+  }
+
+  /**
    * Compress a session synchronously. Loads parent history, runs the
    * Compressor pipeline, creates a child session, and persists the new
    * UIMessage list. Returns the new child id, or the parent id if
@@ -130,8 +298,8 @@ export class Agent {
 
     if (!this.config.compression) return parentSessionId;
 
-    const parentMessages = this.messageStore.getHistory(
-      parentSessionId
+    const parentMessages = sanitizeStoredHistory(
+      this.messageStore.getHistory(parentSessionId)
     ) as unknown as UIMessage[];
 
     // Pre-compaction memory flush (port from OpenClaw): give the agent one
@@ -181,10 +349,14 @@ export class Agent {
       // already taken. We rewrite ids here rather than inside the
       // Compressor so the algorithm stays free to use parent ids for
       // its head/tail bookkeeping.
+      // `stepsToUIMessages` rebuilds parts without step-start markers;
+      // re-inject so the child session converts cleanly on the next turn.
       const rows: StoredUIMessage[] = rebound.map((m) => ({
         id: randomUUID(),
         role: m.role as "user" | "assistant",
-        parts: m.parts as unknown[],
+        parts: ensureStepBoundaries(
+          finalizeOrphanToolParts(m.parts as UIMessage["parts"])
+        ) as unknown[],
         metadata: m.metadata,
       }));
       this.messageStore.appendMany(child.id, rows);
@@ -344,10 +516,25 @@ export class Agent {
       );
     }
 
+    let tasksContext: string | undefined;
+    try {
+      const rendered = this.taskStore.renderForPrompt(
+        this.config.id,
+        sessionId,
+        (sid: string) => this.sessionStore.get(sid) !== null
+      );
+      if (rendered) tasksContext = rendered;
+    } catch (e) {
+      console.warn(
+        `Failed to render tasks for agent ${this.config.id}: ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+
     const prompt = buildSystemPrompt({
       persona: this.config.persona,
       toolNames: resolvedTools,
       skillsIndex: this.config.skillsIndex,
+      tasksContext,
       memoryContext,
     });
     this.cachedSystemPrompts.set(sessionId, prompt);

@@ -31,7 +31,17 @@ function summarizeResult(output: unknown): string {
   return trimmed.slice(0, MAX_RESULT_PREVIEW) + "…";
 }
 
-export function ToolBlock({ part }: { part: ToolUIPart }) {
+const INTERRUPT_MARKER = "[interrupted]";
+
+export function ToolBlock({
+  part,
+  streaming,
+}: {
+  part: ToolUIPart;
+  /** True only for the bubble currently being assembled. Off-stream
+   *  pending states are treated as interrupted. */
+  streaming?: boolean;
+}) {
   const tp = part as unknown as {
     type: string;
     state: string;
@@ -41,12 +51,38 @@ export function ToolBlock({ part }: { part: ToolUIPart }) {
   };
   const toolName = tp.type.slice("tool-".length);
   const argsSummary = summarizeArgs(tp.input);
-  const isPending =
-    tp.state === "input-streaming" || tp.state === "input-available";
-  const isError = tp.state === "output-error";
-  const statusGlyph = isPending ? "·" : isError ? "✗" : "✓";
-  const statusColor = isPending ? "yellow" : isError ? "red" : "green";
-  const result = isError ? tp.errorText : tp.output;
+  const isInterrupted =
+    tp.state === "output-error" && tp.errorText === INTERRUPT_MARKER;
+  const isPendingLive =
+    streaming === true &&
+    (tp.state === "input-streaming" || tp.state === "input-available");
+  const isStaleOrphan =
+    !streaming &&
+    (tp.state === "input-streaming" || tp.state === "input-available");
+  const isError = tp.state === "output-error" && !isInterrupted;
+
+  const statusGlyph = isPendingLive
+    ? "·"
+    : isInterrupted || isStaleOrphan
+      ? "⊘"
+      : isError
+        ? "✗"
+        : "✓";
+  const statusColor = isPendingLive
+    ? "yellow"
+    : isInterrupted || isStaleOrphan
+      ? "yellow"
+      : isError
+        ? "red"
+        : "green";
+  const trailingLabel =
+    isInterrupted || isStaleOrphan ? " interrupted" : "";
+
+  const result = isError
+    ? tp.errorText
+    : isInterrupted || isStaleOrphan
+      ? undefined
+      : tp.output;
 
   return (
     <Box flexDirection="column" marginLeft={2} marginTop={0}>
@@ -54,6 +90,7 @@ export function ToolBlock({ part }: { part: ToolUIPart }) {
         <Text color={statusColor}>{statusGlyph} </Text>
         <Text color="cyan">{toolName}</Text>
         {argsSummary && <Text dimColor>({argsSummary})</Text>}
+        {trailingLabel && <Text color="yellow" dimColor>{trailingLabel}</Text>}
       </Box>
       {result !== undefined && (
         <Box marginLeft={2}>

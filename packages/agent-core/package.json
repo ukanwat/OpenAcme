@@ -41,6 +41,7 @@
     "@openacme/db": "workspace:*",
     "@openacme/llm-provider": "workspace:*",
     "@openacme/memory": "workspace:*",
+    "@openacme/tasks": "workspace:*",
     "@openacme/tools": "workspace:*",
     "ai": "^6.0.177",
     "zod": "^4.1.8"

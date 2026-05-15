@@ -1033,6 +1033,37 @@ function MessageBubble({
               errorText?: string;
             };
             const toolName = tp.type.slice("tool-".length);
+            const interrupted =
+              tp.state === "output-error" && tp.errorText === "[interrupted]";
+            const staleOrphan =
+              !isStreaming &&
+              (tp.state === "input-streaming" ||
+                tp.state === "input-available");
+            const livePending =
+              isStreaming &&
+              (tp.state === "input-streaming" ||
+                tp.state === "input-available");
+            const errored = tp.state === "output-error" && !interrupted;
+
+            const statusLabel = livePending
+              ? "running…"
+              : interrupted || staleOrphan
+                ? "interrupted"
+                : errored
+                  ? "error"
+                  : "done";
+            const statusClass = livePending
+              ? "text-muted-foreground"
+              : interrupted || staleOrphan
+                ? "text-amber-600 dark:text-amber-500"
+                : errored
+                  ? "text-destructive"
+                  : "text-emerald-600 dark:text-emerald-500";
+            const showResult =
+              !interrupted &&
+              !staleOrphan &&
+              (tp.output !== undefined || tp.errorText !== undefined);
+
             return (
               <div
                 key={i}
@@ -1041,14 +1072,14 @@ function MessageBubble({
                 <div className="flex items-center gap-2 border-b border-border/80 bg-muted px-3 py-2 text-xs">
                   <Wrench className="size-3 text-primary" />
                   <span className="font-mono font-medium">{toolName}</span>
-                  <span className="text-muted-foreground">{tp.state}</span>
+                  <span className={statusClass}>{statusLabel}</span>
                 </div>
                 {tp.input !== undefined && (
                   <pre className="overflow-x-auto px-3 py-2 font-mono text-[11px] text-muted-foreground">
                     {JSON.stringify(tp.input, null, 2)}
                   </pre>
                 )}
-                {(tp.output !== undefined || tp.errorText !== undefined) && (
+                {showResult && (
                   <div className="border-t border-border/80 bg-background/40 px-3 py-2 font-mono text-[11px]">
                     {(() => {
                       const result =

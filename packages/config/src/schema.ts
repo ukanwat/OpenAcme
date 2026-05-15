@@ -139,6 +139,10 @@ export const AgentDefinitionSchema = z.object({
       "execute_code",
       "process",
       "memory",
+      "task_list",
+      "task_view",
+      "task_create",
+      "task_update",
     ]),
   // Agent-PRIVATE MCP servers — names must not collide with the global
   // catalog at `<dataDir>/mcp.json`. The agent-store enforces this on

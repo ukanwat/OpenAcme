@@ -20,8 +20,11 @@ import {
   bindSessionSearch,
   bindSkillView,
   bindMemory,
+  bindTaskStore,
 } from "@openacme/tools";
 import { MemoryStore } from "@openacme/memory";
+import { TaskStore } from "@openacme/tasks";
+import { TaskScheduler } from "./task-scheduler.js";
 import {
   MCPClient,
   FileMCPTokenStore,
@@ -49,6 +52,8 @@ export class AgentManager {
   readonly attachmentsRoot: string;
   readonly agentsDir: string;
   readonly memoryStore: MemoryStore;
+  readonly taskStore: TaskStore;
+  readonly taskScheduler: TaskScheduler;
   readonly agentStore: AgentStore;
   private config: Config;
   private mcpClients = new Map<string, MCPClient>();
@@ -96,6 +101,19 @@ export class AgentManager {
         return def.memoryCharLimit;
       },
     });
+
+    // Tasks: one shared TaskStore, bound to the task tools and driven
+    // by the autonomous scheduler. setOnChange wires mutating store
+    // calls (from tools, HTTP routes, scheduler itself) into a poke so
+    // the next eligible task is picked up without polling.
+    this.taskStore = new TaskStore(path.join(config.dataDir, "tasks"));
+    bindTaskStore({ store: this.taskStore });
+    this.taskScheduler = new TaskScheduler({
+      taskStore: this.taskStore,
+      sessionStore: this.sessionStore,
+      agentManager: this,
+    });
+    this.taskStore.setOnChange(() => this.taskScheduler.poke());
 
     // Load skills
     this.skillRegistry = new SkillRegistry();
@@ -408,6 +426,7 @@ export class AgentManager {
       toolRegistry,
       attachmentsRoot: this.attachmentsRoot,
       memoryStore: this.memoryStore,
+      taskStore: this.taskStore,
     });
   }
 
@@ -480,6 +499,7 @@ export class AgentManager {
    * Close all connections.
    */
   async close(): Promise<void> {
+    this.taskScheduler.stop();
     for (const [_, mcpClient] of this.mcpClients) {
       await mcpClient.disconnect();
     }

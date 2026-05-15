@@ -68,6 +68,8 @@ export interface AgentConfig {
    *  `AgentDefinition.memoryCharLimit`. */
   memoryCharLimit: number;
   compression?: CompressionConfig;
+  /** Wall-clock cap on a single autonomous turn (ms). */
+  autonomousTurnTimeoutMs?: number;
 }
 
 export interface CompressionConfig {

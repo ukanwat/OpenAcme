@@ -22,6 +22,16 @@ async function refreshOne(provider: OAuthProvider, dataDir: string): Promise<OAu
   return refreshAnthropic(dataDir);
 }
 
+export interface GetTokenOpts {
+  /**
+   * Force a refresh even if `expires_at` says the token is fresh. Used
+   * when the provider rejected the previous token with 401 — the
+   * expiry claim was wrong (token revoked, account swapped, rotated
+   * elsewhere) and we want a fresh one before retrying.
+   */
+  force?: boolean;
+}
+
 /**
  * Returns a fresh access token for the given provider, refreshing if needed.
  * Throws OAuthRelogin if the session is unrecoverable.
@@ -29,13 +39,14 @@ async function refreshOne(provider: OAuthProvider, dataDir: string): Promise<OAu
 export async function getOAuthToken(
   provider: OAuthProvider,
   dataDir: string,
+  opts: GetTokenOpts = {},
 ): Promise<{ token: string; accountId?: string }> {
   let entry = getEntry(dataDir, provider);
   if (!entry) {
     throw new OAuthRelogin(provider, `Not signed in. Run \`openacme login --provider ${provider}\`.`);
   }
 
-  if (isExpiringSoon(entry)) {
+  if (opts.force || isExpiringSoon(entry)) {
     let pending = inFlight[provider];
     if (!pending) {
       pending = refreshOne(provider, dataDir).finally(() => { delete inFlight[provider]; });

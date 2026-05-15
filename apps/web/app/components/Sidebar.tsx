@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { MessageSquare, Bot, BookOpen, Settings } from "lucide-react";
+import { MessageSquare, Bot, BookOpen, ListChecks, Settings } from "lucide-react";
 import { cn } from "@/app/lib/utils";
 
 interface NavItem {
@@ -14,6 +14,7 @@ interface NavItem {
 const navItems: NavItem[] = [
   { href: "/", label: "Chat", icon: MessageSquare },
   { href: "/agents", label: "Agents", icon: Bot },
+  { href: "/tasks", label: "Tasks", icon: ListChecks },
   { href: "/skills", label: "Skills", icon: BookOpen },
   { href: "/settings", label: "Settings", icon: Settings },
 ];

@@ -4,6 +4,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { applySchema, createSessionStore, createMessageStore } from "@openacme/db";
+import { MemoryStore } from "@openacme/memory";
+import { TaskStore } from "@openacme/tasks";
 import type { ToolRegistry } from "@openacme/tools";
 import type { UIMessage } from "ai";
 import { Agent } from "../src/agent.js";
@@ -70,11 +72,14 @@ function makeAgent(opts: {
       summarizerInputCharBudget: 80_000,
     },
   };
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agent-core-test-"));
   return new Agent(config, {
     sessionStore,
     messageStore,
     toolRegistry: stubToolRegistry,
     attachmentsRoot: opts.attachmentsRoot ?? "/tmp/openacme-test-attachments",
+    memoryStore: new MemoryStore(path.join(tmpRoot, "agents")),
+    taskStore: new TaskStore(path.join(tmpRoot, "tasks")),
   });
 }
 

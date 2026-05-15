@@ -59,14 +59,100 @@ export function inlineFileAttachments(
 }
 
 /**
+ * A `tool-${name}` part stuck in `input-streaming` or `input-available`
+ * is an aborted tool call — model emitted the call but the result never
+ * arrived (user hit Stop, request timed out, etc). Sending it to the
+ * provider unchanged trips the tool_use/tool_result pairing check.
+ *
+ * Rewrite it to `output-error` so `convertToModelMessages` emits the
+ * matching tool-result with an interrupt marker the model can see.
+ */
+const INTERRUPT_MARKER = "[interrupted]";
+export function finalizeOrphanToolParts(
+  parts: UIMessage["parts"]
+): UIMessage["parts"] {
+  return parts.map((p) => {
+    const tp = p as { type?: string; state?: string };
+    if (!tp.type?.startsWith("tool-")) return p;
+    if (tp.state !== "input-streaming" && tp.state !== "input-available") return p;
+    return {
+      ...(p as object),
+      state: "output-error",
+      errorText: INTERRUPT_MARKER,
+    } as UIMessage["parts"][number];
+  });
+}
+
+/**
+ * Inject `step-start` parts before any text that follows a tool part
+ * without one already present. `convertToModelMessages` uses
+ * `step-start` as the split marker; without it, an assistant message
+ * shaped `[text, tool, text]` collapses into a single model assistant
+ * message and Anthropic rejects with "tool_use ... without tool_result
+ * blocks immediately after" because the post-tool text means the model
+ * "continued without waiting."
+ *
+ * Idempotent: pre-existing step-start parts are preserved and reset
+ * the "needs boundary" flag.
+ */
+export function ensureStepBoundaries(
+  parts: UIMessage["parts"]
+): UIMessage["parts"] {
+  const out: UIMessage["parts"] = [];
+  let unbalancedTool = false;
+  for (const p of parts) {
+    const tp = p as { type?: string };
+    if (tp.type === "step-start") {
+      out.push(p);
+      unbalancedTool = false;
+      continue;
+    }
+    if (tp.type === "text" && unbalancedTool) {
+      out.push({ type: "step-start" } as UIMessage["parts"][number]);
+      unbalancedTool = false;
+    }
+    out.push(p);
+    if (tp.type?.startsWith("tool-")) {
+      unbalancedTool = true;
+    }
+  }
+  return out;
+}
+
+/**
+ * Apply `finalizeOrphanToolParts` + `ensureStepBoundaries` to each
+ * message in a stored-history list. Handles legacy DB rows (process
+ * crashed mid-tool, abort path that pre-dated this fix, CLI assembly
+ * path that pre-dated step-start support, etc.) so the rendered +
+ * replayed view is always pair-consistent without mutating disk.
+ *
+ * Generic over the row shape so callers don't have to widen their
+ * `StoredUIMessage` to a full `UIMessage`.
+ */
+export function sanitizeStoredHistory<M extends { parts: unknown[] }>(
+  messages: M[]
+): M[] {
+  return messages.map((m) => ({
+    ...m,
+    parts: ensureStepBoundaries(
+      finalizeOrphanToolParts(m.parts as UIMessage["parts"])
+    ) as unknown[],
+  }));
+}
+
+/**
  * Convert persisted UIMessages to ModelMessages ready for streamText.
- * Inlines local-attachment bytes first, then defers to the SDK's own
- * converter for tool-${name} / text / file mapping.
+ * Inlines local-attachment bytes, finalizes any orphan tool parts, then
+ * defers to the SDK's own converter for tool-${name} / text / file mapping.
  */
 export async function uiToModelMessages(
   messages: UIMessage[],
   opts: { attachmentsRoot: string; tools?: ToolSet }
 ): Promise<ModelMessage[]> {
   const inlined = inlineFileAttachments(messages, opts.attachmentsRoot);
-  return convertToModelMessages(inlined, { tools: opts.tools });
+  const sanitized = inlined.map((m) => ({
+    ...m,
+    parts: ensureStepBoundaries(finalizeOrphanToolParts(m.parts)),
+  }));
+  return convertToModelMessages(sanitized, { tools: opts.tools });
 }

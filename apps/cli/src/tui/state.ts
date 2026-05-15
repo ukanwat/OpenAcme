@@ -29,6 +29,7 @@ export interface AppState {
   sessionPickerOpen: boolean;
   skillsOverlayOpen: boolean;
   mcpOverlayOpen: boolean;
+  tasksOverlayOpen: boolean;
   pendingAttachments: PendingAttachment[];
   /** Transient one-shot notice — path-not-found, etc. */
   attachNotice?: string;
@@ -66,6 +67,7 @@ export type Action =
   | { type: "open-session-picker" }
   | { type: "open-skills-overlay" }
   | { type: "open-mcp-overlay" }
+  | { type: "open-tasks-overlay" }
   | { type: "open-palette" }
   | { type: "attach-add"; attachment: PendingAttachment }
   | { type: "attach-remove"; sourcePath: string }
@@ -270,6 +272,7 @@ export function reducer(state: AppState, action: Action): AppState {
         sessionPickerOpen: false,
         skillsOverlayOpen: false,
         mcpOverlayOpen: false,
+        tasksOverlayOpen: false,
       };
     case "open-model-picker":
       return { ...state, modelPickerOpen: true, paletteOpen: false };
@@ -281,6 +284,8 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, skillsOverlayOpen: true, paletteOpen: false };
     case "open-mcp-overlay":
       return { ...state, mcpOverlayOpen: true, paletteOpen: false };
+    case "open-tasks-overlay":
+      return { ...state, tasksOverlayOpen: true, paletteOpen: false };
     case "open-palette":
       return { ...state, paletteOpen: true };
     case "attach-add":
@@ -369,6 +374,7 @@ export function initState(opts: {
     sessionPickerOpen: false,
     skillsOverlayOpen: false,
     mcpOverlayOpen: false,
+    tasksOverlayOpen: false,
     pendingAttachments: [],
   };
 }
