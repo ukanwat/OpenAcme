@@ -94,7 +94,14 @@ function parseAgentFile(filePath: string): AgentDefinition | null {
         : typeof (data as { persona?: unknown }).persona === "string"
           ? ((data as { persona: string }).persona)
           : "";
-    return AgentDefinitionSchema.parse({ ...data, persona });
+    // The folder name is the source of truth for the id. Any `id:` in
+    // frontmatter is ignored — renaming the folder renames the agent, and
+    // two folders can't share a name so duplicate ids are structurally
+    // impossible.
+    const id = path.basename(path.dirname(filePath));
+    const { id: _ignoredFrontmatterId, ...rest } = data as Record<string, unknown>;
+    void _ignoredFrontmatterId;
+    return AgentDefinitionSchema.parse({ ...rest, id, persona });
   } catch (e) {
     console.warn(
       `Skipping malformed agent file ${filePath}: ${e instanceof Error ? e.message : String(e)}`
@@ -124,8 +131,12 @@ function stripUndefined<T>(value: T): T {
 
 function serializeAgent(agent: AgentDefinition): string {
   // Persona goes in the body; everything else stays structured in frontmatter.
-  // gray-matter.stringify takes (body, frontmatterObj).
-  const { persona, ...frontmatter } = stripUndefined(agent);
+  // gray-matter.stringify takes (body, frontmatterObj). The id is dropped
+  // from frontmatter — it's the folder name (`<agentsDir>/<id>/AGENT.md`),
+  // so writing it in YAML would be redundant and would let hand-edits
+  // drift from the directory name.
+  const { persona, id: _id, ...frontmatter } = stripUndefined(agent);
+  void _id;
   return matter.stringify(persona ? `${persona}\n` : "\n", frontmatter);
 }
 
