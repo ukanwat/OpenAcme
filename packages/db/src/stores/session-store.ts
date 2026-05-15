@@ -219,6 +219,46 @@ export function createSessionStore(
       }
     },
 
+    /** Set the per-session next-probe time (unix seconds), or null to
+     *  clear. Read by the scheduler's heartbeat arm. The agent sets this
+     *  via the `sleep` system tool; the scheduler clears it when the
+     *  probe fires (so the next turn's behavior falls back to the
+     *  agent's default cadence unless `sleep` is called again). */
+    setNextCheckAt(id: string, unixSeconds: number | null): void {
+      const result = orm
+        .update(sessions)
+        .set({ nextCheckAt: unixSeconds })
+        .where(eq(sessions.id, id))
+        .run();
+      if (result.changes === 0) {
+        console.warn(
+          `setNextCheckAt: session ${id} not found — value not stored`
+        );
+      }
+    },
+
+    /** Read the per-session next-probe override. Returns null when
+     *  unset (agent hasn't called `sleep` since the last probe). */
+    getNextCheckAt(id: string): number | null {
+      const row = orm
+        .select({ ts: sessions.nextCheckAt })
+        .from(sessions)
+        .where(eq(sessions.id, id))
+        .get();
+      return row?.ts ?? null;
+    },
+
+    /** Sessions that have a non-null next_check_at, in arbitrary order.
+     *  Used by the scheduler's startup sweep / reconcile to (re-)arm
+     *  pending probes from the DB without scanning every session. */
+    listSessionsWithNextCheck(): Session[] {
+      return orm
+        .select()
+        .from(sessions)
+        .where(sql`${sessions.nextCheckAt} IS NOT NULL`)
+        .all();
+    },
+
     delete(id: string): void {
       // FK cascade clears messages and message_attachments; the on-disk
       // attachment files don't have a trigger, so we rm them explicitly.

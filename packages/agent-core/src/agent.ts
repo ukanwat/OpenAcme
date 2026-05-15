@@ -158,6 +158,27 @@ function buildAutonomousPrompt(): string {
  * and the recall/extractor lifecycle. Host (HTTP route or CLI) drives
  * the stream and persistence.
  */
+/** Structural subset of the server's SessionBroadcaster used by
+ *  `runAutonomous` to push UIMessage stream chunks + appended messages
+ *  to SSE subscribers. Kept in agent-core so the package stays free
+ *  of a runtime dep on @openacme/server. */
+export interface AutonomousBroadcaster {
+  broadcast(
+    sessionId: string,
+    event:
+      | { kind: "ui_message_part"; part: unknown }
+      | {
+          kind: "messages_appended";
+          messages: Array<{
+            id: string;
+            role: "user" | "assistant";
+            parts: unknown[];
+            metadata?: unknown;
+          }>;
+        }
+  ): void;
+}
+
 export class Agent {
   readonly config: AgentConfig;
   readonly sessionStore: SessionStore;
@@ -166,6 +187,7 @@ export class Agent {
   readonly attachmentsRoot: string;
   readonly memoryStore: MemoryStore;
   readonly taskStore: TaskStore;
+  readonly broadcaster: AutonomousBroadcaster | null;
   readonly compressor = new Compressor();
   private cachedSystemPrompts = new Map<string, string>();
   // Cursor: id of the last assistant covered by an extractor run.
@@ -189,6 +211,11 @@ export class Agent {
       /** Shared task store. Same instance is bound to the task tools and
        *  driven by the server-side TaskScheduler. */
       taskStore: TaskStore;
+      /** Optional UI broadcaster. When present, autonomous turns push
+       *  their UIMessage stream chunks here so SSE-subscribed clients
+       *  see the run live. Interactive turns don't use this — the
+       *  caller already consumes the stream directly. */
+      broadcaster?: AutonomousBroadcaster | null;
     }
   ) {
     this.config = config;
@@ -198,6 +225,7 @@ export class Agent {
     this.attachmentsRoot = deps.attachmentsRoot;
     this.memoryStore = deps.memoryStore;
     this.taskStore = deps.taskStore;
+    this.broadcaster = deps.broadcaster ?? null;
   }
 
   /** `history` MUST end in the new user message. Caller drives the returned stream. */
@@ -367,6 +395,38 @@ export class Agent {
       userMessage,
     ];
 
+    // Persist + broadcast the synthesized user message BEFORE the
+    // assistant turn runs. Two reasons (mirroring /api/chat):
+    // (1) The inbox `unresolvedPingsBySession` rule clears a ping if
+    //     any user message lands after it. If we persisted post-stream
+    //     the autonomous prompt would get a timestamp later than any
+    //     `ping_user` the agent fired during the turn, auto-clearing it.
+    // (2) Tabs subscribed to this session via SSE should see the
+    //     auto-prompt land at the start of the turn, not after.
+    try {
+      this.messageStore.append(opts.sessionId, {
+        id: userMessage.id,
+        role: "user",
+        parts: userMessage.parts as unknown[],
+        metadata: { kind: "autonomous_event" },
+      });
+      this.broadcaster?.broadcast(opts.sessionId, {
+        kind: "messages_appended",
+        messages: [
+          {
+            id: userMessage.id,
+            role: "user",
+            parts: userMessage.parts as unknown[],
+            metadata: { kind: "autonomous_event" },
+          },
+        ],
+      });
+    } catch (e) {
+      console.warn(
+        `runAutonomous: failed to pre-persist auto user message: ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+
     const timeoutMs =
       this.config.autonomousTurnTimeoutMs ?? DEFAULT_AUTONOMOUS_TIMEOUT_MS;
     const timeoutAbort = new AbortController();
@@ -472,9 +532,44 @@ export class Agent {
 
       // Hand-rolling from `fullStream` skips step boundaries that
       // downstream conversion relies on — use the SDK assembler.
-      const uiStream = result.toUIMessageStream({ sendStart: false });
+      // Default `sendStart: true` so each autonomous turn's chunks
+      // carry their own start/finish markers. The broadcaster channel
+      // is long-lived across turns — without those markers,
+      // `readUIMessageStream` on the subscriber side accumulates every
+      // turn into one ever-growing UIMessage.
+      const uiStream = result.toUIMessageStream();
+      // Fan the stream out: one branch feeds the assembler that builds
+      // the persisted UIMessage; the other broadcasts raw parts to
+      // SSE subscribers so the chat pane streams live. `tee` is a
+      // standard ReadableStream method; both branches must be drained
+      // (or one will back-pressure the source).
+      let assemblerStream = uiStream;
+      if (this.broadcaster) {
+        const [a, b] = uiStream.tee();
+        assemblerStream = a;
+        const sid = opts.sessionId;
+        const bc = this.broadcaster;
+        void (async () => {
+          const reader = b.getReader();
+          try {
+            for (;;) {
+              const r = await reader.read();
+              if (r.done) break;
+              try {
+                bc.broadcast(sid, { kind: "ui_message_part", part: r.value });
+              } catch (e) {
+                console.warn(
+                  `runAutonomous broadcaster part failed: ${e instanceof Error ? e.message : String(e)}`
+                );
+              }
+            }
+          } finally {
+            reader.releaseLock();
+          }
+        })();
+      }
       for await (const m of readUIMessageStream<UIMessage>({
-        stream: uiStream,
+        stream: assemblerStream,
       })) {
         assistantMessage = m;
         if (timeoutAbort.signal.aborted) {
@@ -528,21 +623,33 @@ export class Agent {
       );
     }
 
-    this.messageStore.append(opts.sessionId, {
-      id: userMessage.id,
-      role: "user",
-      parts: userMessage.parts as unknown[],
-      metadata: { kind: "autonomous_event" },
-    });
+    // User message was pre-persisted + pre-broadcast above so any
+    // `ping_user` events fired during the turn aren't auto-resolved.
     const assistantParts = assistantMessage.parts as UIMessage["parts"];
     if (assistantParts.length > 0) {
       const sanitized = ensureStepBoundaries(
         finalizeOrphanToolParts(assistantParts)
       );
+      const assistantId = assistantMessage.id ?? randomUUID();
       this.messageStore.append(opts.sessionId, {
-        id: assistantMessage.id ?? randomUUID(),
+        id: assistantId,
         role: "assistant",
         parts: sanitized as unknown[],
+      });
+      // Final broadcast of the assembled assistant message so SSE
+      // subscribers settle on the same id+parts shape the DB sees.
+      // The streaming `ui_message_part` arrivals already produced an
+      // assembled UIMessage with this same id, so this is an upsert
+      // no-op for clients that received the live stream.
+      this.broadcaster?.broadcast(opts.sessionId, {
+        kind: "messages_appended",
+        messages: [
+          {
+            id: assistantId,
+            role: "assistant",
+            parts: sanitized as unknown[],
+          },
+        ],
       });
       const stored = this.messageStore.getHistory(opts.sessionId);
       this.fireExtractor({

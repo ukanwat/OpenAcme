@@ -29,6 +29,8 @@ import {
   bindTaskStore,
   bindBrowser,
   bindAgentTool,
+  bindPingUser,
+  bindSleep,
   closeAllShellSessions,
   SYSTEM_TOOLS,
 } from "@openacme/tools";
@@ -37,6 +39,7 @@ import { MemoryStore } from "@openacme/memory";
 import { TaskStore } from "@openacme/tasks";
 import { BrowserManager } from "@openacme/browser";
 import { TaskScheduler } from "./task-scheduler.js";
+import { SessionBroadcaster } from "./broadcaster.js";
 import {
   MCPClient,
   FileMCPTokenStore,
@@ -113,6 +116,9 @@ export class AgentManager {
   readonly agentStore: AgentStore;
   readonly browserManager: BrowserManager;
   readonly agentCatalog: AgentCatalog;
+  /** In-memory per-session pub/sub for SSE clients. Shared by scheduler,
+   *  agent runtime, and the home + per-session stream routes. */
+  readonly broadcaster: SessionBroadcaster;
   private config: Config;
   private mcpClients = new Map<string, MCPClient>();
   readonly skillRegistry: SkillRegistry;
@@ -169,15 +175,66 @@ export class AgentManager {
       validateSession: (id) => this.sessionStore.get(id) !== null,
     });
     bindTaskStore({ store: this.taskStore });
+
+    // ping_user fires a session-anchored event the EventStore listener
+    // fans out to (a) the broadcaster for the operator's inbox row and
+    // (b) the scheduler's onEvent (no-op for session-only events).
+    bindPingUser({
+      emit: ({ sessionId, agentId, message }) => {
+        this.eventStore.append({
+          sessionId,
+          agentId,
+          kind: "ping_user",
+          actor: agentId,
+          payload: { message },
+        });
+      },
+    });
+
+    // `sleep` writes the per-session next-probe override. Scheduler
+    // arms a cron when this column changes; on probe-fire it's cleared
+    // so the next turn either re-sets via sleep or falls back to the
+    // agent's default cadence.
+    bindSleep({
+      setNextCheckAt: (sessionId, unixSeconds) => {
+        this.sessionStore.setNextCheckAt(sessionId, unixSeconds);
+        // Notify the scheduler so its cron arms reconcile to the new
+        // value without waiting for the next event.
+        this.taskScheduler.reconcile();
+      },
+    });
+
+    this.broadcaster = new SessionBroadcaster();
     this.taskScheduler = new TaskScheduler({
       taskStore: this.taskStore,
       sessionStore: this.sessionStore,
       agentManager: this,
+      broadcaster: this.broadcaster,
     });
     // Pure event-driven wake — every state change emits an event,
     // scheduler.onEvent runs the unified pipeline (lazy session alloc,
     // echo suppression, debounce + rate-limit queue, fire wake).
-    this.eventStore.onEmit((event) => this.taskScheduler.onEvent(event));
+    // Same hook also fans the event out to SSE subscribers of the
+    // affected session so the operator's home view updates live.
+    this.eventStore.onEmit((event) => {
+      this.taskScheduler.onEvent(event);
+      const sessionId = event.sessionId ?? this.deriveSessionForEvent(event);
+      if (sessionId) {
+        this.broadcaster.broadcast(sessionId, {
+          kind: "task_event",
+          event: {
+            id: event.id,
+            taskId: event.taskId,
+            sessionId,
+            agentId: event.agentId,
+            actor: event.actor ?? null,
+            kind: event.kind,
+            payload: event.payload,
+            createdAt: event.createdAt,
+          },
+        });
+      }
+    });
     // setOnChange covers the few mutations that don't emit events
     // (e.g. a bare `start_at` patch with no status change) — it only
     // reconciles cron arms; wakes still go through events.
@@ -271,6 +328,60 @@ export class AgentManager {
     // Bundled agent templates. Read-once snapshot of `packages/agent-catalog/templates/`;
     // no live reload. Importers route through `importAgentFromTemplate`.
     this.agentCatalog = new AgentCatalog();
+
+    // Sweep orphan sessions + tasks left behind by pre-cascade
+    // `deleteAgent` calls. Agents are filesystem-backed (no DB FK
+    // available), so this is a startup-time application-level GC.
+    // After `deleteAgent` was fixed to cascade, this should be a no-op
+    // on healthy installs; existing installs with orphans get a clean
+    // sweep here.
+    this.purgeOrphans();
+  }
+
+  /**
+   * One-shot orphan cleanup: any session whose `agent_id` no longer
+   * matches an agent on disk, and any task whose `assignee` is gone,
+   * gets deleted. Idempotent. Logs a single summary line per run.
+   */
+  private purgeOrphans(): void {
+    const knownAgentIds = new Set(this.agentStore.list().map((a) => a.id));
+    const allSessions = this.sessionStore.listAllActive();
+    const orphanSessions = allSessions.filter(
+      (s) => !knownAgentIds.has(s.agentId)
+    );
+    const orphanTasks = this.taskStore
+      .list()
+      .filter((t) => !knownAgentIds.has(t.assignee));
+    if (orphanSessions.length === 0 && orphanTasks.length === 0) return;
+    for (const s of orphanSessions) {
+      try {
+        this.sessionStore.delete(s.id);
+      } catch (e) {
+        console.warn(
+          `purgeOrphans: failed to drop session ${s.id}: ${e instanceof Error ? e.message : String(e)}`
+        );
+      }
+    }
+    // Tasks: best-effort delete with force. TaskStore.delete is async
+    // (file IO) — fire and let it settle in the background; ordering
+    // doesn't matter and we don't block startup.
+    void (async () => {
+      for (const t of orphanTasks) {
+        try {
+          await this.taskStore.delete(t.id, {
+            force: true,
+            actor: "system:purge-orphans",
+          });
+        } catch (e) {
+          console.warn(
+            `purgeOrphans: failed to drop task ${t.id}: ${e instanceof Error ? e.message : String(e)}`
+          );
+        }
+      }
+    })();
+    console.log(
+      `Workforce GC: cleaned ${orphanSessions.length} orphan session(s) and ${orphanTasks.length} orphan task(s) from deleted agents.`
+    );
   }
 
   /**
@@ -506,8 +617,19 @@ export class AgentManager {
   }
 
   /**
-   * Delete an agent. Disconnects its MCP client so stdio subprocesses
-   * don't leak.
+   * Delete an agent. Cascades to:
+   *  - All sessions owned by this agent (their messages cascade via FK,
+   *    their attachment dirs via SessionStore.delete's FS hook).
+   *  - All tasks assigned to or created by this agent.
+   *  - The agent's broadcaster ring buffers.
+   *  - The MCP client (so stdio subprocesses don't leak).
+   *
+   * Agents are filesystem-backed (not a DB row) so the FK route isn't
+   * available — this is application-level cascade. Without it, deleting
+   * an agent leaves orphan sessions whose `agent_id` references a
+   * vanished folder; on every daemon restart the scheduler tries to
+   * wake them and warns about the missing agent. Same for tasks
+   * assigned to the deleted agent — they'd sit forever as zombies.
    */
   async deleteAgent(id: string): Promise<void> {
     const mcpClient = this.mcpClients.get(id);
@@ -516,6 +638,42 @@ export class AgentManager {
       this.mcpClients.delete(id);
     }
     this.agents.delete(id);
+
+    // Sessions: list cross-agent leaves then filter; SessionStore.list
+    // is per-agent so we can use it directly here.
+    const sessions = this.sessionStore.list(id);
+    for (const s of sessions) {
+      try {
+        this.broadcaster.forget(s.id);
+        this.sessionStore.delete(s.id);
+      } catch (e) {
+        console.warn(
+          `deleteAgent: failed to drop session ${s.id} for ${id}: ${e instanceof Error ? e.message : String(e)}`
+        );
+      }
+    }
+
+    // Tasks: anything assigned to or created by this agent. We delete
+    // rather than reassign — there's no obvious target, and a future
+    // operator can recreate the work after they re-create the agent
+    // if needed. Force the cascade to also drop dependents.
+    const owned = this.taskStore.list({ assignee: id });
+    const created = this.taskStore
+      .list({ created_by: id })
+      .filter((t) => t.assignee !== id);
+    for (const t of [...owned, ...created]) {
+      try {
+        await this.taskStore.delete(t.id, {
+          force: true,
+          actor: "system:agent-delete",
+        });
+      } catch (e) {
+        console.warn(
+          `deleteAgent: failed to drop task ${t.id} for ${id}: ${e instanceof Error ? e.message : String(e)}`
+        );
+      }
+    }
+
     this.agentStore.delete(id);
   }
 
@@ -526,6 +684,20 @@ export class AgentManager {
    */
   evictAgent(id: string): void {
     this.agents.delete(id);
+  }
+
+  /** For events emitted by TaskStore before the new sessionId column
+   *  was always populated, derive the session from the task's current
+   *  binding so SSE fan-out still routes correctly. New emits in the
+   *  store layer pass sessionId explicitly; this is a fallback. */
+  private deriveSessionForEvent(event: {
+    taskId: string | null;
+    sessionId: string | null;
+  }): string | null {
+    if (event.sessionId) return event.sessionId;
+    if (!event.taskId) return null;
+    const task = this.taskStore.get(event.taskId);
+    return task?.session_id ?? null;
   }
 
   /**
@@ -749,6 +921,7 @@ export class AgentManager {
       attachmentsRoot: this.attachmentsRoot,
       memoryStore: this.memoryStore,
       taskStore: this.taskStore,
+      broadcaster: this.broadcaster,
     });
   }
 
@@ -821,7 +994,14 @@ export class AgentManager {
    * Close all connections.
    */
   async close(): Promise<void> {
+    // Order matters: stop the scheduler so no new turns start, then
+    // wait for any in-flight turn chains to drain before closing the
+    // DB. Without the drain, an autonomous turn still mid-write hits a
+    // closed sqlite handle ("The database connection is not open") at
+    // exit. Particularly visible in CLI chat where the scheduler runs
+    // in-process and a turn may have been kicked just before exit.
     this.taskScheduler.stop();
+    await this.taskScheduler.drain();
     for (const [_, mcpClient] of this.mcpClients) {
       await mcpClient.disconnect();
     }

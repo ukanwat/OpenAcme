@@ -66,11 +66,19 @@ export const EVENT_KINDS = [
   "task_deleted",
   "scheduler_action",
   "task_completed_run",
+  "ping_user",
 ] as const;
 export type EventKind = (typeof EVENT_KINDS)[number];
 
 export interface EventInput {
-  taskId: string;
+  /** Task this event is anchored to. Nullable for session-level events
+   *  (e.g. `ping_user` where the agent is not currently on a task).
+   *  At least one of (taskId, sessionId) must be set. */
+  taskId?: string | null;
+  /** Session this event is anchored to. Auto-derived from the task's
+   *  current session_id if absent and taskId is present. Required for
+   *  session-level events with no task anchor. */
+  sessionId?: string | null;
   /** Semantic owner of the event (usually the assignee). Used for the
    *  prompt's "actor X" rendering when no explicit actor is recorded. */
   agentId: string;
@@ -99,7 +107,8 @@ export interface EventInput {
 
 export interface TaskEvent {
   id: string;
-  taskId: string;
+  taskId: string | null;
+  sessionId: string | null;
   agentId: string;
   /** The actor that caused this event, if recorded. Null/undefined for
    *  anonymous / system events that should never be echo-suppressed. */

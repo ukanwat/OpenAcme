@@ -28,6 +28,11 @@ interface MockAgent {
 
 interface MockManager {
   getAgent: (id: string) => MockAgent;
+  /** Mirror the real shape AgentManager.getAgentDef returns; only
+   *  probeIntervalMs is read by the scheduler today. */
+  getAgentDef: (
+    id: string
+  ) => { id: string; probeIntervalMs: number } | null;
   agents: Map<string, MockAgent>;
 }
 
@@ -60,6 +65,13 @@ beforeEach(() => {
       const a = agents.get(id);
       if (!a) throw new Error(`Agent not found: ${id}`);
       return a;
+    },
+    getAgentDef(id: string) {
+      // Mock def — only probeIntervalMs is read by the scheduler.
+      // Use a long default so heartbeat probes don't fire mid-test.
+      return agents.has(id)
+        ? { id, probeIntervalMs: 60 * 60 * 1000 }
+        : null;
     },
   };
 
@@ -584,4 +596,94 @@ describe("TaskScheduler — agent-missing handling", () => {
     // if the agent stays missing.
     expect(taskStore.get(t.id)?.status).toBe("open");
   });
+});
+
+describe("TaskScheduler — heartbeat probe", () => {
+  it("sets next_check_at after a successful turn when session has eligible work", async () => {
+    const agent = makeAgent("hb");
+    agent.runAutonomous.mockImplementation(async () => {
+      // Claim something so the watchdog doesn't park us — that's a
+      // different code path. Heartbeat fires regardless of claim.
+      const mine = taskStore.list({ assignee: "hb" });
+      if (mine[0]) await taskStore.update(mine[0].id, { status: "in_progress" });
+    });
+
+    const t = await taskStore.create({
+      title: "ongoing",
+      assignee: "hb",
+      created_by: "hb",
+    });
+    await scheduler.start();
+    await waitFor(() => agent.runAutonomous.mock.calls.length >= 1);
+    // Post-turn the scheduler armed a probe via setNextCheckAt.
+    await waitFor(() => {
+      const fresh = taskStore.get(t.id);
+      const ses = fresh?.session_id;
+      if (!ses) return false;
+      return sessionStore.getNextCheckAt(ses) != null;
+    }, 4000);
+    const fresh = taskStore.get(t.id);
+    const ses = fresh!.session_id!;
+    const nextAt = sessionStore.getNextCheckAt(ses);
+    expect(nextAt).not.toBeNull();
+    // Default cadence in the mock is 1h = 3600s ahead.
+    const now = Math.floor(Date.now() / 1000);
+    expect(nextAt!).toBeGreaterThan(now + 60 * 50);
+    expect(nextAt!).toBeLessThan(now + 60 * 70);
+  }, 30000);
+
+  it("does not arm a heartbeat when the session has no eligible work", async () => {
+    const agent = makeAgent("done");
+    agent.runAutonomous.mockImplementation(async () => {
+      // Immediately close the task in this turn.
+      const mine = taskStore.list({ assignee: "done" });
+      if (mine[0]) {
+        await taskStore.update(mine[0].id, { status: "in_progress" });
+        await taskStore.update(mine[0].id, { status: "done" });
+      }
+    });
+
+    const t = await taskStore.create({
+      title: "fast",
+      assignee: "done",
+      created_by: "done",
+    });
+    await scheduler.start();
+    await waitFor(() => agent.runAutonomous.mock.calls.length >= 1);
+    await waitFor(() => taskStore.get(t.id)?.status === "done", 4000);
+    const fresh = taskStore.get(t.id);
+    const ses = fresh!.session_id!;
+    // All tasks terminal → no heartbeat.
+    expect(sessionStore.getNextCheckAt(ses)).toBeNull();
+  }, 30000);
+
+  it("respects an existing next_check_at set by sleep — doesn't overwrite", async () => {
+    const agent = makeAgent("snooze");
+    const sleepAt = Math.floor(Date.now() / 1000) + 5 * 60; // 5 min
+    agent.runAutonomous.mockImplementation(async () => {
+      const mine = taskStore.list({ assignee: "snooze" });
+      if (mine[0]) {
+        await taskStore.update(mine[0].id, { status: "in_progress" });
+        // Simulate the `sleep` tool writing through the session store.
+        sessionStore.setNextCheckAt(mine[0].session_id!, sleepAt);
+      }
+    });
+
+    await taskStore.create({
+      title: "polling",
+      assignee: "snooze",
+      created_by: "snooze",
+    });
+    await scheduler.start();
+    await waitFor(() => agent.runAutonomous.mock.calls.length >= 1);
+    await waitFor(() => {
+      const t = taskStore.list({ assignee: "snooze" })[0];
+      return t?.session_id ? sessionStore.getNextCheckAt(t.session_id) != null : false;
+    }, 4000);
+    const t = taskStore.list({ assignee: "snooze" })[0]!;
+    const after = sessionStore.getNextCheckAt(t.session_id!);
+    // The agent's choice (sleepAt) stays — the post-turn fallback to
+    // default-cadence is skipped because next_check_at was already set.
+    expect(after).toBe(sleepAt);
+  }, 30000);
 });

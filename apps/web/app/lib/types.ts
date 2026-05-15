@@ -62,8 +62,33 @@ export const EVENT_KINDS = [
   "task_deleted",
   "scheduler_action",
   "task_completed_run",
+  "ping_user",
 ] as const;
 export type EventKind = (typeof EVENT_KINDS)[number];
+
+/**
+ * Home page payload returned by GET /api/home — three buckets sorted
+ * Waiting → Running → Idle. Sessions whose tasks are all terminal
+ * don't appear. Mirror of `HomePayload` in @openacme/server.
+ */
+export interface SessionSummary {
+  sessionId: string;
+  agentId: string;
+  agentName: string;
+  title: string | null;
+  status: "waiting" | "running" | "idle";
+  currentTaskTitle: string | null;
+  pendingTaskCount: number;
+  lastActivity: number;
+  nextCheckAt: number | null;
+  pingMessage?: string;
+}
+
+export interface HomePayload {
+  waiting: SessionSummary[];
+  running: SessionSummary[];
+  idle: SessionSummary[];
+}
 
 export type OpenAcmeUIMessage = UIMessage<
   MessageMetadata,

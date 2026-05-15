@@ -183,6 +183,17 @@ export const AgentDefinitionSchema = z.object({
   // installed skill in the workforce. Non-empty restricts to just those
   // names. Edit-form picker, not exposed in the catalog import form.
   skills: z.array(z.string()).default([]),
+  // Heartbeat / failsafe probe cadence (milliseconds). When an
+  // autonomous turn ends with eligible non-terminal work AND the agent
+  // didn't call `sleep` to set a per-turn override, the scheduler will
+  // re-wake this session after this interval to ensure tasks don't sit
+  // forever waiting on a missed event. Default 30 min. Minimum 60s
+  // (cost bound); use `sleep("never")` for max-24h sparse polling.
+  probeIntervalMs: z
+    .number()
+    .int()
+    .min(60_000)
+    .default(30 * 60 * 1000),
 });
 export type AgentDefinition = z.infer<typeof AgentDefinitionSchema>;
 

@@ -17,6 +17,7 @@ import type { TaskStore, Task, TaskEvent } from "@openacme/tasks";
 import { AutonomousTurnTimeout } from "@openacme/agent-core";
 import type { SessionStore } from "@openacme/db";
 import type { AgentManager } from "./agent-manager.js";
+import type { SessionBroadcaster } from "./broadcaster.js";
 
 const SESSION_WAKE_DEBOUNCE_MS = 7_000;
 // Floor between successive wakes on one session. Events arriving inside
@@ -43,6 +44,10 @@ export interface TaskSchedulerOptions {
   taskStore: TaskStore;
   sessionStore: SessionStore;
   agentManager: AgentManager;
+  /** Optional pub-sub for live UI updates. Scheduler broadcasts
+   *  `session_state` transitions (running ↔ idle) when present.
+   *  Omitted in tests that don't care about UI fan-out. */
+  broadcaster?: SessionBroadcaster;
   /** Override the wall clock — test seam. */
   now?: () => Date;
 }
@@ -51,10 +56,16 @@ export class TaskScheduler {
   private readonly taskStore: TaskStore;
   private readonly sessionStore: SessionStore;
   private readonly agentManager: AgentManager;
+  private readonly broadcaster: SessionBroadcaster | null;
   private readonly now: () => Date;
 
   /** One Cron per task awaiting a future start_at. */
   private armed = new Map<string, Cron>();
+  /** One Cron per session with a pending `next_check_at` heartbeat
+   *  probe. Distinct from `armed` because (a) the key shape differs
+   *  (session vs task) and (b) heartbeat probes wake the session
+   *  directly without going through task-eligibility allocation. */
+  private probeArmed = new Map<string, Cron>();
   private chains = new Map<string, Promise<void>>();
   /** Sessions currently enqueued or running — avoid double-enqueue across rapid ticks. */
   private pendingSessions = new Set<string>();
@@ -65,6 +76,13 @@ export class TaskScheduler {
   /** Consecutive turns in a session that produced no in_progress claim.
    *  Watchdog parks the head-of-queue task once this hits the limit. */
   private noClaimStreak = new Map<string, number>();
+  /** Track agent ids we've already warned about as missing. Without
+   *  this, an orphan agent (deleted but still referenced by sessions /
+   *  tasks) produces one warning per session at every startup sweep
+   *  and every event wake — log spam. We surface the situation once
+   *  per process per missing agent, then silently skip subsequent
+   *  wakes for that agent. */
+  private missingAgentsLogged = new Set<string>();
   /** Per-session wake bookkeeping for debounce + rate-limit. */
   private wakeBySession = new Map<string, SessionWakeState>();
   // Defaults to true: events that fire before `start()` are dropped so
@@ -77,6 +95,7 @@ export class TaskScheduler {
     this.taskStore = opts.taskStore;
     this.sessionStore = opts.sessionStore;
     this.agentManager = opts.agentManager;
+    this.broadcaster = opts.broadcaster ?? null;
     this.now = opts.now ?? (() => new Date());
   }
 
@@ -101,6 +120,8 @@ export class TaskScheduler {
     this.stopped = true;
     for (const cron of this.armed.values()) cron.stop();
     this.armed.clear();
+    for (const cron of this.probeArmed.values()) cron.stop();
+    this.probeArmed.clear();
     for (const state of this.wakeBySession.values()) {
       if (state.debounceTimer) clearTimeout(state.debounceTimer);
     }
@@ -110,14 +131,68 @@ export class TaskScheduler {
   }
 
   /**
-   * Reconcile cron arms for future-dated tasks. Called on any TaskStore
-   * mutation (via `setOnChange`) to catch non-event-emitting changes
-   * like a bare `start_at` update. Cheap — walks the task list, no
-   * waking happens here.
+   * Await any in-flight autonomous turn chains. Use during graceful
+   * shutdown (CLI exit, daemon stop) after `stop()` has flipped the
+   * `stopped` flag and cancelled the crons — without this, in-flight
+   * turns continue racing the host's `close()` and may try to write
+   * to a database that's already been closed, producing "database
+   * connection is not open" errors at exit.
+   *
+   * Bounded by `timeoutMs` (default 5s): beyond that, a turn likely
+   * stuck on a slow LLM call is allowed to leak rather than blocking
+   * shutdown indefinitely. The leaked turn may log a DB-closed error
+   * after the host closes — that's the trade-off and is logged-only,
+   * not user-visible.
+   */
+  async drain(timeoutMs = 5_000): Promise<void> {
+    const chains = [...this.chains.values()];
+    if (chains.length === 0) return;
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<void>((resolve) => {
+      timer = setTimeout(() => resolve(), timeoutMs);
+      if (typeof timer.unref === "function") timer.unref();
+    });
+    await Promise.race([
+      Promise.allSettled(chains).then(() => undefined),
+      timeout,
+    ]);
+    if (timer) clearTimeout(timer);
+  }
+
+  /**
+   * Reconcile cron arms for future-dated tasks AND per-session
+   * heartbeat probes. Called on any TaskStore mutation (via
+   * `setOnChange`) and after `bindSleep` writes `next_check_at`. Cheap
+   * — walks task list + sessions with a pending probe.
    */
   reconcile(): void {
     if (this.stopped) return;
-    this.reconcileArmed(this.taskStore.list(), this.now());
+    const now = this.now();
+    this.reconcileArmed(this.taskStore.list(), now);
+    this.reconcileProbes(now);
+  }
+
+  /** Does an agent definition exist for this id? Wraps the manager's
+   *  getAgentDef in a try/catch so this is safe to call from anywhere
+   *  in the scheduler. Used to filter orphan wakes. */
+  private agentExists(agentId: string): boolean {
+    try {
+      return this.agentManager.getAgentDef(agentId) !== null;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Read-only snapshot of sessions with an in-flight turn — either an
+   *  autonomous one (`pendingSessions`) or an interactive one
+   *  (`interactiveBusy` from /api/chat). Both should render as
+   *  "Running" on the home view; without unioning, interactive
+   *  turns from a tab never appear as active in /api/home and other
+   *  tabs miss the running indicator. */
+  runningSessionIds(): string[] {
+    const all = new Set<string>(this.pendingSessions);
+    for (const id of this.interactiveBusy) all.add(id);
+    return [...all];
   }
 
   markInteractiveBusy(sessionId: string): void {
@@ -158,6 +233,11 @@ export class TaskScheduler {
    */
   async onEvent(event: TaskEvent): Promise<void> {
     if (this.stopped) return;
+    // Session-only events (e.g. `ping_user`) carry no taskId — those
+    // never trigger autonomous wakes here (the user's reply, not the
+    // scheduler, is what unblocks the agent). The broadcaster fan-out
+    // in AgentManager surfaces them to subscribed clients.
+    if (!event.taskId) return;
     const task = this.taskStore.get(event.taskId);
     if (!task) return;
     if (task.status === "done" || task.status === "canceled") return;
@@ -339,6 +419,7 @@ export class TaskScheduler {
 
     const refreshed = this.taskStore.list();
     this.reconcileArmed(refreshed, now);
+    this.reconcileProbes(now);
 
     // Startup wakes fire immediately — no debounce coalescing needed
     // since we're processing the accumulated backlog, not a burst.
@@ -419,6 +500,131 @@ export class TaskScheduler {
   }
 
   /**
+   * Arm crons for per-session heartbeat probes. Pulls every session
+   * with a non-null `next_check_at` from the DB, sets/refreshes an arm,
+   * and stops arms for sessions whose probe was cleared (turn fired or
+   * the session settled). Symmetric with `reconcileArmed` for tasks.
+   */
+  private reconcileProbes(now: Date): void {
+    const wanted = new Map<string, Date>();
+    const all = this.sessionStore.listSessionsWithNextCheck();
+    for (const s of all) {
+      if (s.nextCheckAt == null) continue;
+      const at = new Date(s.nextCheckAt * 1000);
+      if (Number.isNaN(at.getTime())) continue;
+      // Past-due probes fire immediately. Don't stop here — sometimes
+      // a turn ends and sets next_check_at to "soon" before reconcile
+      // runs; we still want to arm and fire ASAP.
+      wanted.set(s.id, at);
+    }
+
+    // Stop arms no longer wanted or whose target changed.
+    for (const [sid, cron] of this.probeArmed) {
+      const want = wanted.get(sid);
+      if (!want) {
+        cron.stop();
+        this.probeArmed.delete(sid);
+        continue;
+      }
+      const armedAt = cron.getOnce();
+      if (!armedAt || armedAt.getTime() !== want.getTime()) {
+        cron.stop();
+        this.probeArmed.delete(sid);
+      }
+    }
+
+    // Add arms for sessions not yet covered.
+    for (const [sid, at] of wanted) {
+      if (this.probeArmed.has(sid)) continue;
+      // Croner with a past date fires immediately — desired for over-
+      // due probes after a server restart.
+      const target = at.getTime() <= now.getTime() ? new Date(now.getTime() + 100) : at;
+      const cron = new Cron(
+        target,
+        { unref: true, catch: true, maxRuns: 1 },
+        () => {
+          this.probeArmed.delete(sid);
+          if (this.stopped) return;
+          this.fireProbe(sid).catch((e) => {
+            console.warn(
+              `TaskScheduler: probe wake for ${sid} failed: ${e instanceof Error ? e.message : String(e)}`
+            );
+          });
+        }
+      );
+      this.probeArmed.set(sid, cron);
+    }
+  }
+
+  /**
+   * Heartbeat probe fired. Clear next_check_at, verify the session
+   * still has eligible work, and schedule a wake.
+   */
+  private async fireProbe(sessionId: string): Promise<void> {
+    try {
+      this.sessionStore.setNextCheckAt(sessionId, null);
+    } catch (e) {
+      console.warn(
+        `TaskScheduler: failed to clear next_check_at for ${sessionId}: ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+    if (!this.sessionHasEligibleWork(sessionId)) return;
+    const session = this.sessionStore.get(sessionId);
+    if (!session) return;
+    this.scheduleWake(sessionId);
+  }
+
+  /**
+   * Post-turn heartbeat scheduling. Called from `runTurn`'s success
+   * path. If `sleep` already set next_check_at this turn, leave it
+   * alone — the agent's choice wins. Otherwise, fall back to the
+   * agent's default `probeIntervalMs` when there's eligible work.
+   */
+  private armDefaultHeartbeat(sessionId: string, agentId: string): void {
+    if (this.sessionStore.getNextCheckAt(sessionId) != null) {
+      // Agent already set its own cadence via `sleep`.
+      this.reconcileProbes(this.now());
+      return;
+    }
+    if (!this.sessionHasEligibleWork(sessionId)) return;
+    let intervalMs = 30 * 60 * 1000;
+    try {
+      const def = this.agentManager.getAgentDef(agentId);
+      if (def && typeof def.probeIntervalMs === "number") {
+        intervalMs = def.probeIntervalMs;
+      }
+    } catch {
+      // Fall through with the default.
+    }
+    const target = Math.floor(this.now().getTime() / 1000) + Math.floor(intervalMs / 1000);
+    try {
+      this.sessionStore.setNextCheckAt(sessionId, target);
+    } catch (e) {
+      console.warn(
+        `TaskScheduler: failed to arm heartbeat for ${sessionId}: ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+    this.reconcileProbes(this.now());
+  }
+
+  /**
+   * Heartbeat eligibility: session has at least one task in
+   * `{open, in_progress}` with `start_at` null or in the past. Tasks
+   * blocked on dep, terminal, or future-scheduled don't count — those
+   * have their own wake paths (events, cron arms).
+   */
+  private sessionHasEligibleWork(sessionId: string): boolean {
+    const now = this.now();
+    const tasks = this.taskStore.list({ session_id: sessionId });
+    for (const t of tasks) {
+      if (t.status !== "open" && t.status !== "in_progress") continue;
+      if (isFutureStart(t.start_at, now)) continue;
+      return true;
+    }
+    return false;
+  }
+
+  /**
    * Croner fired — its task's `start_at` has arrived. Dispatch a wake
    * through the same allocate→schedule pipeline as events. No `actor`
    * to echo-check; the trigger is the wall clock.
@@ -448,13 +654,42 @@ export class TaskScheduler {
   }
 
   private enqueueTurn(sessionId: string, agentId: string): void {
+    // Orphan agent guard: sessions/tasks can reference an agent that's
+    // since been deleted. Without this gate, every wake (startup
+    // sweep, event-driven, cron-armed, heartbeat probe) tries to
+    // instantiate the agent and logs at error level. Warn once per
+    // missing agent per process, then silently drop subsequent wakes
+    // for sessions owned by that agent. Also drop the wake-state
+    // bookkeeping so we don't keep paying the debounce/rate-limit cost.
+    if (!this.agentExists(agentId)) {
+      if (!this.missingAgentsLogged.has(agentId)) {
+        this.missingAgentsLogged.add(agentId);
+        console.warn(
+          `TaskScheduler: agent ${agentId} is referenced by sessions/tasks but no longer exists — wakes for that agent will be skipped. Reassign or delete those sessions/tasks to clean up.`
+        );
+      }
+      this.dropWakeState(sessionId);
+      return;
+    }
     this.pendingSessions.add(sessionId);
+    if (this.broadcaster) {
+      this.broadcaster.broadcast(sessionId, {
+        kind: "session_state",
+        state: "running",
+      });
+    }
     const prev = this.chains.get(agentId) ?? Promise.resolve();
     const work = async () => {
       try {
         await this.runTurn(sessionId, agentId);
       } finally {
         this.pendingSessions.delete(sessionId);
+        if (this.broadcaster) {
+          this.broadcaster.broadcast(sessionId, {
+            kind: "session_state",
+            state: "idle",
+          });
+        }
         // Any events that arrived during the turn requested a wake;
         // fire it now that the session is free.
         const state = this.wakeBySession.get(sessionId);
@@ -523,6 +758,11 @@ export class TaskScheduler {
           this.noClaimStreak.set(sessionId, next);
         }
       }
+      // Heartbeat: if the agent didn't set its own next_check_at via
+      // `sleep` AND the session still has eligible work, arm a default
+      // cadence probe so non-terminal tasks can't sit forever waiting
+      // on an event that never fires.
+      this.armDefaultHeartbeat(sessionId, agentId);
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       const isTimeout = e instanceof AutonomousTurnTimeout;
