@@ -136,7 +136,7 @@ export function loginWithSetupToken(dataDir: string, token: string): AnthropicLo
   if (!isAnthropicOAuthToken(token)) {
     throw new Error(
       "That doesn't look like an Anthropic OAuth setup token. " +
-      "Get one at https://claude.ai/settings/oauth — it should start with `sk-ant-oat-`."
+      "It should start with `sk-ant-oat-`."
     );
   }
   const entry: OAuthEntry = {
@@ -158,10 +158,10 @@ export async function refreshAnthropic(dataDir: string): Promise<OAuthEntry> {
     throw new OAuthRelogin("anthropic", "Not signed in. Run `openacme login --provider anthropic`.");
   }
   if (!entry.refresh_token) {
-    // Setup tokens are long-lived; if they're rejected the user must regenerate.
+    // Setup tokens are long-lived; if they're rejected the user must re-login.
     throw new OAuthRelogin(
       "anthropic",
-      "Setup token rejected. Generate a new one at https://claude.ai/settings/oauth and re-run `openacme login --provider anthropic`.",
+      "Setup token rejected. Re-run `openacme login --provider anthropic` with a fresh token.",
     );
   }
   const body = new URLSearchParams({
