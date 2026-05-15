@@ -17,8 +17,9 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { Repeat2 } from "lucide-react";
 import { cn } from "@/app/lib/utils";
-import { Badge } from "@/app/components/ui/badge";
 import { TabularTick } from "@/app/components/ui/tabular-tick";
+import { SectionEyebrow } from "@/app/components/ui/section-eyebrow";
+import { ActiveMarker } from "@/app/components/ui/active-marker";
 import {
   STATUS_LABEL,
   STATUS_ORDER,
@@ -101,20 +102,24 @@ function BoardColumn({
         isOver && "border-plot-red"
       )}
     >
-      <div className="sticky top-0 z-10 flex items-center justify-between border-b border-paper-rule bg-paper px-3 py-2">
-        <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
+      <div className="sticky top-0 z-10 border-b border-paper-rule bg-paper px-3 py-2">
+        <SectionEyebrow
+          rule={false}
+          meta={
+            <TabularTick
+              value={tasks.length}
+              className="text-[11px] text-ink-soft"
+            />
+          }
+        >
           {STATUS_LABEL[status]}
-        </span>
-        <TabularTick
-          value={tasks.length}
-          className="text-[11px] text-ink-soft"
-        />
+        </SectionEyebrow>
       </div>
       <div className="flex flex-1 flex-col gap-2 overflow-y-auto p-2">
         <SortableContext items={ids} strategy={verticalListSortingStrategy}>
           {tasks.length === 0 ? (
-            <div className="px-2 py-6 text-center font-mono text-[11px] text-ink-faint">
-              empty
+            <div className="flex flex-1 items-center justify-center px-2 py-6">
+              <span className="label-faceplate text-ink-faint">accepts drops</span>
             </div>
           ) : (
             tasks.map((t) => (
@@ -162,13 +167,14 @@ function BoardCard({
       type="button"
       onClick={() => onPick(task.id)}
       className={cn(
-        "relative border border-paper-rule bg-paper px-3 py-2 text-left transition-colors hover:bg-paper-sunk",
-        selected && "border-plot-red",
+        "relative border border-paper-rule bg-paper px-3.5 py-2 text-left transition-colors",
+        selected ? "bg-paper-sunk text-ink" : "text-ink hover:bg-paper-sunk",
         isDragging && "opacity-50"
       )}
       {...attributes}
       {...listeners}
     >
+      <ActiveMarker active={selected} />
       <div className="space-y-1">
         <div className="line-clamp-1 text-sm font-medium text-ink">{task.title}</div>
         <div className="flex flex-wrap gap-x-3 gap-y-0.5 font-mono text-[11px] tabular-nums text-ink-faint">

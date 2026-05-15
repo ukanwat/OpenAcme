@@ -81,11 +81,21 @@ export const STATUS_VARIANT: Record<
   canceled: "outline",
 };
 
+// sv-SE renders ISO-shape (YYYY-MM-DD HH:MM:SS) in the user's local TZ —
+// locale-stable, no Z confusion, matches the engraved-faceplate register.
 export function formatDate(iso: string): string {
   try {
-    return new Date(iso).toLocaleString();
+    return new Date(iso).toLocaleString("sv-SE");
   } catch {
     return iso;
+  }
+}
+
+export function formatAbsoluteFromUnix(unixSec: number): string {
+  try {
+    return new Date(unixSec * 1000).toLocaleString("sv-SE");
+  } catch {
+    return String(unixSec);
   }
 }
 

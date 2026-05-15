@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Kanban, ListChecks, Rows3 } from "lucide-react";
+import { Kanban, Rows3 } from "lucide-react";
 import { toast } from "sonner";
 import { Sidebar } from "../components/Sidebar";
 import { API_BASE } from "../lib/api";
@@ -12,6 +12,7 @@ import { SectionEyebrow } from "@/app/components/ui/section-eyebrow";
 import { TabularTick } from "@/app/components/ui/tabular-tick";
 import { LoadingHairline } from "@/app/components/ui/loading-hairline";
 import { ActiveMarker } from "@/app/components/ui/active-marker";
+import { JargonChip } from "@/app/components/ui/jargon-chip";
 import {
   Dialog,
   DialogContent,
@@ -241,6 +242,8 @@ function TasksPageInner() {
     return out;
   }, [tasks]);
 
+  const inProgressCount = grouped.get("in_progress")?.length ?? 0;
+
   const dirty = !!(
     draft &&
     selected &&
@@ -258,7 +261,7 @@ function TasksPageInner() {
     <div className="flex h-screen w-screen overflow-hidden">
       <Sidebar />
 
-      <main className="flex flex-1 flex-col overflow-hidden bg-paper">
+      <main className="paper-surface flex flex-1 flex-col overflow-hidden bg-paper">
         <header className="flex h-12 shrink-0 items-center justify-between border-b border-paper-rule px-6">
           <div className="flex items-center gap-3">
             <span className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-faint">
@@ -268,8 +271,9 @@ function TasksPageInner() {
             <span className="font-mono text-[12px] text-ink-soft">
               <TabularTick value={tasks.length} /> filed
             </span>
-            <span className="font-mono text-[11px] text-ink-faint">
-              · agents file and complete; you observe
+            <span className="h-3 w-px bg-paper-rule" aria-hidden />
+            <span className="font-mono text-[12px] text-ink-soft">
+              <TabularTick value={inProgressCount} /> in progress
             </span>
           </div>
           <div className="inline-flex border border-paper-rule">
@@ -325,7 +329,7 @@ function TasksPageInner() {
             >
               <DialogContent
                 showCloseButton={false}
-                className="h-[94vh] max-h-[94vh] w-[min(72rem,96vw)] max-w-none overflow-hidden sm:max-w-none"
+                className="paper-surface h-[94vh] max-h-[94vh] w-[min(72rem,96vw)] max-w-none overflow-hidden sm:max-w-none"
               >
                 <VisuallyHidden.Root>
                   <DialogTitle>{selected?.title ?? "Task"}</DialogTitle>
@@ -512,28 +516,7 @@ function explainAutoCorrect(actual: TaskStatus, requested: TaskStatus): string {
   return `Server returned status ${actual} instead of ${requested}.`;
 }
 
-type TaskState = "open" | "in_progress" | "done";
-const TASK_STATE_CYCLE: { state: TaskState; label: string; ms: number }[] = [
-  { state: "open",        label: "OPEN",        ms: 2200 },
-  { state: "in_progress", label: "IN PROGRESS", ms: 2200 },
-  { state: "done",        label: "DONE",        ms: 2200 },
-];
-
 function EmptyTasksState() {
-  const [idx, setIdx] = useState(0);
-  useEffect(() => {
-    const t = setInterval(() => {
-      setIdx((i) => (i + 1) % TASK_STATE_CYCLE.length);
-    }, TASK_STATE_CYCLE[0]!.ms);
-    return () => clearInterval(t);
-  }, []);
-  const current = TASK_STATE_CYCLE[idx]!;
-  const dotClass =
-    current.state === "open"
-      ? "bg-signal-amber"
-      : current.state === "in_progress"
-        ? "bg-plot-red"
-        : "bg-ink";
   return (
     <div className="mx-auto w-full max-w-2xl px-6 pt-12">
       <SectionEyebrow meta="0 tasks">Empty board</SectionEyebrow>
@@ -545,29 +528,34 @@ function EmptyTasksState() {
             <div className="text-[13px] text-ink truncate">
               Draft the weekly status note
             </div>
-            <div className="mt-1 meta-row">
-              @your-agent · filed just now
-            </div>
+            <div className="mt-1 meta-row">@your-agent · filed just now</div>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
-            <span aria-hidden className={cn("status-dot", dotClass)} />
-            <span key={idx} className="label-faceplate tick">
-              {current.label}
-            </span>
+            <span aria-hidden className="status-dot bg-plot-red" />
+            <span className="label-faceplate">IN PROGRESS</span>
           </div>
         </div>
       </div>
 
       <p className="mt-5 text-[13px] leading-relaxed text-ink-soft">
-        Tasks are how agents track work — for themselves and for you.
-        Each one moves between{" "}
-        <span className="font-mono text-ink">open</span>,{" "}
+        <JargonChip
+          term="Task"
+          explanation={
+            <span>
+              A unit of work an agent files for itself or another agent.
+              Has a title, status, assignee, schedule, and free-form body.
+              Status transitions are gated by declared dependencies.
+            </span>
+          }
+        >
+          Tasks
+        </JargonChip>{" "}
+        are how agents track work, for themselves and for you. Each one moves
+        between <span className="font-mono text-ink">open</span>,{" "}
         <span className="font-mono text-ink">in_progress</span>, and{" "}
-        <span className="font-mono text-ink">done</span>. They appear
-        here as agents file them. Ask an agent in chat to{" "}
-        <span className="font-mono text-ink">
-          file a task to investigate X
-        </span>{" "}
+        <span className="font-mono text-ink">done</span>. They appear here as
+        agents file them. Ask an agent in chat to{" "}
+        <span className="font-mono text-ink">file a task to investigate X</span>{" "}
         to start.
       </p>
     </div>
