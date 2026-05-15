@@ -900,11 +900,19 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
     return c.json({ success: true, envVar });
   });
 
-  // ── Static Web UI (published installs only) ──
-  // Bundled at packages/server/web by the publish pipeline (prepack). In the
-  // workspace, web is served by `next dev` on :3000 — Hono stays API-only.
-  const webDir = path.resolve(__dirname, "../web");
-  if (fs.existsSync(path.join(webDir, "index.html"))) {
+  // ── Static Web UI ──
+  // Skipped entirely under the dev proxy — the proxy handles non-API. Otherwise
+  // prefer the bundled path (published install, filled by prepack) and fall
+  // back to the workspace export (e.g. test daemons after `pnpm build`).
+  const inDevProxy = !!process.env["OPENACME_DEV_PROXY_TARGET"];
+  const bundledWebDir = path.resolve(__dirname, "../web");
+  const workspaceWebDir = path.resolve(__dirname, "../../../apps/web/out");
+  const webDir = !inDevProxy && fs.existsSync(path.join(bundledWebDir, "index.html"))
+    ? bundledWebDir
+    : !inDevProxy && fs.existsSync(path.join(workspaceWebDir, "index.html"))
+      ? workspaceWebDir
+      : null;
+  if (webDir) {
     const { serveStatic } = await import("@hono/node-server/serve-static");
 
     // Serve static assets (_next, favicon, etc.)

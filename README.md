@@ -337,11 +337,11 @@ Use this when you're editing code. It:
 - Auto-stops the daemon (frees port 3210)
 - Starts every workspace package in `tsc --watch` (recompiles on save)
 - Starts the server with `tsx watch src/index.ts` (hot-restarts on backend changes)
-- Starts Next.js dev server at **`http://localhost:3000`** with HMR (proxies `/api/*` to `:3210`)
+- Starts Next dev on a private port (`:3220`, loopback) with HMR; Hono on `:3210` fronts it — `/api/*` is handled in-process, everything else (including HMR over WebSocket) is proxied to Next
 
 ```sh
 pnpm dev
-# open http://localhost:3000  (NOT :3210 — that's the daemon's URL)
+# open http://localhost:3210   (one URL — same as the daemon)
 ```
 
 What hot-reloads:
@@ -355,6 +355,15 @@ What hot-reloads:
 
 When you stop `pnpm dev`, run `pnpm agent start` to bring the daemon back up if you want it always-on again.
 
+To run a second `pnpm dev` in parallel (e.g. against a separate test data dir), just point it at a different data dir:
+
+```sh
+OPENACME_DATA_DIR=~/.openacme-test pnpm dev
+# requires ~/.openacme-test/config.yaml with a different server.port (e.g. 3219)
+```
+
+The web dev port is derived as `server.port + 10`, so distinct API ports automatically give distinct web ports. One knob (`server.port`), no env-var ceremony.
+
 ### Daemon mode — production-style local install
 
 Use this when you're *using* OpenAcme, not editing it. The daemon runs in the background, survives reboots, restarts on crash, and serves the production-built web bundle from `:3210`.
@@ -363,14 +372,14 @@ Use this when you're *using* OpenAcme, not editing it. The daemon runs in the ba
 pnpm agent start       # background daemon at http://localhost:3210
 ```
 
-The daemon serves the static UI directly from `apps/web/out/`. So if you edited web code, run `pnpm --filter web build` and the daemon picks it up on the next request — no copy step, no daemon restart needed. (Or just use `pnpm dev` if you want HMR.)
+In published installs the daemon serves the static UI from `packages/server/web/` (copied in by `prepack`). In the workspace, the daemon (without `OPENACME_DEV_PROXY_TARGET`) is API-only — use `pnpm dev` if you want the UI with HMR on `:3210`.
 
 ---
 
 ## 📜 Scripts
 
 ```sh
-pnpm dev               # active dev (HMR + hot-restart) — http://localhost:3000
+pnpm dev               # active dev (HMR + hot-restart) — http://localhost:3210
 pnpm build             # build everything
 pnpm check-types       # tsc --noEmit across the workspace
 pnpm lint

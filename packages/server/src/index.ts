@@ -1,7 +1,8 @@
 import "@openacme/config/telemetry-bootstrap";
-import { serve } from "@hono/node-server";
+import { serve, getRequestListener } from "@hono/node-server";
 import { loadConfig } from "@openacme/config";
 import { createApp } from "./app.js";
+import { createDevHttpServer } from "./dev-proxy.js";
 
 /**
  * Start the OpenAcme agent server.
@@ -24,17 +25,30 @@ export async function startServer(dataDirOverride?: string) {
 
   const port = config.server.port;
   const host = config.server.host;
+  const proxyTargetEnv = process.env["OPENACME_DEV_PROXY_TARGET"];
 
   console.log(`\n🚀 OpenAcme Agent Server`);
   console.log(`   http://${host}:${port}`);
   console.log(`   Agents: ${manager.listAgents().length}`);
-  console.log(`   Health: http://${host}:${port}/api/health\n`);
+  console.log(`   Health: http://${host}:${port}/api/health`);
+  if (proxyTargetEnv) console.log(`   Dev: non-API → ${proxyTargetEnv}`);
+  console.log("");
 
-  const server = serve({
-    fetch: app.fetch,
-    port,
-    hostname: host,
-  });
+  let server: ReturnType<typeof serve>;
+  if (proxyTargetEnv) {
+    const httpServer = createDevHttpServer({
+      honoListener: getRequestListener(app.fetch),
+      proxyTarget: new URL(proxyTargetEnv),
+    });
+    httpServer.listen(port, host);
+    server = httpServer as unknown as ReturnType<typeof serve>;
+  } else {
+    server = serve({
+      fetch: app.fetch,
+      port,
+      hostname: host,
+    });
+  }
 
   // Graceful shutdown
   const shutdown = () => {
