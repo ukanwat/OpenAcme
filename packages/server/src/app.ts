@@ -229,7 +229,7 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
       );
     }
 
-    const def = manager.agentStore.get(agentId);
+    const def = manager.getAgentDef(agentId);
     if (!def) return c.json({ error: "Agent not found" }, 404);
 
     const effectiveSessionId = sessionId || randomUUID();

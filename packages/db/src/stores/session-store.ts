@@ -190,6 +190,35 @@ export function createSessionStore(
         .run();
     },
 
+    /** Read-state cursor for the session's events inbox. Backfilled to
+     *  `unixepoch()` at migration time for existing sessions; new
+     *  sessions also default to `unixepoch()` on insert. Advanced at
+     *  the end of every autonomous turn to the max event ts actually
+     *  rendered (avoids losing events that landed in the same second). */
+    getLastSeenEventTs(id: string): number | null {
+      const row = orm
+        .select({ ts: sessions.lastSeenEventTs })
+        .from(sessions)
+        .where(eq(sessions.id, id))
+        .get();
+      return row ? row.ts : null;
+    },
+
+    markEventsSeen(id: string, ts?: number): void {
+      const result = orm
+        .update(sessions)
+        .set({
+          lastSeenEventTs: ts ?? sql`(unixepoch())`,
+        })
+        .where(eq(sessions.id, id))
+        .run();
+      if (result.changes === 0) {
+        console.warn(
+          `markEventsSeen: session ${id} not found — cursor not advanced`
+        );
+      }
+    },
+
     delete(id: string): void {
       // FK cascade clears messages and message_attachments; the on-disk
       // attachment files don't have a trigger, so we rm them explicitly.

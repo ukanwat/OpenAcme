@@ -118,11 +118,13 @@ const TASKS_GUIDANCE =
   "time, needs to wait on another task (depends_on), or should be handed to a " +
   "different agent. Don't file a task for something you can finish in the current " +
   "turn — just do it.\n" +
-  "Each task binds to a session. By default, a fresh session is lazily created when " +
-  "the scheduler activates the task — clean isolation. Pass `sameSession: true` to " +
-  "queue the task in YOUR current session (only honored when you're also the " +
-  "assignee). Per-session, at most one task is in_progress at a time; the rest " +
-  "queue in created_at order.\n" +
+  "Each task binds to a session. The `session` field on `task_create` controls where " +
+  "the work lives: `\"current\"` (only when self-assigning) puts the task in your " +
+  "current session; `\"fresh\"` requests a brand-new session the scheduler allocates " +
+  "when ready; omit for the smart default (current when self-assigning, fresh " +
+  "otherwise). If you intend to work on a task RIGHT NOW in this same turn, use " +
+  "`\"current\"` — otherwise a parallel session can wake and race you. Per-session, " +
+  "at most one task is in_progress at a time; the rest queue in created_at order.\n" +
   "Cross-agent: passing a different `assignee` files work for that agent. They'll " +
   "pick it up autonomously in a fresh session — you don't message them directly.\n" +
   "Recurring tasks: pass `recurrence` (cron or interval). When you mark a recurring " +
@@ -187,7 +189,9 @@ export function buildSystemPrompt(options: {
 
   // Tasks snapshot — what's assigned to / created by this agent in this
   // session. Built once at session start; tools (`task_list`, `task_view`)
-  // give the agent live state mid-turn.
+  // give the agent live state mid-turn. Recent activity (event feed) is
+  // NOT in the system prompt — runAutonomous appends it to the user
+  // message instead so it stays per-turn fresh and doesn't get cached.
   if (options.tasksContext) {
     parts.push(`\n## Tasks\n${options.tasksContext}`);
   }

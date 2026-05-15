@@ -29,11 +29,15 @@ import {
   STATUS_LABEL,
   STATUS_ORDER,
   formatDate,
+  formatRelativeFromUnix,
+  type Comment,
   type Recurrence,
   type RecurrenceSession,
   type Task,
+  type TaskEvent,
   type TaskStatus,
 } from "./types";
+import { API_BASE } from "@/app/lib/api";
 
 export interface AgentOption {
   id: string;
@@ -270,7 +274,177 @@ export function TaskDetailPanel({
           </>
         )}
       </div>
+
+      <CommentsAndEvents taskId={selected.id} assignee={selected.assignee} />
     </>
+  );
+}
+
+/**
+ * Discussion thread + event log for a task. Comments are append-only;
+ * the human always posts as `system:user`. Result-kind is offered only
+ * when the human happens to be the assignee (rare, but supported).
+ * Polls every 5s for fresh entries while the panel is open — small
+ * tasks change infrequently, no need for SSE.
+ */
+function CommentsAndEvents({
+  taskId,
+  assignee,
+}: {
+  taskId: string;
+  assignee: string;
+}) {
+  const [comments, setComments] = useState<Comment[]>([]);
+  const [events, setEvents] = useState<TaskEvent[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [draftBody, setDraftBody] = useState("");
+  const [postingResult, setPostingResult] = useState(false);
+  const [posting, setPosting] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const [c, e] = await Promise.all([
+          fetch(`${API_BASE}/api/tasks/${taskId}/comments`).then((r) =>
+            r.json()
+          ),
+          fetch(`${API_BASE}/api/tasks/${taskId}/events`).then((r) => r.json()),
+        ]);
+        if (cancelled) return;
+        setComments((c.comments ?? []) as Comment[]);
+        setEvents((e.events ?? []) as TaskEvent[]);
+      } catch {
+        // Network burp — leave stale data on screen, retry on next poll.
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    load();
+    const id = setInterval(load, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [taskId]);
+
+  async function postComment() {
+    if (!draftBody.trim() || posting) return;
+    setPosting(true);
+    try {
+      const r = await fetch(`${API_BASE}/api/tasks/${taskId}/comments`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          body: draftBody,
+          kind: postingResult ? "result" : null,
+          author: postingResult ? assignee : "system:user",
+        }),
+      });
+      if (r.ok) {
+        const { comment } = (await r.json()) as { comment: Comment };
+        setComments((prev) => [...prev, comment]);
+        setDraftBody("");
+        setPostingResult(false);
+      }
+    } finally {
+      setPosting(false);
+    }
+  }
+
+  return (
+    <div className="mt-6 space-y-4">
+      <div>
+        <h3 className="mb-2 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
+          Comments {comments.length > 0 ? `(${comments.length})` : ""}
+        </h3>
+        {loading && comments.length === 0 ? (
+          <p className="text-xs text-ink-faint">Loading…</p>
+        ) : comments.length === 0 ? (
+          <p className="text-xs text-ink-faint">No comments yet.</p>
+        ) : (
+          <ul className="space-y-2">
+            {comments.map((c) => (
+              <li
+                key={c.id}
+                className={cn(
+                  "rounded border border-ink-faint/20 bg-paper-soft px-3 py-2 text-sm",
+                  c.kind === "result" && "border-ink-soft/40 bg-paper",
+                  c.kind === "system" && "italic text-ink-soft"
+                )}
+              >
+                <div className="mb-1 flex items-center gap-2 text-[11px] text-ink-faint">
+                  <span className="font-mono">{c.author}</span>
+                  {c.kind && (
+                    <span className="rounded border border-ink-faint/30 px-1.5 py-px text-[10px] uppercase tracking-wider">
+                      {c.kind}
+                    </span>
+                  )}
+                  <span>·</span>
+                  <span>{formatRelativeFromUnix(c.createdAt)}</span>
+                </div>
+                <div className="whitespace-pre-wrap break-words">{c.body}</div>
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="mt-2 space-y-2">
+          <Textarea
+            value={draftBody}
+            onChange={(e) => setDraftBody(e.target.value)}
+            placeholder="Leave a comment…"
+            rows={3}
+          />
+          <div className="flex items-center justify-between">
+            <label className="flex items-center gap-2 text-xs text-ink-soft">
+              <input
+                type="checkbox"
+                checked={postingResult}
+                onChange={(e) => setPostingResult(e.target.checked)}
+              />
+              Post as <code className="font-mono">result</code> (you must be the assignee)
+            </label>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={postComment}
+              disabled={!draftBody.trim() || posting}
+            >
+              {posting ? "Posting…" : "Comment"}
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <h3 className="mb-2 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
+          Activity {events.length > 0 ? `(${events.length})` : ""}
+        </h3>
+        {events.length === 0 ? (
+          <p className="text-xs text-ink-faint">No activity yet.</p>
+        ) : (
+          <ul className="space-y-1 text-xs">
+            {events.map((e) => (
+              <li key={e.id} className="text-ink-soft">
+                <span className="text-ink-faint">
+                  {formatRelativeFromUnix(e.createdAt)}
+                </span>{" "}
+                · <span className="font-mono">{e.kind}</span>
+                {e.agentId !== "system:scheduler" && (
+                  <>
+                    {" "}
+                    by <span className="font-mono">{e.agentId}</span>
+                  </>
+                )}
+                {e.payload && (
+                  <span className="ml-1 text-ink-faint">{e.payload}</span>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
   );
 }
 

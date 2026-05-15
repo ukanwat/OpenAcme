@@ -69,6 +69,8 @@ export type {
   CompressionConfig,
   OpenAcmeDataParts,
   OpenAcmeUIMessage,
+  MessageMetadata,
+  MessageMetadataKind,
 } from "./types.js";
 export {
   inlineFileAttachments,

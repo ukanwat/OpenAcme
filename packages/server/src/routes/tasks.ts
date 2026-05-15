@@ -1,5 +1,11 @@
 import type { Hono } from "hono";
-import { TaskStoreError, TASK_STATUSES, type TaskStatus } from "@openacme/tasks";
+import {
+  COMMENT_KINDS,
+  TaskStoreError,
+  TASK_STATUSES,
+  type CommentKind,
+  type TaskStatus,
+} from "@openacme/tasks";
 import type { AgentManager } from "../agent-manager.js";
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
@@ -57,11 +63,14 @@ export function registerTaskRoutes(app: Hono, manager: AgentManager): void {
       ...(session_id !== undefined ? { session_id } : {}),
       status,
     });
+    // Bulk comment counts for the cards' badge — one query for all
+    // visible tasks instead of N+1 from the client.
+    const counts = manager.taskStore.commentCounts(tasks.map((t) => t.id));
     // Strip body for the list view; clients hit GET /:id for the body.
     return c.json({
       tasks: tasks.map(({ body: _body, ...rest }) => {
         void _body;
-        return rest;
+        return { ...rest, comment_count: counts.get(rest.id) ?? 0 };
       }),
     });
   });
@@ -136,7 +145,9 @@ export function registerTaskRoutes(app: Hono, manager: AgentManager): void {
     }
 
     try {
-      const task = await manager.taskStore.update(id, patch);
+      const task = await manager.taskStore.update(id, patch, {
+        actor: "system:user",
+      });
       return c.json({ task });
     } catch (e) {
       if (e instanceof TaskStoreError) {
@@ -158,7 +169,7 @@ export function registerTaskRoutes(app: Hono, manager: AgentManager): void {
     const url = new URL(c.req.url);
     const force = url.searchParams.get("force") === "true";
     try {
-      await manager.taskStore.delete(id, { force });
+      await manager.taskStore.delete(id, { force, actor: "system:user" });
       return c.json({ ok: true });
     } catch (e) {
       if (e instanceof TaskStoreError) {
@@ -170,4 +181,127 @@ export function registerTaskRoutes(app: Hono, manager: AgentManager): void {
       throw e;
     }
   });
+
+  // GET /api/tasks/:id/comments — discussion thread, oldest-first.
+  app.get("/api/tasks/:id/comments", (c) => {
+    const id = c.req.param("id");
+    if (!SAFE_ID.test(id)) {
+      return c.json({ error: "invalid id" }, 400);
+    }
+    if (!manager.taskStore.get(id)) {
+      return c.json({ error: "not_found" }, 404);
+    }
+    const url = new URL(c.req.url);
+    const limit = clampLimit(url.searchParams.get("limit"), 200, 1000);
+    const sinceTs = parseUintParam(url.searchParams.get("since_ts"));
+    const kindsRaw = url.searchParams.get("kinds");
+    // Narrow incoming kind strings to canonical CommentKind union;
+    // unknown values get dropped (filter, not validate).
+    const validKindSet = new Set<string>(COMMENT_KINDS);
+    const kinds = kindsRaw
+      ? (kindsRaw
+          .split(",")
+          .map((s) => s.trim())
+          .filter((s) => s && validKindSet.has(s)) as CommentKind[])
+      : undefined;
+    const comments = manager.taskStore.listComments(id, {
+      limit,
+      sinceTs,
+      kinds,
+    });
+    return c.json({ comments });
+  });
+
+  // POST /api/tasks/:id/comments — human leaves a comment. Author is
+  // ALWAYS "system:user" — body cannot override (forge-as-agent gap;
+  // there's no auth on the web↔server channel). `kind` is also locked
+  // out: "system" is reserved, "result" is assignee-only and humans
+  // aren't task assignees in OpenAcme. Untagged comments only via this
+  // path.
+  app.post("/api/tasks/:id/comments", async (c) => {
+    const id = c.req.param("id");
+    if (!SAFE_ID.test(id)) {
+      return c.json({ error: "invalid id" }, 400);
+    }
+    if (!manager.taskStore.get(id)) {
+      return c.json({ error: "not_found" }, 404);
+    }
+
+    let body: Record<string, unknown>;
+    try {
+      body = (await c.req.json()) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: "invalid json" }, 400);
+    }
+    const textRaw = body["body"];
+    if (typeof textRaw !== "string") {
+      return c.json({ error: "body required" }, 400);
+    }
+    const text = textRaw.trim();
+    if (text.length === 0) {
+      return c.json({ error: "body required" }, 400);
+    }
+    if (body["kind"] !== undefined && body["kind"] !== null) {
+      return c.json(
+        {
+          error: "kind not permitted",
+          message:
+            "HTTP comments are always untagged. result and system kinds are agent / system only.",
+        },
+        400
+      );
+    }
+
+    try {
+      const comment = await manager.taskStore.addComment({
+        taskId: id,
+        author: "system:user",
+        body: text,
+        kind: null,
+      });
+      return c.json({ comment });
+    } catch (e) {
+      if (e instanceof TaskStoreError) {
+        return c.json(
+          { error: e.code, message: e.message },
+          statusErrorCode(e.code) as 400 | 404 | 409
+        );
+      }
+      throw e;
+    }
+  });
+
+  // GET /api/tasks/:id/events — full event log for the detail panel.
+  app.get("/api/tasks/:id/events", (c) => {
+    const id = c.req.param("id");
+    if (!SAFE_ID.test(id)) {
+      return c.json({ error: "invalid id" }, 400);
+    }
+    if (!manager.taskStore.get(id)) {
+      return c.json({ error: "not_found" }, 404);
+    }
+    const url = new URL(c.req.url);
+    const limit = clampLimit(url.searchParams.get("limit"), 100, 1000);
+    const sinceTs = parseUintParam(url.searchParams.get("since_ts")) ?? 0;
+    const events = manager.eventStore.recentForTasks([id], sinceTs, limit);
+    // recentForTasks returns DESC; reverse for chronological display.
+    return c.json({ events: [...events].reverse() });
+  });
+}
+
+function parseUintParam(raw: string | null): number | undefined {
+  if (raw === null || raw === "") return undefined;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return undefined;
+  return Math.floor(n);
+}
+
+function clampLimit(
+  raw: string | null,
+  defaultValue: number,
+  max: number
+): number {
+  const parsed = parseUintParam(raw);
+  if (parsed === undefined || parsed === 0) return defaultValue;
+  return Math.min(parsed, max);
 }

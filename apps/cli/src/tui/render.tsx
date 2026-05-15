@@ -1,6 +1,6 @@
 import { render } from "ink";
 import type { AgentManager } from "@openacme/server";
-import type { AgentDefinition } from "@openacme/config";
+import type { AgentDefinition, ModelConfig } from "@openacme/config";
 import { App } from "./App.js";
 
 /**
@@ -13,7 +13,7 @@ export async function renderApp({
   dataDir,
 }: {
   manager: AgentManager;
-  agent: AgentDefinition;
+  agent: AgentDefinition & { model: ModelConfig };
   dataDir: string;
 }): Promise<void> {
   const app = render(<App manager={manager} agent={agent} dataDir={dataDir} />);

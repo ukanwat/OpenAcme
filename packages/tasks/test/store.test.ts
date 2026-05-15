@@ -665,3 +665,253 @@ describe("TaskStore recurrence", () => {
     expect(out).toContain("ran 0×");
   });
 });
+
+// ── Comments + events wiring ────────────────────────────────────────
+
+import type {
+  Comment,
+  CommentInput,
+  CommentListOptions,
+  CommentStorePort,
+  EventInput,
+  EventStorePort,
+} from "../src/ports.js";
+import { randomUUID } from "node:crypto";
+
+function makeStores() {
+  const comments: Comment[] = [];
+  const commentStore: CommentStorePort = {
+    add(input: CommentInput): Comment {
+      const c: Comment = {
+        id: randomUUID(),
+        taskId: input.taskId,
+        author: input.author,
+        kind: input.kind ?? null,
+        body: input.body,
+        createdAt: Math.floor(Date.now() / 1000),
+      };
+      comments.push(c);
+      return c;
+    },
+    list(taskId: string, opts: CommentListOptions = {}): Comment[] {
+      let out = comments
+        .filter((c) => c.taskId === taskId)
+        .sort((a, b) => a.createdAt - b.createdAt);
+      if (opts.sinceTs !== undefined) {
+        out = out.filter((c) => c.createdAt > opts.sinceTs!);
+      }
+      if (opts.kinds && opts.kinds.length > 0) {
+        out = out.filter((c) => c.kind && opts.kinds!.includes(c.kind));
+      }
+      if (opts.limit !== undefined) out = out.slice(0, opts.limit);
+      return out;
+    },
+    latestResult(taskId: string): Comment | null {
+      const results = comments
+        .filter((c) => c.taskId === taskId && c.kind === "result")
+        .sort((a, b) => b.createdAt - a.createdAt);
+      return results[0] ?? null;
+    },
+    countByTask(taskIds: string[]): Map<string, number> {
+      const m = new Map<string, number>();
+      for (const c of comments) {
+        if (taskIds.includes(c.taskId)) {
+          m.set(c.taskId, (m.get(c.taskId) ?? 0) + 1);
+        }
+      }
+      return m;
+    },
+    deleteByTask(taskId: string): void {
+      for (let i = comments.length - 1; i >= 0; i--) {
+        if (comments[i]!.taskId === taskId) comments.splice(i, 1);
+      }
+    },
+  };
+
+  const events: (EventInput & { ts: number })[] = [];
+  const eventStore: EventStorePort = {
+    append(input: EventInput) {
+      const row = { ...input, ts: Date.now() };
+      events.push(row);
+      return row;
+    },
+  };
+
+  return { commentStore, eventStore, comments, events };
+}
+
+describe("TaskStore comments", () => {
+  it("adds and lists comments via store delegation", async () => {
+    const { commentStore, eventStore, comments } = makeStores();
+    const s = new TaskStore(dir, { commentStore, eventStore });
+    const t = await s.create({
+      title: "review pr",
+      assignee: "reviewer",
+      created_by: "author",
+    });
+
+    const c = await s.addComment({
+      taskId: t.id,
+      author: "author",
+      body: "any blockers?",
+    });
+    expect(c).not.toBeNull();
+    expect(comments).toHaveLength(1);
+    expect(comments[0]!.body).toBe("any blockers?");
+
+    const list = s.listComments(t.id);
+    expect(list).toHaveLength(1);
+    expect(list[0]!.author).toBe("author");
+  });
+
+  it("marks the assignee's result comment as the canonical result", async () => {
+    const { commentStore, eventStore } = makeStores();
+    const s = new TaskStore(dir, { commentStore, eventStore });
+    const t = await s.create({
+      title: "compute",
+      assignee: "data",
+      created_by: "pm",
+    });
+    await s.addComment({
+      taskId: t.id,
+      author: "data",
+      body: "first attempt",
+    });
+    await s.addComment({
+      taskId: t.id,
+      author: "data",
+      body: "answer is 42",
+      kind: "result",
+    });
+    const r = s.latestResult(t.id);
+    expect(r).not.toBeNull();
+    expect(r!.body).toBe("answer is 42");
+  });
+
+  it("returns counts grouped by task", async () => {
+    const { commentStore, eventStore } = makeStores();
+    const s = new TaskStore(dir, { commentStore, eventStore });
+    const t1 = await s.create({ title: "a", assignee: "x", created_by: "x" });
+    const t2 = await s.create({ title: "b", assignee: "x", created_by: "x" });
+    await s.addComment({ taskId: t1.id, author: "x", body: "1" });
+    await s.addComment({ taskId: t1.id, author: "x", body: "2" });
+    await s.addComment({ taskId: t2.id, author: "x", body: "3" });
+    const counts = s.commentCounts([t1.id, t2.id]);
+    expect(counts.get(t1.id)).toBe(2);
+    expect(counts.get(t2.id)).toBe(1);
+  });
+
+  it("rejects comment on missing task", async () => {
+    const { commentStore, eventStore } = makeStores();
+    const s = new TaskStore(dir, { commentStore, eventStore });
+    await expect(
+      s.addComment({ taskId: "ghost", author: "x", body: "?" })
+    ).rejects.toMatchObject({ code: "not_found" });
+  });
+
+  it("clears comments on task delete", async () => {
+    const { commentStore, eventStore, comments } = makeStores();
+    const s = new TaskStore(dir, { commentStore, eventStore });
+    const t = await s.create({ title: "x", assignee: "a", created_by: "a" });
+    await s.addComment({ taskId: t.id, author: "a", body: "note" });
+    expect(comments).toHaveLength(1);
+    await s.delete(t.id);
+    expect(comments).toHaveLength(0);
+  });
+
+  it("no-ops when no commentStore is wired", async () => {
+    const s = new TaskStore(dir);
+    const t = await s.create({ title: "x", assignee: "a", created_by: "a" });
+    const c = await s.addComment({
+      taskId: t.id,
+      author: "a",
+      body: "ignored",
+    });
+    expect(c).toBeNull();
+    expect(s.listComments(t.id)).toEqual([]);
+    expect(s.latestResult(t.id)).toBeNull();
+    expect(s.commentCounts([t.id]).size).toBe(0);
+  });
+});
+
+describe("TaskStore event emission", () => {
+  it("emits task_assigned on create", async () => {
+    const { commentStore, eventStore, events } = makeStores();
+    const s = new TaskStore(dir, { commentStore, eventStore });
+    await s.create({ title: "x", assignee: "doer", created_by: "boss" });
+    expect(events).toHaveLength(1);
+    expect(events[0]!.kind).toBe("task_assigned");
+    // `agent_id` is the assignee (who the event concerns); `actor` is
+    // null so echo suppression never blocks a fresh task from waking
+    // its assignee.
+    expect(events[0]!.agentId).toBe("doer");
+    expect(events[0]!.actor).toBeNull();
+    expect(events[0]!.payload).toMatchObject({
+      assignee: "doer",
+      created_by: "boss",
+    });
+  });
+
+  it("emits status_changed only when status actually changes", async () => {
+    const { commentStore, eventStore, events } = makeStores();
+    const s = new TaskStore(dir, { commentStore, eventStore });
+    const t = await s.create({ title: "x", assignee: "a", created_by: "a" });
+    events.length = 0;
+    await s.update(t.id, { title: "renamed" }); // not a status change
+    expect(events.filter((e) => e.kind === "status_changed")).toHaveLength(0);
+    await s.update(t.id, { status: "in_progress" });
+    const change = events.find((e) => e.kind === "status_changed");
+    expect(change).toBeDefined();
+    expect(change!.payload).toMatchObject({ from: "open", to: "in_progress" });
+  });
+
+  it("emits comment_added on addComment", async () => {
+    const { commentStore, eventStore, events } = makeStores();
+    const s = new TaskStore(dir, { commentStore, eventStore });
+    const t = await s.create({ title: "x", assignee: "a", created_by: "a" });
+    events.length = 0;
+    await s.addComment({
+      taskId: t.id,
+      author: "b",
+      body: "hi",
+      kind: "result",
+    });
+    const e = events.find((e) => e.kind === "comment_added");
+    expect(e).toBeDefined();
+    expect(e!.agentId).toBe("b");
+    expect(e!.payload).toMatchObject({ kind: "result" });
+  });
+
+  it("emits dep_unblocked when dependents auto-unblock", async () => {
+    const { commentStore, eventStore, events } = makeStores();
+    const s = new TaskStore(dir, { commentStore, eventStore });
+    const blocker = await s.create({
+      title: "blocker",
+      assignee: "x",
+      created_by: "x",
+    });
+    const dep = await s.create({
+      title: "dependent",
+      assignee: "y",
+      created_by: "x",
+      depends_on: [blocker.id],
+    });
+    expect(dep.status).toBe("blocked");
+    events.length = 0;
+
+    await s.update(blocker.id, { status: "done" });
+    const unblock = events.find((e) => e.kind === "dep_unblocked");
+    expect(unblock).toBeDefined();
+    expect(unblock!.taskId).toBe(dep.id);
+    expect(unblock!.agentId).toBe("y");
+    expect(unblock!.payload).toMatchObject({ blocked_by_task_id: blocker.id });
+  });
+
+  it("does not emit when no eventStore is wired", async () => {
+    const s = new TaskStore(dir);
+    const t = await s.create({ title: "x", assignee: "a", created_by: "a" });
+    await s.update(t.id, { status: "in_progress" });
+    // Just confirm nothing throws and store works without the dep.
+    expect(s.get(t.id)?.status).toBe("in_progress");
+  });
+});

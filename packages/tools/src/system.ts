@@ -16,6 +16,8 @@ export const SYSTEM_TOOLS = [
   "task_view",
   "task_create",
   "task_update",
+  "task_comment",
+  "task_comments",
 ] as const;
 
 export type SystemTool = (typeof SYSTEM_TOOLS)[number];

@@ -17,7 +17,7 @@ import {
   memoryAge,
   memoryFreshnessText,
 } from "@openacme/memory";
-import { TaskStore, TaskStoreError } from "@openacme/tasks";
+import { TaskStore } from "@openacme/tasks";
 import type { SessionStore, MessageStore, StoredUIMessage } from "@openacme/db";
 import { buildSystemPrompt } from "./prompt.js";
 import { Compressor } from "./compression.js";
@@ -35,7 +35,7 @@ import {
   ensureStepBoundaries,
   finalizeOrphanToolParts,
 } from "./messages.js";
-import type { AgentConfig, TokenUsage } from "./types.js";
+import type { AgentConfig, MessageMetadata, TokenUsage } from "./types.js";
 
 const DEFAULT_AUTONOMOUS_TIMEOUT_MS = 5 * 60 * 1000;
 
@@ -126,12 +126,25 @@ export class AutonomousTurnTimeout extends Error {
   }
 }
 
-function buildAutonomousPrompt(title: string, body: string): string {
-  const trimmed = body.trim();
-  if (!trimmed) {
-    return `Autonomous task: ${title}\n\nWork on this task and report back when done. Use task_update to mark progress.`;
-  }
-  return `Autonomous task: ${title}\n\n${trimmed}\n\nWork on this task and report back when done. Use task_update to mark progress.`;
+function buildAutonomousPrompt(): string {
+  return [
+    "Autonomous turn — no human is in this session right now.",
+    "",
+    "Your queue and recent activity are in the system prompt. Decide what to",
+    "work on:",
+    "",
+    "- If something is `in_progress` in this session, continue it (or hand off",
+    "  via comment + status change if you're stuck).",
+    "- Else pick the most relevant `open` task and call",
+    "  `task_update(id, status: \"in_progress\")` to claim it before working.",
+    "- If recent events on tasks you're involved with need a response (a",
+    "  question, a result you depend on, a failure), handle that first.",
+    "- If nothing in the queue is actionable right now, end the turn with no",
+    "  tool calls. The system will wake you again when something changes.",
+    "",
+    "When you finish an assigned task, leave the canonical answer with",
+    "`task_comment(id, body, kind: \"result\")` BEFORE marking it done.",
+  ].join("\n");
 }
 
 /**
@@ -190,6 +203,9 @@ export class Agent {
     toolFilter?: ReadonlySet<string>;
     /** Telemetry tag override (Logfire). No-op unless OPENACME_TELEMETRY=1. */
     telemetryFunctionId?: string;
+    /** Hook between LLM steps — used by `runAutonomous` to inject events
+     *  that arrived mid-turn. Forwarded to `streamText` unchanged. */
+    prepareStep?: Parameters<typeof streamText>[0]["prepareStep"];
   }): Promise<StreamTextResult<ToolSet, never>> {
     const effectiveToolNames = opts.toolFilter
       ? this.config.tools.filter((t) => opts.toolFilter!.has(t))
@@ -220,6 +236,10 @@ export class Agent {
       tools: tools as Parameters<typeof streamText>[0]["tools"],
       stopWhen: opts.stopWhen ?? stepCountIs(this.config.maxSteps),
       abortSignal: opts.signal,
+      prepareStep: opts.prepareStep,
+      // Anthropic native cache-control requires the system prompt to live
+      // in `messages` as a `role: "system"` entry; SDK warns by default.
+      allowSystemInMessages: true,
       experimental_telemetry: {
         isEnabled: true,
         functionId: opts.telemetryFunctionId ?? this.config.id,
@@ -262,33 +282,74 @@ export class Agent {
    */
   async runAutonomous(opts: {
     sessionId: string;
-    taskId: string;
     signal?: AbortSignal;
   }): Promise<{ assistant: UIMessage; usage?: TokenUsage }> {
-    const task = this.taskStore.get(opts.taskId);
-    if (!task) {
-      throw new TaskStoreError(
-        "not_found",
-        `Task ${opts.taskId} not found`
-      );
-    }
     // Guard against concurrent session deletion (scheduler created it
     // in its tick; could vanish before we run).
     if (!this.sessionStore.get(opts.sessionId)) {
       throw new Error(
-        `Session ${opts.sessionId} no longer exists; aborting autonomous turn for task ${opts.taskId}`
+        `Session ${opts.sessionId} no longer exists; aborting autonomous turn`
       );
     }
+
+    // Find the task currently in_progress in this session, if any. Used
+    // for the memory-recall trigger and (in the scheduler) for failure
+    // attribution. The store invariant guarantees at most one in-progress
+    // per session, so the array has 0 or 1 entry; no assignee filter is
+    // needed (sessions are agent-scoped).
+    const inProgress = this.taskStore.list({
+      session_id: opts.sessionId,
+      status: "in_progress",
+    })[0];
+
+    // Build the autonomous user message with this turn's "Recent
+    // activity" snapshot inline. We do NOT bake recent activity into
+    // the cached system prompt — that would leak stale snapshots into
+    // subsequent interactive turns and into sessions.system_prompt.
+    // Read the cursor at turn start; advance it (in finally) to the
+    // max event ts we actually saw, so events from the same wall-clock
+    // second don't get silently skipped by `gt(...)` in the next turn.
+    const lastSeen = this.sessionStore.getLastSeenEventTs(opts.sessionId) ?? 0;
+    let maxRenderedTs = lastSeen;
+    let recentActivity = "";
+    try {
+      const events = this.taskStore.recentEventsForSession(
+        opts.sessionId,
+        this.config.id,
+        lastSeen
+      );
+      if (events.length > 0) {
+        for (const e of events) {
+          if (e.createdAt > maxRenderedTs) maxRenderedTs = e.createdAt;
+        }
+        recentActivity = this.taskStore.renderRecentActivity(
+          opts.sessionId,
+          this.config.id,
+          lastSeen
+        );
+      }
+    } catch (e) {
+      console.warn(
+        `Failed to load recent activity for ${opts.sessionId}: ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+
+    // Wrap the autonomous prompt in a <system-event> block so the
+    // model recognizes it as a system signal (not human input) and
+    // doesn't echo it. Persisted with `metadata.kind = "autonomous_event"`
+    // so the web chat view can hide it from the human reader — these
+    // messages are scaffolding, not conversation.
+    const innerText = recentActivity
+      ? `${buildAutonomousPrompt()}\n\n## Recent activity since you last looked\n\n${recentActivity}`
+      : buildAutonomousPrompt();
+    const userMessageText =
+      `<system-event>\n${innerText}\n</system-event>`;
 
     const userMessage: UIMessage = {
       id: randomUUID(),
       role: "user",
-      parts: [
-        {
-          type: "text",
-          text: buildAutonomousPrompt(task.title, task.body),
-        },
-      ],
+      parts: [{ type: "text", text: userMessageText }],
+      metadata: { kind: "autonomous_event" } satisfies MessageMetadata,
     };
 
     const history = [
@@ -313,11 +374,13 @@ export class Agent {
     let usage: TokenUsage | undefined;
     let assistantMessage: UIMessage | null = null;
 
-    const recall = await this.applyMemoryRecall({
-      history,
-      signal: timeoutAbort.signal,
-      triggerText: task.title,
-    }).catch(() => ({ entries: [], modelContent: null }));
+    const recall = inProgress
+      ? await this.applyMemoryRecall({
+          history,
+          signal: timeoutAbort.signal,
+          triggerText: inProgress.title,
+        }).catch(() => ({ entries: [], modelContent: null }))
+      : { entries: [], modelContent: null };
 
     const recallPart = this.buildRelevantMemoryPart(
       recall.entries,
@@ -330,11 +393,71 @@ export class Agent {
       ];
     }
 
+    // Mid-turn event injection: between LLM steps, surface any new
+    // events that landed since the turn started (or since the last
+    // injection). Echo-suppress events caused by this agent (their
+    // `actor` matches `this.config.id`). Cursor advances on the MAX
+    // event ts actually rendered (not wall-clock) so events at the
+    // same second don't get dropped by the next `gt(...)` query.
+    // Injected as a `user` message wrapping a <system-reminder> block —
+    // mid-stream `system` role messages are non-standard for Anthropic
+    // and break prefix prompt-cache anyway.
+    let injectionCount = 0;
+    let injectionCursor = lastSeen;
+    const MAX_INJECTIONS = 5;
+    const turnAgentId = this.config.id;
+    const turnTaskStore = this.taskStore;
+    const turnSessionId = opts.sessionId;
+    const prepareStep: Parameters<typeof streamText>[0]["prepareStep"] = (
+      stepOpts
+    ) => {
+      if (stepOpts.stepNumber === 0) return undefined;
+      if (injectionCount >= MAX_INJECTIONS) return undefined;
+      try {
+        const fresh = turnTaskStore
+          .recentEventsForSession(turnSessionId, turnAgentId, injectionCursor)
+          .filter((e) => e.actor !== turnAgentId);
+        if (fresh.length === 0) return undefined;
+        const formatted = turnTaskStore.renderRecentActivity(
+          turnSessionId,
+          turnAgentId,
+          injectionCursor
+        );
+        if (!formatted) return undefined;
+        let maxTs = injectionCursor;
+        for (const e of fresh) {
+          if (e.createdAt > maxTs) maxTs = e.createdAt;
+          if (e.createdAt > maxRenderedTs) maxRenderedTs = e.createdAt;
+        }
+        injectionCursor = maxTs;
+        injectionCount++;
+        return {
+          messages: [
+            ...stepOpts.messages,
+            {
+              role: "user",
+              content:
+                "<system-event>\n" +
+                "New events landed while you were working — review and react if relevant, otherwise keep going.\n\n" +
+                formatted +
+                "\n</system-event>",
+            },
+          ],
+        };
+      } catch (e) {
+        console.warn(
+          `Mid-turn event injection failed for ${turnSessionId}: ${e instanceof Error ? e.message : String(e)}`
+        );
+        return undefined;
+      }
+    };
+
     try {
       const result = await this.runStream({
         sessionId: opts.sessionId,
         history,
         signal: timeoutAbort.signal,
+        prepareStep,
       });
 
       // Hand-rolling from `fullStream` skips step boundaries that
@@ -362,6 +485,17 @@ export class Agent {
       if (timeoutAbort.signal.aborted) {
         timedOut = true;
       } else {
+        // Advance cursor before propagating so failures don't bury
+        // events forever — the agent didn't process them, but the
+        // failure is a known condition and the events will still be
+        // re-surfaced on the next wake via the recent-activity feed
+        // capped at limit=20 (a follow-up could carry an "(N more
+        // older not shown)" hint).
+        this.advanceEventCursor(opts.sessionId, maxRenderedTs);
+        clearTimeout(timer);
+        if (externalAbort) {
+          externalAbort.removeEventListener("abort", onExternalAbort);
+        }
         throw e;
       }
     } finally {
@@ -372,13 +506,15 @@ export class Agent {
     }
 
     if (timedOut) {
+      this.advanceEventCursor(opts.sessionId, maxRenderedTs);
       throw new AutonomousTurnTimeout(
-        `Autonomous turn for ${opts.taskId} timed out after ${timeoutMs}ms`
+        `Autonomous turn timed out after ${timeoutMs}ms in session ${opts.sessionId}`
       );
     }
     if (!assistantMessage) {
+      this.advanceEventCursor(opts.sessionId, maxRenderedTs);
       throw new Error(
-        `Autonomous turn for ${opts.taskId} produced no assistant message`
+        `Autonomous turn in session ${opts.sessionId} produced no assistant message`
       );
     }
 
@@ -386,6 +522,7 @@ export class Agent {
       id: userMessage.id,
       role: "user",
       parts: userMessage.parts as unknown[],
+      metadata: { kind: "autonomous_event" },
     });
     const assistantParts = assistantMessage.parts as UIMessage["parts"];
     if (assistantParts.length > 0) {
@@ -404,7 +541,24 @@ export class Agent {
       });
     }
 
+    // Advance the per-session events cursor by the max event ts we
+    // actually rendered (initial recent-activity + mid-turn injections).
+    // Using max-rendered instead of `now()` avoids the second-resolution
+    // race where events landing in the same wall-clock second as cursor
+    // advance get silently skipped by the next turn's `gt(...)` query.
+    this.advanceEventCursor(opts.sessionId, maxRenderedTs);
+
     return { assistant: assistantMessage, usage };
+  }
+
+  private advanceEventCursor(sessionId: string, ts: number): void {
+    try {
+      this.sessionStore.markEventsSeen(sessionId, ts);
+    } catch (e) {
+      console.warn(
+        `markEventsSeen failed for ${sessionId}: ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
   }
 
   /**
@@ -661,6 +815,11 @@ export class Agent {
         `Failed to render tasks for agent ${this.config.id}: ${e instanceof Error ? e.message : String(e)}`
       );
     }
+
+    // Recent Activity is NOT in the cached system prompt — it's
+    // appended to the autonomous user message at runAutonomous time so
+    // it stays per-turn fresh and doesn't contaminate interactive
+    // turns or the persisted sessions.system_prompt.
 
     const prompt = buildSystemPrompt({
       persona: this.config.persona,

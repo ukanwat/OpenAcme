@@ -22,7 +22,7 @@ import { DefaultChatTransport, type UIMessage } from "ai";
 // `OpenAcmeUIMessage` carries our typed `data-*` parts (session, status).
 // useChat<OpenAcmeUIMessage>() type-checks the onData callback below and
 // any future `sendMessage` consumers that read message metadata.
-import type { OpenAcmeUIMessage } from "./lib/types";
+import type { MessageMetadata, OpenAcmeUIMessage } from "./lib/types";
 import { Sidebar } from "./components/Sidebar";
 import { Markdown } from "./components/Markdown";
 import { AttachmentChip } from "./components/AttachmentChip";
@@ -1023,6 +1023,12 @@ function MessageBubble({
   isStreaming: boolean;
 }) {
   if (message.role === "system") return null;
+
+  // Hide autonomous-event scaffolding messages — they're internal
+  // signals from the scheduler / event feed, not human conversation.
+  // The agent's response that follows still renders standalone.
+  const meta = (message as { metadata?: MessageMetadata }).metadata;
+  if (meta?.kind === "autonomous_event") return null;
 
   if (message.role === "user") {
     const text = message.parts

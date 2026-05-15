@@ -2,7 +2,7 @@ import { Box, Text, useApp, useInput } from "ink";
 import { useReducer, useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { randomUUID } from "node:crypto";
 import type { AgentManager } from "@openacme/server";
-import type { AgentDefinition } from "@openacme/config";
+import type { AgentDefinition, ModelConfig } from "@openacme/config";
 import { detectProviderCredentials } from "@openacme/llm-provider";
 import {
   ensureStepBoundaries,
@@ -39,9 +39,14 @@ import {
   looksLikeDroppedPath,
 } from "./attachments.js";
 
+/** Agent def with `model` already resolved against the root config.
+ *  All callers pass agents from `manager.listAgents()` / `getAgentDef()`
+ *  which guarantee the model is set. */
+type ResolvedAgent = AgentDefinition & { model: ModelConfig };
+
 interface Props {
   manager: AgentManager;
-  agent: AgentDefinition;
+  agent: ResolvedAgent;
   dataDir: string;
 }
 

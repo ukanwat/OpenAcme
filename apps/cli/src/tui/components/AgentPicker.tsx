@@ -1,5 +1,7 @@
-import type { AgentDefinition } from "@openacme/config";
+import type { AgentDefinition, ModelConfig } from "@openacme/config";
 import { PickerList } from "./PickerList.js";
+
+type ResolvedAgent = AgentDefinition & { model: ModelConfig };
 
 export function AgentPicker({
   agents,
@@ -7,9 +9,9 @@ export function AgentPicker({
   onSelect,
   onCancel,
 }: {
-  agents: AgentDefinition[];
+  agents: ResolvedAgent[];
   currentId: string;
-  onSelect: (agent: AgentDefinition) => void;
+  onSelect: (agent: ResolvedAgent) => void;
   onCancel: () => void;
 }) {
   const items = agents.map((a) => ({

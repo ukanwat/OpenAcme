@@ -61,12 +61,26 @@ export interface OpenAcmeDataParts {
 }
 
 /**
+ * Persisted-message metadata. The `kind` field tags messages so the
+ * web UI / readers can route or filter them. Add new kinds here so
+ * the discriminated union narrows at every read site.
+ */
+export type MessageMetadataKind = "autonomous_event";
+
+export interface MessageMetadata {
+  kind?: MessageMetadataKind;
+  // Allow forward-compatible extra fields without breaking existing
+  // readers — narrowed branches still typecheck on `kind`.
+  [key: string]: unknown;
+}
+
+/**
  * Re-typed UIMessage. Use this in route signatures and `useChat` calls so
  * `writer.write({type: "data-session", ...})` and the matching `onData`
  * callback are type-checked end-to-end against `OpenAcmeDataParts`.
  */
 export type OpenAcmeUIMessage = UIMessage<
-  Record<string, unknown>,
+  MessageMetadata,
   OpenAcmeDataParts
 >;
 
