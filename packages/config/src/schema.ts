@@ -122,6 +122,11 @@ export const AgentDefinitionSchema = z.object({
   name: z.string(),
   model: ModelConfigSchema.prefault({}),
   persona: z.string().default("You are a helpful AI assistant."),
+  // Environment-touching tools the agent may use. Introspection /
+  // self-management tools (`skill_view`, `memory`, `session_search`,
+  // `task_*`) are NOT listed here — they're merged in unconditionally
+  // by `AgentManager` from `SYSTEM_TOOLS` in `@openacme/tools`. Don't
+  // duplicate them here or the on-disk file ends up with redundant entries.
   tools: z
     .array(z.string())
     .default([
@@ -132,17 +137,10 @@ export const AgentDefinitionSchema = z.object({
       "apply_patch",
       "list_files",
       "search_files",
-      "session_search",
-      "skill_view",
       "web_search",
       "web_extract",
       "execute_code",
       "process",
-      "memory",
-      "task_list",
-      "task_view",
-      "task_create",
-      "task_update",
     ]),
   // Agent-PRIVATE MCP servers — names must not collide with the global
   // catalog at `<dataDir>/mcp.json`. The agent-store enforces this on

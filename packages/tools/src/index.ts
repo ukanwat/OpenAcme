@@ -26,6 +26,7 @@ export {
   bindTaskStore,
   type TaskStoreBindings,
 } from "./builtins/tasks.js";
+export { SYSTEM_TOOLS, type SystemTool } from "./system.js";
 
 // Import builtins to trigger self-registration
 import "./builtins/shell.js";

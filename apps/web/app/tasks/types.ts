@@ -62,13 +62,13 @@ export const STATUS_LABEL: Record<TaskStatus, string> = {
 
 export const STATUS_VARIANT: Record<
   TaskStatus,
-  "default" | "secondary" | "outline" | "destructive"
+  "default" | "secondary" | "outline" | "destructive" | "signal"
 > = {
-  in_progress: "default",
-  open: "secondary",
+  in_progress: "signal",
+  open: "default",
   blocked: "outline",
-  done: "outline",
-  canceled: "destructive",
+  done: "secondary",
+  canceled: "outline",
 };
 
 export function formatDate(iso: string): string {

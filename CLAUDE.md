@@ -94,7 +94,9 @@ Shadowing rule (`registry.ts:18`): a register call is **rejected** if a differen
 1. Create `packages/tools/src/builtins/<name>.ts` with a Zod params schema and an `async handler(args) => JSON.stringify(...)`.
 2. `registry.register({...})` at module top level.
 3. Import the file in `packages/tools/src/index.ts` so it self-registers.
-4. Add the tool name to `AgentDefinitionSchema.tools` default in `packages/config/src/schema.ts` if it should ship on by default.
+4. Decide the category:
+   - **System tool** (always-on, not user-configurable — agent introspection / self-management like `task_*`, `skill_view`, `memory`, `session_search`): add the name to `SYSTEM_TOOLS` in `packages/tools/src/system.ts`. It will be merged into every agent's effective tool set by `AgentManager.createAgentFromDef` and hidden from the web's tool picker.
+   - **User-configurable tool** (environment-touching — shell, file IO, web, exec): add to the `tools` default in `AgentDefinitionSchema` (`packages/config/src/schema.ts`) if it should ship on by default. Don't put it in `SYSTEM_TOOLS`.
 5. Tools are stateless. Long results: enforce a size cap inside the handler (shell uses 50KB; see `shell.ts`).
 
 ### Wiring an external store into a tool

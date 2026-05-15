@@ -30,6 +30,9 @@ export interface ToolInfo {
   description: string;
   toolset: string;
   emoji?: string;
+  /** Always-on tool merged into every agent regardless of the agent's
+   *  `tools` config — hidden from the picker. */
+  system?: boolean;
 }
 
 export interface ModelPreset {

@@ -1,18 +1,12 @@
 "use client";
 
 import { useEffect, useState, type FormEvent } from "react";
-import { Loader2, Lock } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/app/components/ui/card";
+import { Logotype } from "@/app/components/Logotype";
 import { API_BASE } from "../lib/api";
 
 export default function LoginPage() {
@@ -69,44 +63,46 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center px-4">
-      <Card className="w-full max-w-sm">
-        <CardHeader className="space-y-2 text-center">
-          <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-primary/10">
-            <Lock className="h-5 w-5 text-primary" />
+    <main className="flex min-h-screen items-center justify-center bg-paper px-4">
+      <div className="w-full max-w-sm border border-paper-rule bg-paper">
+        <div className="border-b border-paper-rule px-5 py-4">
+          <Logotype className="h-7 w-auto text-ink" />
+          <div className="mt-3 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
+            Authenticate
           </div>
-          <CardTitle>OpenAcme</CardTitle>
-          <CardDescription>
-            Paste the access secret from <code className="rounded bg-muted px-1 py-0.5 text-xs">openacme secret</code>
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={onSubmit} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="secret">Secret</Label>
-              <Input
-                id="secret"
-                type="password"
-                autoFocus
-                autoComplete="off"
-                value={secret}
-                onChange={(e) => setSecret(e.target.value)}
-                disabled={submitting}
-              />
-            </div>
-            <Button type="submit" className="w-full" disabled={submitting || !secret.trim()}>
-              {submitting ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Verifying
-                </>
-              ) : (
-                "Sign in"
-              )}
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
+          <p className="mt-1 text-sm leading-relaxed text-ink-soft">
+            Paste the access secret from{" "}
+            <code className="border border-paper-rule bg-paper-sunk px-1 py-0.5 font-mono text-[11px] text-ink">
+              openacme secret
+            </code>
+            .
+          </p>
+        </div>
+        <form onSubmit={onSubmit} className="space-y-4 px-5 py-4">
+          <div className="space-y-2">
+            <Label htmlFor="secret">Secret</Label>
+            <Input
+              id="secret"
+              type="password"
+              autoFocus
+              autoComplete="off"
+              value={secret}
+              onChange={(e) => setSecret(e.target.value)}
+              disabled={submitting}
+            />
+          </div>
+          <Button type="submit" className="w-full" disabled={submitting || !secret.trim()}>
+            {submitting ? (
+              <>
+                <Loader2 className="mr-2 size-4 animate-spin" />
+                Verifying
+              </>
+            ) : (
+              "Sign in"
+            )}
+          </Button>
+        </form>
+      </div>
     </main>
   );
 }

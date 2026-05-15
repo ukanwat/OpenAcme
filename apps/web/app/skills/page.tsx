@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useRef } from "react";
-import { BookOpen, Plus, Search, Trash2, Loader2, Upload } from "lucide-react";
+import { Plus, Search, Trash2, Loader2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { Sidebar } from "../components/Sidebar";
 import { API_BASE } from "../lib/api";
@@ -222,11 +222,16 @@ export default function SkillsPage() {
     <div className="flex h-screen w-screen overflow-hidden">
       <Sidebar />
 
-      <main className="flex flex-1 flex-col overflow-hidden">
-        <header className="flex h-14 shrink-0 items-center justify-between border-b px-6">
-          <div>
-            <h2 className="text-sm font-semibold">Skills</h2>
-            <p className="text-xs text-muted-foreground">{skills.length} skills</p>
+      <main className="flex flex-1 flex-col overflow-hidden bg-paper">
+        <header className="flex h-12 shrink-0 items-center justify-between border-b border-paper-rule px-6">
+          <div className="flex items-center gap-3">
+            <span className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-faint">
+              Skills
+            </span>
+            <span className="h-3 w-px bg-paper-rule" aria-hidden />
+            <span className="font-mono text-[12px] tabular-nums text-ink-soft">
+              {skills.length} loaded
+            </span>
           </div>
           <div className="flex items-center gap-2">
             <input
@@ -244,7 +249,7 @@ export default function SkillsPage() {
             />
             <Button
               size="sm"
-              variant="outline"
+              variant="ghost"
               disabled={importing}
               onClick={() => folderInputRef.current?.click()}
             >
@@ -269,19 +274,22 @@ export default function SkillsPage() {
         </header>
 
         <div className="flex flex-1 overflow-hidden">
-          <aside className="flex w-80 shrink-0 flex-col border-r">
-            <div className="space-y-3 border-b p-4">
+          <aside className="flex w-80 shrink-0 flex-col border-r border-paper-rule">
+            <div className="border-b border-paper-rule px-4 py-2 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
+              Index
+            </div>
+            <div className="border-b border-paper-rule p-3">
               <div className="relative">
-                <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-ink-faint" />
                 <Input
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search skills…"
+                  placeholder="Search skills"
                   className="pl-8"
                 />
               </div>
               {allTags.length > 0 && (
-                <div className="flex flex-wrap gap-1">
+                <div className="mt-2 flex flex-wrap gap-1">
                   {allTags.slice(0, 8).map((tag) => (
                     <button
                       key={tag}
@@ -290,7 +298,7 @@ export default function SkillsPage() {
                       }
                     >
                       <Badge
-                        variant={searchQuery === tag ? "default" : "secondary"}
+                        variant={searchQuery === tag ? "signal" : "outline"}
                         className="cursor-pointer"
                       >
                         {tag}
@@ -301,43 +309,53 @@ export default function SkillsPage() {
               )}
             </div>
 
-            <div className="flex-1 overflow-y-auto p-2">
+            <div className="flex-1 overflow-y-auto">
               {loading && (
-                <div className="space-y-2 p-2">
+                <div className="space-y-2 p-3">
                   {Array.from({ length: 4 }).map((_, i) => (
-                    <Skeleton key={i} className="h-14 w-full bg-muted" />
+                    <Skeleton key={i} className="h-14 w-full" />
                   ))}
                 </div>
               )}
 
               {!loading && filteredSkills.length === 0 && (
-                <div className="px-3 py-8 text-center text-sm text-muted-foreground">
+                <div className="px-4 py-6 font-mono text-[12px] text-ink-faint">
                   {skills.length === 0
-                    ? "No skills yet. Create one to get started."
-                    : "No matching skills."}
+                    ? "No skills loaded."
+                    : "No matches."}
                 </div>
               )}
 
               {!loading &&
-                filteredSkills.map((skill) => (
-                  <button
-                    key={skill.name}
-                    onClick={() => loadSkillDetail(skill.name)}
-                    className={cn(
-                      "flex w-full flex-col items-start gap-1 rounded-md px-3 py-2 text-left transition-colors",
-                      selectedSkill?.name === skill.name
-                        ? "bg-accent text-accent-foreground"
-                        : "hover:bg-accent/50"
-                    )}
-                  >
-                    <span className="truncate text-sm font-medium w-full">
-                      {skill.name}
-                    </span>
-                    <span className="line-clamp-2 text-xs text-muted-foreground">
-                      {skill.description}
-                    </span>
-                  </button>
-                ))}
+                filteredSkills.map((skill) => {
+                  const isActive = selectedSkill?.name === skill.name;
+                  return (
+                    <button
+                      key={skill.name}
+                      onClick={() => loadSkillDetail(skill.name)}
+                      className={cn(
+                        "group relative flex w-full flex-col items-start gap-0.5 border-b border-paper-rule px-4 py-2.5 text-left transition-colors",
+                        isActive
+                          ? "bg-paper-sunk text-ink"
+                          : "text-ink-soft hover:bg-paper-sunk hover:text-ink"
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          "absolute inset-y-0 left-0 w-[2px] bg-plot-red transition-opacity",
+                          isActive ? "opacity-100" : "opacity-0"
+                        )}
+                        aria-hidden
+                      />
+                      <span className="truncate font-mono text-[13px] text-ink w-full">
+                        {skill.name}
+                      </span>
+                      <span className="line-clamp-2 text-[12px] text-ink-faint">
+                        {skill.description}
+                      </span>
+                    </button>
+                  );
+                })}
             </div>
           </aside>
 
@@ -418,7 +436,7 @@ export default function SkillsPage() {
                       </CardDescription>
                     </div>
                     <Button
-                      variant="outline"
+                      variant="ghost-destructive"
                       size="sm"
                       onClick={() => setConfirmDelete(selectedSkill.name)}
                     >
@@ -430,7 +448,7 @@ export default function SkillsPage() {
                     {selectedSkill.tags.length > 0 && (
                       <div className="flex flex-wrap gap-1.5">
                         {selectedSkill.tags.map((tag) => (
-                          <Badge key={tag} variant="secondary">
+                          <Badge key={tag} variant="outline">
                             {tag}
                           </Badge>
                         ))}
@@ -444,7 +462,7 @@ export default function SkillsPage() {
                           {selectedSkill.relatedSkills.map((name) => (
                             <Button
                               key={name}
-                              variant="outline"
+                              variant="ghost"
                               size="xs"
                               onClick={() => loadSkillDetail(name)}
                             >
@@ -460,20 +478,20 @@ export default function SkillsPage() {
                         <Label className="mb-2 block">
                           Resources ({selectedSkill.resources.length})
                         </Label>
-                        <ul className="space-y-1 text-xs font-mono">
+                        <ul className="border-y border-paper-rule font-mono text-[12px]">
                           {selectedSkill.resources.map((r) => (
                             <li
                               key={r.relPath}
-                              className="flex justify-between gap-4 text-muted-foreground"
+                              className="flex justify-between gap-4 border-b border-paper-rule last:border-b-0 px-3 py-1 text-ink-soft tabular-nums"
                             >
                               <span className="truncate">{r.relPath}</span>
-                              <span className="shrink-0">{r.size}B</span>
+                              <span className="shrink-0 text-ink-faint">{r.size}B</span>
                             </li>
                           ))}
                         </ul>
                         {selectedSkill.dirPath && (
-                          <p className="mt-2 text-xs text-muted-foreground">
-                            <span className="font-mono">{selectedSkill.dirPath}</span>
+                          <p className="mt-2 font-mono text-[11px] text-ink-faint">
+                            {selectedSkill.dirPath}
                           </p>
                         )}
                       </div>
@@ -481,7 +499,7 @@ export default function SkillsPage() {
 
                     <div>
                       <Label className="mb-2 block">Instructions</Label>
-                      <pre className="rounded-md border bg-muted/40 p-4 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words text-foreground">
+                      <pre className="border border-paper-rule bg-paper-sunk p-4 font-mono text-[12px] leading-relaxed whitespace-pre-wrap break-words text-ink">
                         {selectedSkill.body || "(No instructions)"}
                       </pre>
                     </div>
@@ -489,13 +507,20 @@ export default function SkillsPage() {
                 </Card>
               </div>
             ) : (
-              <div className="flex h-full items-center justify-center">
-                <div className="text-center">
-                  <div className="mx-auto mb-3 flex size-12 items-center justify-center rounded-2xl bg-muted">
-                    <BookOpen className="size-5 text-muted-foreground" />
+              <div className="flex h-full items-start justify-center pt-24">
+                <div className="max-w-sm">
+                  <div className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-faint">
+                    No selection
                   </div>
-                  <p className="text-sm text-muted-foreground">
-                    Select a skill or create a new one.
+                  <h3 className="mt-2 text-base font-semibold text-ink">
+                    Pick a skill to view
+                  </h3>
+                  <p className="mt-2 text-sm leading-relaxed text-ink-soft">
+                    Skills are markdown documents with frontmatter that
+                    agents can load on demand. Select one from the index,
+                    or use{" "}
+                    <span className="font-mono text-ink">+ New skill</span>{" "}
+                    to author one.
                   </p>
                 </div>
               </div>

@@ -35,6 +35,7 @@ import {
 } from "@/app/components/ui/card";
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -160,6 +161,8 @@ export default function AgentsPage() {
   const toolsByToolset = useMemo(() => {
     const map = new Map<string, ToolInfo[]>();
     for (const t of tools) {
+      // System tools are always on for every agent — hide from the picker.
+      if (t.system) continue;
       const list = map.get(t.toolset) ?? [];
       list.push(t);
       map.set(t.toolset, list);
@@ -370,13 +373,16 @@ export default function AgentsPage() {
     <div className="flex h-screen w-screen overflow-hidden">
       <Sidebar />
 
-      <main className="flex flex-1 flex-col overflow-hidden">
-        <header className="flex h-14 shrink-0 items-center justify-between border-b px-6">
-          <div>
-            <h2 className="text-sm font-semibold">Agents</h2>
-            <p className="text-xs text-muted-foreground">
+      <main className="flex flex-1 flex-col overflow-hidden bg-paper">
+        <header className="flex h-12 shrink-0 items-center justify-between border-b border-paper-rule px-6">
+          <div className="flex items-center gap-3">
+            <span className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-faint">
+              Agents
+            </span>
+            <span className="h-3 w-px bg-paper-rule" aria-hidden />
+            <span className="font-mono text-[12px] tabular-nums text-ink-soft">
               {agents.length} configured
-            </p>
+            </span>
           </div>
           <Button size="sm" onClick={startCreate}>
             <Plus className="size-4" />
@@ -385,36 +391,47 @@ export default function AgentsPage() {
         </header>
 
         <div className="flex flex-1 overflow-hidden">
-          <aside className="w-72 shrink-0 overflow-y-auto border-r p-4">
-            <div className="space-y-2">
-              {agents.length === 0 && (
-                <p className="text-sm text-muted-foreground px-1">
-                  No agents yet. Create your first one.
-                </p>
-              )}
-              {agents.map((agent) => (
+          <aside className="w-72 shrink-0 overflow-y-auto border-r border-paper-rule">
+            <div className="border-b border-paper-rule px-4 py-2 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
+              Roster
+            </div>
+            {agents.length === 0 && (
+              <p className="px-4 py-4 font-mono text-[12px] text-ink-faint">
+                No agents configured.
+              </p>
+            )}
+            {agents.map((agent) => {
+              const isActive = selectedAgent?.id === agent.id;
+              return (
                 <button
                   key={agent.id}
                   onClick={() => selectAgent(agent)}
                   className={cn(
-                    "flex w-full items-start gap-3 rounded-lg border p-3 text-left transition-colors",
-                    selectedAgent?.id === agent.id
-                      ? "border-primary/50 bg-primary/5"
-                      : "border-border hover:bg-accent/40"
+                    "group relative flex w-full items-start gap-3 border-b border-paper-rule px-4 py-3 text-left transition-colors",
+                    isActive
+                      ? "bg-paper-sunk text-ink"
+                      : "text-ink-soft hover:bg-paper-sunk hover:text-ink"
                   )}
                 >
-                  <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-                    <Bot className="size-4" />
-                  </div>
+                  <span
+                    className={cn(
+                      "absolute inset-y-0 left-0 w-[2px] bg-plot-red transition-opacity",
+                      isActive ? "opacity-100" : "opacity-0"
+                    )}
+                    aria-hidden
+                  />
+                  <Bot className="size-4 shrink-0 mt-0.5 text-ink-soft" />
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-medium">{agent.name}</div>
-                    <div className="truncate font-mono text-[11px] text-muted-foreground">
+                    <div className="truncate text-sm font-medium text-ink">
+                      {agent.name}
+                    </div>
+                    <div className="truncate font-mono text-[11px] tabular-nums text-ink-faint">
                       {agent.model.provider}/{agent.model.model.split("/").pop()}
                     </div>
                   </div>
                 </button>
-              ))}
-            </div>
+              );
+            })}
           </aside>
 
           <div className="flex-1 overflow-y-auto p-6">
@@ -569,7 +586,7 @@ export default function AgentsPage() {
                     {selectedAgent && (
                       <Button
                         type="button"
-                        variant="destructive"
+                        variant="ghost-destructive"
                         size="sm"
                         onClick={() => setConfirmDelete(selectedAgent.id)}
                       >
@@ -585,13 +602,20 @@ export default function AgentsPage() {
                 </div>
               </form>
             ) : (
-              <div className="flex h-full items-center justify-center">
-                <div className="text-center">
-                  <div className="mx-auto mb-3 flex size-12 items-center justify-center rounded-2xl bg-muted">
-                    <Bot className="size-5 text-muted-foreground" />
+              <div className="flex h-full items-start justify-center pt-24">
+                <div className="max-w-sm">
+                  <div className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-faint">
+                    No selection
                   </div>
-                  <p className="text-sm text-muted-foreground">
-                    Select an agent to edit, or create a new one.
+                  <h3 className="mt-2 text-base font-semibold text-ink">
+                    Pick an agent to edit
+                  </h3>
+                  <p className="mt-2 text-sm leading-relaxed text-ink-soft">
+                    Each agent owns its model, persona, tool selection,
+                    and MCP servers. Choose one from the roster on the
+                    left, or use{" "}
+                    <span className="font-mono text-ink">+ New agent</span>{" "}
+                    to create one.
                   </p>
                 </div>
               </div>
@@ -642,21 +666,23 @@ export default function AgentsPage() {
             </DialogDescription>
           </DialogHeader>
           {mcpDialog && (
-            <MCPServerForm
-              initial={
-                mcpDialog.mode === "edit" ? mcpDialog.initial : undefined
-              }
-              lockName={mcpDialog.mode === "edit"}
-              reservedNames={[
-                ...Object.keys(globalMcp),
-                ...(mcpDialog.mode === "add"
-                  ? Object.keys(formData.mcpServers)
-                  : []),
-              ]}
-              onSubmit={handleMcpSave}
-              onCancel={() => setMcpDialog(null)}
-              onTest={handleMcpTest}
-            />
+            <DialogBody>
+              <MCPServerForm
+                initial={
+                  mcpDialog.mode === "edit" ? mcpDialog.initial : undefined
+                }
+                lockName={mcpDialog.mode === "edit"}
+                reservedNames={[
+                  ...Object.keys(globalMcp),
+                  ...(mcpDialog.mode === "add"
+                    ? Object.keys(formData.mcpServers)
+                    : []),
+                ]}
+                onSubmit={handleMcpSave}
+                onCancel={() => setMcpDialog(null)}
+                onTest={handleMcpTest}
+              />
+            </DialogBody>
           )}
         </DialogContent>
       </Dialog>
@@ -686,33 +712,33 @@ function McpSection({
   const privateEntries = Object.entries(privateServers);
   const disabledSet = new Set(disabled);
   return (
-    <div className="grid gap-4">
+    <div className="grid gap-5">
       <div className="flex items-center gap-2">
-        <Boxes className="size-4 text-muted-foreground" />
+        <Boxes className="size-4 text-ink-soft" />
         <Label className="m-0">MCP servers</Label>
       </div>
 
       <div>
         <div className="mb-2 flex items-center justify-between">
-          <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-            inherited from global catalog
+          <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
+            Inherited from global catalog
           </span>
           <Link
             href="/settings"
-            className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+            className="inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-soft hover:text-plot-red"
           >
-            edit catalog
+            Edit catalog
             <ExternalLink className="size-3" />
           </Link>
         </div>
         {globalEntries.length === 0 ? (
-          <p className="text-[12px] text-muted-foreground">
+          <p className="border border-paper-rule bg-paper-sunk px-3 py-2 font-mono text-[12px] text-ink-soft">
             No global servers configured. Add some in Settings → MCP, or
             define an agent-private server below.
           </p>
         ) : (
-          <ul className="grid gap-1.5">
-            {globalEntries.map(([name, cfg]) => {
+          <ul className="grid">
+            {globalEntries.map(([name, cfg], idx) => {
               const inherited = !disabledSet.has(name);
               return (
                 <li key={name}>
@@ -721,36 +747,40 @@ function McpSection({
                     onClick={() => onToggleInherit(name)}
                     aria-pressed={inherited}
                     className={cn(
-                      "flex w-full items-center gap-2.5 rounded-md border p-2.5 text-left transition-colors",
-                      inherited
-                        ? "border-primary/50 bg-primary/5"
-                        : "border-border hover:bg-accent/40"
+                      "group relative flex w-full items-center gap-3 border-paper-rule px-3 py-2 text-left transition-colors",
+                      idx === 0 ? "border-t border-b" : "border-b",
+                      inherited ? "bg-paper" : "bg-paper-sunk"
                     )}
                   >
+                    <span
+                      className={cn(
+                        "absolute inset-y-0 left-0 w-[2px] bg-plot-red transition-opacity",
+                        inherited ? "opacity-100" : "opacity-0"
+                      )}
+                      aria-hidden
+                    />
                     <div
                       className={cn(
-                        "flex size-4 shrink-0 items-center justify-center rounded border",
+                        "flex size-4 shrink-0 items-center justify-center border",
                         inherited
-                          ? "border-primary bg-primary text-primary-foreground"
-                          : "border-border bg-background"
+                          ? "border-plot-red bg-plot-red text-paper"
+                          : "border-paper-rule bg-paper"
                       )}
                     >
                       {inherited && <Check className="size-3" strokeWidth={3} />}
                     </div>
                     <div className="min-w-0 flex-1">
-                      <div className="truncate font-mono text-xs font-medium">
+                      <div className="truncate font-mono text-[12px] text-ink">
                         {name}
                       </div>
-                      <div className="truncate text-[11px] text-muted-foreground">
+                      <div className="truncate font-mono text-[11px] text-ink-faint">
                         {cfg.command
                           ? `${cfg.command}${cfg.args && cfg.args.length > 0 ? " " + cfg.args.join(" ") : ""}`
                           : cfg.url ?? ""}
                       </div>
                     </div>
                     {!inherited && (
-                      <Badge variant="secondary" className="text-[10px]">
-                        excluded
-                      </Badge>
+                      <Badge variant="outline">Excluded</Badge>
                     )}
                   </button>
                 </li>
@@ -762,31 +792,34 @@ function McpSection({
 
       <div>
         <div className="mb-2 flex items-center justify-between">
-          <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-            agent-private servers
+          <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
+            Agent-private servers
           </span>
-          <Button type="button" variant="outline" size="sm" onClick={onAdd}>
+          <Button type="button" variant="ghost" size="sm" onClick={onAdd}>
             <Plus className="size-3.5" />
             Add private
           </Button>
         </div>
         {privateEntries.length === 0 ? (
-          <p className="text-[12px] text-muted-foreground">
+          <p className="border border-paper-rule bg-paper-sunk px-3 py-2 font-mono text-[12px] text-ink-soft">
             None. Add one only when you need a server scoped to this agent
             (e.g., a Notion MCP only this agent should use).
           </p>
         ) : (
-          <ul className="grid gap-1.5">
-            {privateEntries.map(([name, cfg]) => (
+          <ul className="grid">
+            {privateEntries.map(([name, cfg], idx) => (
               <li
                 key={name}
-                className="flex items-center gap-2 rounded-md border p-2.5"
+                className={cn(
+                  "flex items-center gap-2 border-paper-rule px-3 py-2",
+                  idx === 0 ? "border-t border-b" : "border-b"
+                )}
               >
                 <div className="min-w-0 flex-1">
-                  <div className="truncate font-mono text-xs font-medium">
+                  <div className="truncate font-mono text-[12px] text-ink">
                     {name}
                   </div>
-                  <div className="truncate text-[11px] text-muted-foreground">
+                  <div className="truncate font-mono text-[11px] text-ink-faint">
                     {cfg.command
                       ? `${cfg.command}${cfg.args && cfg.args.length > 0 ? " " + cfg.args.join(" ") : ""}`
                       : cfg.url ?? ""}
@@ -795,20 +828,20 @@ function McpSection({
                 <Button
                   type="button"
                   variant="ghost"
-                  size="icon"
+                  size="icon-sm"
                   onClick={() => onEdit(name, cfg)}
                   aria-label="Edit"
                 >
-                  <Pencil className="size-4" />
+                  <Pencil className="size-3.5" />
                 </Button>
                 <Button
                   type="button"
                   variant="ghost"
-                  size="icon"
+                  size="icon-sm"
                   onClick={() => onRemove(name)}
                   aria-label="Remove"
                 >
-                  <Trash2 className="size-4" />
+                  <Trash2 className="size-3.5" />
                 </Button>
               </li>
             ))}
@@ -833,7 +866,7 @@ function ToolPicker({
     return (
       <div className="grid gap-2">
         <Label>Tools</Label>
-        <p className="text-sm text-muted-foreground">
+        <p className="border border-paper-rule bg-paper-sunk px-3 py-2 font-mono text-[12px] text-ink-soft">
           No tools registered on the server yet.
         </p>
       </div>
@@ -844,8 +877,8 @@ function ToolPicker({
     <div className="grid gap-3">
       <div className="flex items-center justify-between">
         <Label>Tools</Label>
-        <span className="text-[11px] text-muted-foreground">
-          {selected.length} of {total} selected
+        <span className="font-mono text-[11px] tabular-nums text-ink-soft">
+          {selected.length} / {total}
         </span>
       </div>
       <div className="space-y-4">
@@ -856,16 +889,16 @@ function ToolPicker({
           return (
             <div key={toolset}>
               <div className="mb-2 flex items-center gap-2">
-                <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+                <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
                   {toolset}
                 </span>
                 {selectedInGroup > 0 && (
-                  <span className="text-[10px] text-muted-foreground">
+                  <span className="font-mono text-[10px] tabular-nums text-ink-faint">
                     ({selectedInGroup}/{list.length})
                   </span>
                 )}
               </div>
-              <div className="grid grid-cols-1 gap-1.5 md:grid-cols-2">
+              <div className="grid grid-cols-1 gap-px md:grid-cols-2">
                 {list.map((tool) => (
                   <ToolToggle
                     key={tool.name}
@@ -898,25 +931,32 @@ function ToolToggle({
       onClick={onClick}
       aria-pressed={checked}
       className={cn(
-        "flex items-start gap-2.5 rounded-md border p-2.5 text-left transition-colors",
+        "group relative flex items-start gap-3 border border-paper-rule px-3 py-2 text-left transition-colors",
         checked
-          ? "border-primary/50 bg-primary/5"
-          : "border-border hover:bg-accent/40"
+          ? "bg-paper text-ink"
+          : "bg-paper-sunk text-ink-soft hover:bg-paper hover:text-ink"
       )}
     >
+      <span
+        className={cn(
+          "absolute inset-y-0 left-0 w-[2px] bg-plot-red transition-opacity",
+          checked ? "opacity-100" : "opacity-0"
+        )}
+        aria-hidden
+      />
       <div
         className={cn(
-          "mt-0.5 flex size-4 shrink-0 items-center justify-center rounded border transition-colors",
+          "mt-0.5 flex size-4 shrink-0 items-center justify-center border transition-colors",
           checked
-            ? "border-primary bg-primary text-primary-foreground"
-            : "border-border bg-background"
+            ? "border-plot-red bg-plot-red text-paper"
+            : "border-paper-rule bg-paper"
         )}
       >
         {checked && <Check className="size-3" strokeWidth={3} />}
       </div>
       <div className="min-w-0 flex-1">
-        <div className="truncate font-mono text-xs font-medium">{tool.name}</div>
-        <div className="line-clamp-2 text-[11px] text-muted-foreground">
+        <div className="truncate font-mono text-[12px] text-ink">{tool.name}</div>
+        <div className="line-clamp-2 text-[11px] text-ink-faint">
           {tool.description}
         </div>
       </div>

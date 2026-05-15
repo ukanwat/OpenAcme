@@ -10,9 +10,6 @@ import {
 import {
   ArrowUp,
   Bot,
-  User,
-  Wrench,
-  Sparkles,
   MessageSquare,
   Trash2,
   Square,
@@ -31,7 +28,6 @@ import { AttachmentChip } from "./components/AttachmentChip";
 import { API_BASE } from "./lib/api";
 import { Button } from "@/app/components/ui/button";
 import { Textarea } from "@/app/components/ui/textarea";
-import { Separator } from "@/app/components/ui/separator";
 import {
   Select,
   SelectContent,
@@ -586,86 +582,130 @@ export default function ChatPage() {
   return (
     <div className="flex h-screen w-screen overflow-hidden">
       <Sidebar>
-        <div className="px-3 py-2">
-          <div className="mb-1 px-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-            Active agent
+        <div className="border-t border-paper-rule pt-3">
+          <div className="px-4 pb-2 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
+            Agents
           </div>
-          {agents.map((agent) => (
-            <button
-              key={agent.id}
-              onClick={() => {
-                setActiveAgentId(agent.id);
-                newChat();
-              }}
-              className={cn(
-                "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors",
-                agent.id === activeAgentId
-                  ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                  : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground"
-              )}
-            >
-              <Bot className="size-3.5" />
-              <span className="truncate">{agent.name}</span>
-            </button>
-          ))}
+          {agents.map((agent) => {
+            const isActive = agent.id === activeAgentId;
+            return (
+              <button
+                key={agent.id}
+                onClick={() => {
+                  setActiveAgentId(agent.id);
+                  newChat();
+                }}
+                className={cn(
+                  "group relative flex w-full items-center gap-3 px-4 py-1.5 text-left text-sm transition-colors",
+                  isActive
+                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                    : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                )}
+              >
+                <span
+                  className={cn(
+                    "absolute inset-y-0 left-0 w-[2px] bg-plot-red transition-opacity",
+                    isActive ? "opacity-100" : "opacity-0"
+                  )}
+                  aria-hidden
+                />
+                <Bot className="size-3.5 shrink-0" />
+                <span className="truncate">{agent.name}</span>
+              </button>
+            );
+          })}
         </div>
 
-        <Separator className="my-1 mx-3 w-auto" />
-
-        <div className="px-3 py-2">
-          <div className="flex items-center justify-between mb-1 px-2">
-            <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-              History
+        <div className="mt-3 border-t border-paper-rule pt-3">
+          <div className="flex items-center justify-between px-4 pb-2">
+            <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
+              Sessions
             </span>
-            <Button
-              variant="ghost"
-              size="icon-xs"
+            <button
               onClick={newChat}
-              title="New chat"
-              aria-label="New chat"
+              title="New session"
+              aria-label="New session"
+              className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-soft hover:text-plot-red focus:text-plot-red focus:outline-none"
             >
-              <Sparkles className="size-3" />
-            </Button>
+              + New
+            </button>
           </div>
-          {sessions.slice(0, 30).map((s) => (
-            <div
-              key={s.id}
-              className={cn(
-                "group flex w-full items-center rounded-md transition-colors",
-                s.id === activeSessionId
-                  ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                  : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground"
-              )}
-            >
-              <button
-                onClick={() => {
-                  if (s.agentId && s.agentId !== activeAgentId) {
-                    setActiveAgentId(s.agentId);
-                  }
-                  setActiveSessionId(s.id);
-                }}
-                className="flex flex-1 min-w-0 items-center gap-2 px-2 py-1.5 text-left text-sm"
+          {sessions.slice(0, 30).map((s) => {
+            const isActive = s.id === activeSessionId;
+            return (
+              <div
+                key={s.id}
+                className={cn(
+                  "group relative flex w-full items-center transition-colors",
+                  isActive
+                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                    : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                )}
               >
-                <MessageSquare className="size-3.5 shrink-0" />
-                <span className="truncate">{s.title || "New conversation"}</span>
-              </button>
-              <button
-                onClick={() => deleteSession(s.id)}
-                title="Delete chat"
-                aria-label="Delete chat"
-                className="mr-1 rounded p-1 opacity-0 transition-opacity hover:bg-destructive/15 hover:text-destructive group-hover:opacity-100 focus:opacity-100 focus:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-              >
-                <Trash2 className="size-3" />
-              </button>
+                <span
+                  className={cn(
+                    "absolute inset-y-0 left-0 w-[2px] bg-plot-red transition-opacity",
+                    isActive ? "opacity-100" : "opacity-0"
+                  )}
+                  aria-hidden
+                />
+                <button
+                  onClick={() => {
+                    if (s.agentId && s.agentId !== activeAgentId) {
+                      setActiveAgentId(s.agentId);
+                    }
+                    setActiveSessionId(s.id);
+                  }}
+                  className="flex flex-1 min-w-0 items-center gap-3 px-4 py-1.5 text-left text-sm"
+                >
+                  <MessageSquare className="size-3.5 shrink-0" />
+                  <span className="truncate">{s.title || "Untitled session"}</span>
+                </button>
+                <button
+                  onClick={() => deleteSession(s.id)}
+                  title="Delete session"
+                  aria-label="Delete session"
+                  className="mr-2 p-1 opacity-0 transition-opacity hover:text-destructive focus:opacity-100 focus:outline-none focus-visible:text-destructive group-hover:opacity-100"
+                >
+                  <Trash2 className="size-3" />
+                </button>
+              </div>
+            );
+          })}
+          {sessions.length === 0 && (
+            <div className="px-4 pb-3 font-mono text-[11px] text-ink-faint">
+              No sessions yet.
             </div>
-          ))}
+          )}
         </div>
       </Sidebar>
 
-      <main className="flex flex-1 flex-col overflow-hidden">
-        <header className="flex h-14 shrink-0 items-center justify-between border-b px-6">
+      <main className="flex flex-1 flex-col overflow-hidden bg-paper">
+        <header className="flex h-12 shrink-0 items-center justify-between border-b border-paper-rule px-6">
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <span
+                className={cn(
+                  "status-dot",
+                  isStreaming ? "bg-plot-red pulse-live" : "bg-ink"
+                )}
+                aria-hidden
+              />
+              <span className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-soft">
+                {isStreaming ? "Streaming" : activeAgent ? "Ready" : "No agent"}
+              </span>
+            </div>
+            <span className="h-3 w-px bg-paper-rule" aria-hidden />
+            <span className="text-sm font-medium text-ink">
+              {activeAgent?.name ?? "—"}
+            </span>
+            {activeSessionId && (
+              <span className="font-mono text-[11px] text-ink-faint tabular-nums">
+                · {activeSessionId.slice(0, 8)}
+              </span>
+            )}
+          </div>
           <div className="flex items-center gap-3">
-            <h2 className="text-sm font-semibold">{activeAgent?.name || "OpenAcme"}</h2>
             {activeAgent && (
               <ModelQuickSwitch
                 agent={activeAgent}
@@ -710,15 +750,36 @@ export default function ChatPage() {
         </header>
 
         {messages.length === 0 ? (
-          <div className="flex flex-1 flex-col items-center justify-center px-6 text-center">
-            <div className="flex size-14 items-center justify-center rounded-2xl bg-primary/10 text-primary mb-4">
-              <Sparkles className="size-6" />
+          <div className="flex flex-1 items-start justify-center overflow-y-auto px-6 py-16">
+            <div className="w-full max-w-2xl">
+              <div className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-faint">
+                Session · Empty
+              </div>
+              <h2 className="mt-2 text-2xl font-semibold leading-tight tracking-tight text-ink">
+                {activeAgent ? activeAgent.name : "No agent selected"}
+              </h2>
+              <p className="mt-3 max-w-prose text-sm leading-relaxed text-ink-soft">
+                {activeAgent
+                  ? "Send a message to begin a session. The agent has access to its configured tools, skills, and memory. Conversation, tool calls, and results all persist to this session and remain editable."
+                  : "Pick an agent in the sidebar to start a session. Each agent owns its own model, tools, skills, and memory."}
+              </p>
+              {activeAgent && (
+                <div className="mt-8 grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 border-t border-paper-rule pt-4 font-mono text-[12px] tabular-nums">
+                  <span className="text-ink-faint uppercase tracking-[0.08em] text-[10px]">Model</span>
+                  <span className="text-ink-soft">
+                    {activeAgent.model.provider}/{activeAgent.model.model}
+                  </span>
+                  <span className="text-ink-faint uppercase tracking-[0.08em] text-[10px]">Tools</span>
+                  <span className="text-ink-soft">
+                    {activeAgent.tools.length} available
+                  </span>
+                  <span className="text-ink-faint uppercase tracking-[0.08em] text-[10px]">Persona</span>
+                  <span className="text-ink-soft truncate">
+                    {activeAgent.persona || "—"}
+                  </span>
+                </div>
+              )}
             </div>
-            <h3 className="text-lg font-semibold">Start a conversation</h3>
-            <p className="mt-2 max-w-md text-sm text-muted-foreground">
-              Chat with your AI agent. It can execute commands, read and write files,
-              and use tools to help you.
-            </p>
           </div>
         ) : (
           <div
@@ -726,11 +787,12 @@ export default function ChatPage() {
             onScroll={handleScroll}
             className="flex-1 overflow-y-auto"
           >
-            <div className="mx-auto max-w-3xl space-y-6 px-6 py-6">
+            <div className="mx-auto max-w-3xl px-6 py-6">
               {messages.map((msg, i) => (
                 <MessageBubble
                   key={msg.id}
                   message={msg}
+                  agent={activeAgent}
                   isStreaming={
                     isStreaming &&
                     msg.role === "assistant" &&
@@ -739,7 +801,8 @@ export default function ChatPage() {
                 />
               ))}
               {error && (
-                <div className="text-xs text-destructive px-1">
+                <div className="mt-4 border-l-2 border-destructive bg-paper-sunk px-3 py-2 font-mono text-[12px] text-destructive">
+                  <span className="uppercase tracking-[0.08em] text-[10px] mr-2">Error</span>
                   {error.message}
                 </div>
               )}
@@ -747,18 +810,20 @@ export default function ChatPage() {
                 <div
                   key={id}
                   className={cn(
-                    "text-xs px-2 py-1 rounded-md border",
-                    s.kind === "error" &&
-                      "border-destructive/40 bg-destructive/5 text-destructive",
-                    s.kind === "warn" &&
-                      "border-yellow-500/40 bg-yellow-500/5",
+                    "mt-3 flex items-center gap-3 px-3 py-1.5 font-mono text-[12px]",
+                    s.kind === "error" && "bg-paper-sunk text-destructive",
+                    s.kind === "warn" && "bg-paper-sunk text-warn-ochre",
                     (s.kind === "info" ||
                       s.kind === "compressing" ||
                       s.kind === "compressed") &&
-                      "border-border bg-muted/40 text-muted-foreground"
+                      "bg-paper-sunk text-ink-soft"
                   )}
                 >
-                  {s.message}
+                  <span className="status-dot bg-current" aria-hidden />
+                  <span className="uppercase tracking-[0.08em] text-[10px]">
+                    {s.kind}
+                  </span>
+                  <span>{s.message}</span>
                 </div>
               ))}
               <div ref={messagesEndRef} />
@@ -766,137 +831,120 @@ export default function ChatPage() {
           </div>
         )}
 
-        <div className="shrink-0 border-t bg-background p-4">
-          <div
-            className={cn(
-              "mx-auto max-w-3xl rounded-xl border bg-card p-2 shadow-sm focus-within:border-ring/50 focus-within:ring-2 focus-within:ring-ring/30 transition",
-              isDragging && "border-primary/60 bg-primary/5 ring-2 ring-primary/30"
-            )}
-            onDragOver={onDragOver}
-            onDragLeave={onDragLeave}
-            onDrop={onDrop}
-          >
-            {pendingAttachments.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 px-1 pb-2">
-                {pendingAttachments.map((p) => (
-                  <AttachmentChip
-                    key={p.localId}
-                    kind={
-                      p.kind ?? (p.mediaType.startsWith("image/") ? "image" : "file")
-                    }
-                    mediaType={p.mediaType}
-                    size={p.size}
-                    name={p.filename}
-                    status={p.status}
-                    error={p.error}
-                    removable
-                    onRemove={() => removePending(p.localId)}
-                  />
-                ))}
-              </div>
-            )}
-            <div className="flex items-end gap-2">
-              <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                accept={ALLOWED_UPLOAD_MIMES.join(",")}
-                className="hidden"
-                onChange={(e) => {
-                  const files = e.target.files ? Array.from(e.target.files) : [];
-                  void uploadFiles(files);
-                  e.target.value = "";
-                }}
-              />
-              <Button
-                type="button"
-                size="icon"
-                variant="ghost"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={isStreaming || !activeAgentId || !acceptsAttachments}
-                className="shrink-0"
-                aria-label="Attach files"
-                title={
-                  acceptsAttachments
-                    ? "Attach files (images, PDFs)"
-                    : "Active model accepts text only — switch with the model picker"
-                }
-              >
-                <Paperclip className="size-4" />
-              </Button>
-              <Textarea
-                ref={inputRef}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder={
-                  activeAgent ? `Message ${activeAgent.name}...` : "Select an agent..."
-                }
-                disabled={isStreaming || !activeAgentId}
-                rows={1}
-                className="min-h-[44px] max-h-48 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 font-sans"
-              />
-              {isStreaming ? (
-                <Button
-                  size="icon"
-                  variant="destructive"
-                  onClick={() => stop()}
-                  className="shrink-0"
-                  aria-label="Stop generating"
-                >
-                  <Square className="size-4 fill-current" />
-                  <span className="sr-only">Stop</span>
-                </Button>
-              ) : (
-                <Button
-                  size="icon"
-                  onClick={send}
-                  disabled={
-                    (!input.trim() && pendingAttachments.length === 0) ||
-                    !activeAgentId ||
-                    pendingAttachments.some((p) => p.status === "uploading")
-                  }
-                  className="shrink-0"
-                  aria-label="Send message"
-                >
-                  <ArrowUp className="size-4" />
-                  <span className="sr-only">Send</span>
-                </Button>
+        <div className="shrink-0 border-t border-paper-rule bg-paper">
+          <div className="mx-auto max-w-3xl px-6 py-4">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
+                Compose
+              </span>
+              <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
+                <kbd className="border border-paper-rule px-1 py-px text-ink-soft">Enter</kbd>{" "}
+                send ·{" "}
+                <kbd className="border border-paper-rule px-1 py-px text-ink-soft">⇧ Enter</kbd>{" "}
+                newline
+              </span>
+            </div>
+            <div
+              className={cn(
+                "border border-paper-rule bg-paper transition-colors focus-within:border-plot-red",
+                isDragging && "border-plot-red bg-paper-sunk"
               )}
+              onDragOver={onDragOver}
+              onDragLeave={onDragLeave}
+              onDrop={onDrop}
+            >
+              {pendingAttachments.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 border-b border-paper-rule bg-paper-sunk px-3 py-2">
+                  {pendingAttachments.map((p) => (
+                    <AttachmentChip
+                      key={p.localId}
+                      kind={
+                        p.kind ?? (p.mediaType.startsWith("image/") ? "image" : "file")
+                      }
+                      mediaType={p.mediaType}
+                      size={p.size}
+                      name={p.filename}
+                      status={p.status}
+                      error={p.error}
+                      removable
+                      onRemove={() => removePending(p.localId)}
+                    />
+                  ))}
+                </div>
+              )}
+              <div className="flex items-end gap-2 px-2 py-1.5">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  accept={ALLOWED_UPLOAD_MIMES.join(",")}
+                  className="hidden"
+                  onChange={(e) => {
+                    const files = e.target.files ? Array.from(e.target.files) : [];
+                    void uploadFiles(files);
+                    e.target.value = "";
+                  }}
+                />
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isStreaming || !activeAgentId || !acceptsAttachments}
+                  className="shrink-0"
+                  aria-label="Attach files"
+                  title={
+                    acceptsAttachments
+                      ? "Attach files (images, PDFs)"
+                      : "Active model accepts text only — switch with the model picker"
+                  }
+                >
+                  <Paperclip className="size-4" />
+                </Button>
+                <Textarea
+                  ref={inputRef}
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder={
+                    activeAgent ? `Message ${activeAgent.name}` : "Select an agent"
+                  }
+                  disabled={isStreaming || !activeAgentId}
+                  rows={1}
+                  className="min-h-[44px] max-h-48 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 focus-visible:outline-none font-sans text-sm"
+                />
+                {isStreaming ? (
+                  <Button
+                    size="icon"
+                    variant="destructive"
+                    onClick={() => stop()}
+                    className="shrink-0"
+                    aria-label="Stop generating"
+                  >
+                    <Square className="size-4 fill-current" />
+                    <span className="sr-only">Stop</span>
+                  </Button>
+                ) : (
+                  <Button
+                    size="icon"
+                    onClick={send}
+                    disabled={
+                      (!input.trim() && pendingAttachments.length === 0) ||
+                      !activeAgentId ||
+                      pendingAttachments.some((p) => p.status === "uploading")
+                    }
+                    className="shrink-0"
+                    aria-label="Send message"
+                  >
+                    <ArrowUp className="size-4" />
+                    <span className="sr-only">Send</span>
+                  </Button>
+                )}
+              </div>
             </div>
           </div>
-          <p className="mx-auto mt-2 max-w-3xl px-1 text-[11px] text-muted-foreground">
-            Press{" "}
-            <kbd className="rounded border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-foreground">
-              Enter
-            </kbd>{" "}
-            to send,{" "}
-            <kbd className="rounded border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-foreground">
-              Shift
-            </kbd>
-            +
-            <kbd className="rounded border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-foreground">
-              Enter
-            </kbd>{" "}
-            for newline
-          </p>
         </div>
       </main>
-    </div>
-  );
-}
-
-function Avatar({ role }: { role: "user" | "assistant" }) {
-  return (
-    <div
-      className={cn(
-        "flex size-8 shrink-0 items-center justify-center rounded-full border",
-        role === "assistant"
-          ? "bg-primary/10 text-primary"
-          : "bg-muted text-muted-foreground"
-      )}
-    >
-      {role === "assistant" ? <Bot className="size-4" /> : <User className="size-4" />}
     </div>
   );
 }
@@ -908,11 +956,56 @@ function isToolPart(p: Part): boolean {
   );
 }
 
+function MessageHeader({
+  role,
+  model,
+  streaming,
+}: {
+  role: "user" | "assistant";
+  model?: string;
+  streaming?: boolean;
+}) {
+  return (
+    <div className="mb-3 flex items-center gap-3 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
+      <span
+        className={cn(
+          "status-dot",
+          role === "assistant" && streaming
+            ? "bg-plot-red pulse-live"
+            : role === "assistant"
+              ? "bg-ink"
+              : "bg-ink-faint"
+        )}
+        aria-hidden
+      />
+      <span className={role === "assistant" ? "text-ink" : "text-ink-soft"}>
+        {role}
+      </span>
+      {model && role === "assistant" && (
+        <>
+          <span className="text-ink-faint">·</span>
+          <span className="normal-case tracking-normal text-ink-soft">
+            {model}
+          </span>
+        </>
+      )}
+      {streaming && (
+        <>
+          <span className="text-ink-faint">·</span>
+          <span className="text-plot-red">streaming</span>
+        </>
+      )}
+    </div>
+  );
+}
+
 function MessageBubble({
   message,
+  agent,
   isStreaming,
 }: {
   message: UIMessage;
+  agent?: Agent;
   isStreaming: boolean;
 }) {
   if (message.role === "system") return null;
@@ -936,71 +1029,67 @@ function MessageBubble({
       (f) => !(f as { mediaType: string }).mediaType.startsWith("image/")
     );
     return (
-      <div className="flex gap-3">
-        <Avatar role="user" />
-        <div className="flex-1 space-y-2 min-w-0">
-          <div className="text-xs font-medium text-muted-foreground capitalize">
-            user
+      <section className="border-t border-paper-rule py-5 first:border-t-0 first:pt-0">
+        <MessageHeader role="user" />
+        {text && (
+          <div className="text-sm leading-relaxed text-ink whitespace-pre-wrap break-words">
+            {text}
           </div>
-          {text && (
-            <div className="text-sm break-words whitespace-pre-wrap">
-              {text}
-            </div>
-          )}
-          {images.length > 0 && (
-            <div className="flex flex-wrap gap-2">
-              {images.map((f, i) => {
-                const part = f as unknown as {
-                  url: string;
-                  filename?: string;
-                };
-                return (
-                  <a
-                    key={i}
-                    href={`${API_BASE}${part.url}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="block overflow-hidden rounded-lg border bg-muted"
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={`${API_BASE}${part.url}`}
-                      alt={part.filename ?? "attachment"}
-                      className="max-h-64 max-w-sm object-contain"
-                    />
-                  </a>
-                );
-              })}
-            </div>
-          )}
-          {others.length > 0 && (
-            <div className="flex flex-wrap gap-1.5">
-              {others.map((f, i) => {
-                const part = f as unknown as {
-                  url: string;
-                  mediaType: string;
-                  filename?: string;
-                };
-                return (
-                  <AttachmentChip
-                    key={i}
-                    kind="file"
-                    mediaType={part.mediaType}
-                    size={0}
-                    name={part.filename ?? "file"}
-                    href={`${API_BASE}${part.url}`}
+        )}
+        {images.length > 0 && (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {images.map((f, i) => {
+              const part = f as unknown as {
+                url: string;
+                filename?: string;
+              };
+              return (
+                <a
+                  key={i}
+                  href={`${API_BASE}${part.url}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="block overflow-hidden border border-paper-rule bg-paper-sunk transition-colors hover:border-plot-red"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={`${API_BASE}${part.url}`}
+                    alt={part.filename ?? "attachment"}
+                    className="max-h-64 max-w-sm object-contain"
                   />
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </div>
+                </a>
+              );
+            })}
+          </div>
+        )}
+        {others.length > 0 && (
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            {others.map((f, i) => {
+              const part = f as unknown as {
+                url: string;
+                mediaType: string;
+                filename?: string;
+              };
+              return (
+                <AttachmentChip
+                  key={i}
+                  kind="file"
+                  mediaType={part.mediaType}
+                  size={0}
+                  name={part.filename ?? "file"}
+                  href={`${API_BASE}${part.url}`}
+                />
+              );
+            })}
+          </div>
+        )}
+      </section>
     );
   }
 
   // assistant — render parts in order
   const parts = message.parts;
+  const modelLabel = agent ? agent.model.model : undefined;
   const lastTextIdx = (() => {
     for (let i = parts.length - 1; i >= 0; i--) {
       if ((parts[i] as { type?: unknown }).type === "text") return i;
@@ -1009,19 +1098,17 @@ function MessageBubble({
   })();
 
   return (
-    <div className="flex gap-3">
-      <Avatar role="assistant" />
-      <div className="flex-1 space-y-2 min-w-0">
-        <div className="text-xs font-medium text-muted-foreground capitalize">
-          assistant
+    <section className="border-t border-paper-rule py-5 first:border-t-0 first:pt-0">
+      <MessageHeader role="assistant" model={modelLabel} streaming={isStreaming} />
+      {parts.length === 0 && isStreaming && (
+        <div className="flex items-center gap-1.5 text-ink-faint">
+          <span className="status-dot bg-current pulse-live" aria-hidden />
+          <span className="font-mono text-[11px] uppercase tracking-[0.08em]">
+            Thinking
+          </span>
         </div>
-        {parts.length === 0 && isStreaming && (
-          <div className="flex items-center gap-1.5 pt-2 text-muted-foreground">
-            <span className="size-1.5 animate-pulse rounded-full bg-current [animation-delay:0ms]" />
-            <span className="size-1.5 animate-pulse rounded-full bg-current [animation-delay:160ms]" />
-            <span className="size-1.5 animate-pulse rounded-full bg-current [animation-delay:320ms]" />
-          </div>
-        )}
+      )}
+      <div className="space-y-3">
         {parts.map((part, i) => {
           if (isToolPart(part)) {
             const tp = part as unknown as {
@@ -1046,19 +1133,26 @@ function MessageBubble({
             const errored = tp.state === "output-error" && !interrupted;
 
             const statusLabel = livePending
-              ? "running…"
+              ? "Running"
               : interrupted || staleOrphan
-                ? "interrupted"
+                ? "Interrupted"
                 : errored
-                  ? "error"
-                  : "done";
-            const statusClass = livePending
-              ? "text-muted-foreground"
+                  ? "Error"
+                  : "Done";
+            const dotClass = livePending
+              ? "bg-plot-red pulse-live"
               : interrupted || staleOrphan
-                ? "text-amber-600 dark:text-amber-500"
+                ? "bg-warn-ochre"
                 : errored
-                  ? "text-destructive"
-                  : "text-emerald-600 dark:text-emerald-500";
+                  ? "bg-destructive"
+                  : "bg-ink";
+            const labelClass = errored
+              ? "text-destructive"
+              : interrupted || staleOrphan
+                ? "text-warn-ochre"
+                : livePending
+                  ? "text-plot-red"
+                  : "text-ink-soft";
             const showResult =
               !interrupted &&
               !staleOrphan &&
@@ -1067,20 +1161,27 @@ function MessageBubble({
             return (
               <div
                 key={i}
-                className="rounded-lg border border-border bg-muted/60 overflow-hidden"
+                className="border border-paper-rule bg-paper-sunk"
               >
-                <div className="flex items-center gap-2 border-b border-border/80 bg-muted px-3 py-2 text-xs">
-                  <Wrench className="size-3 text-primary" />
-                  <span className="font-mono font-medium">{toolName}</span>
-                  <span className={statusClass}>{statusLabel}</span>
+                <div className="flex items-center gap-3 border-b border-paper-rule px-3 py-2">
+                  <span className={cn("status-dot", dotClass)} aria-hidden />
+                  <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
+                    Tool
+                  </span>
+                  <span className="font-mono text-[12px] text-ink">
+                    {toolName}
+                  </span>
+                  <span className={cn("ml-auto font-mono text-[10px] uppercase tracking-[0.08em]", labelClass)}>
+                    {statusLabel}
+                  </span>
                 </div>
                 {tp.input !== undefined && (
-                  <pre className="overflow-x-auto px-3 py-2 font-mono text-[11px] text-muted-foreground">
+                  <pre className="overflow-x-auto px-3 py-2 font-mono text-[11px] leading-snug text-ink-soft">
                     {JSON.stringify(tp.input, null, 2)}
                   </pre>
                 )}
                 {showResult && (
-                  <div className="border-t border-border/80 bg-background/40 px-3 py-2 font-mono text-[11px]">
+                  <div className="border-t border-paper-rule bg-paper px-3 py-2 font-mono text-[11px] leading-snug text-ink whitespace-pre-wrap break-words">
                     {(() => {
                       const result =
                         tp.errorText ??
@@ -1100,10 +1201,10 @@ function MessageBubble({
             const text = (part as { text: string }).text;
             if (!text) return null;
             return (
-              <div key={i} className="text-sm break-words">
+              <div key={i} className="text-sm leading-relaxed text-ink break-words">
                 <Markdown>{text}</Markdown>
                 {isStreaming && i === lastTextIdx && (
-                  <span className="ml-0.5 inline-block h-4 w-[2px] translate-y-[3px] bg-primary animate-pulse" />
+                  <span className="cursor-stream" aria-hidden />
                 )}
               </div>
             );
@@ -1112,7 +1213,7 @@ function MessageBubble({
           return null;
         })}
       </div>
-    </div>
+    </section>
   );
 }
 
