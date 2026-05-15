@@ -6,7 +6,7 @@ import { getCurrentAgentId } from "../session-context.js";
 export interface MemoryBindings {
   /** Per-agent memory store, constructed by AgentManager against `<dataDir>/agents/`. */
   store: MemoryStore;
-  /** Per-agent char cap, lifted from `AgentDefinition.memoryCharLimit`. */
+  /** Per-agent index char cap, lifted from `AgentDefinition.memoryCharLimit`. */
   getCharLimit: (agentId: string) => number;
 }
 
@@ -18,58 +18,135 @@ export function bindMemory(b: MemoryBindings): void {
   bindings = b;
 }
 
-const TOOL_DESCRIPTION =
-  "Persistent memory for THIS AGENT across sessions. Entries are bounded text " +
-  "stored in MEMORY.md and injected into your system prompt at the start of " +
-  "every new session.\n\n" +
-  "Save:\n" +
-  "- User preferences (TypeScript over JS, prefers concise replies)\n" +
-  "- Environment facts (OS, tools, project paths)\n" +
-  "- Project conventions (formatter, line width, test command)\n" +
-  "- Lessons learned (this server uses port 2222, that command needs sudo)\n" +
-  "- Explicit user requests to remember\n\n" +
-  "Skip:\n" +
-  "- Trivial / easily-rediscovered facts\n" +
-  "- Raw data dumps, log output, code blocks\n" +
-  "- Session-specific ephemera\n\n" +
-  "Mid-session writes do NOT update your current system prompt — they take " +
-  "effect on the next session start. Tool responses always show live state.\n\n" +
-  "Use 'replace'/'remove' with a SHORT UNIQUE substring (`old_text`); the " +
-  "tool errors if it matches multiple entries.";
+/**
+ * Verbatim port of Anthropic's auto-injected memory protocol from the
+ * `memory_20250818` tool docs. Models trained on the canonical tool
+ * recognize this exact wording — paraphrasing loses the trained behavior.
+ */
+const TOOL_DESCRIPTION = [
+  "IMPORTANT: ALWAYS VIEW YOUR MEMORY DIRECTORY BEFORE DOING ANYTHING ELSE.",
+  "MEMORY PROTOCOL:",
+  "1. Use the `view` command of your `memory` tool to check for earlier progress.",
+  "2. ... (work on the task) ...",
+  "     - As you make progress, record status / progress / thoughts etc in your memory.",
+  "ASSUME INTERRUPTION: Your context window might be reset at any moment, so you risk losing any progress that is not recorded in your memory directory.",
+].join("\n");
+
+/**
+ * Single-object schema mirroring `memory_20250818`. Anthropic's tool API
+ * requires `input_schema.type: "object"` at the root — Zod's discriminated
+ * union compiles to a top-level `oneOf` with no `type`, which Anthropic
+ * rejects. So the shape is one object with all command-specific fields
+ * optional, plus a `superRefine` that enforces per-command requirements
+ * at parse time. The model still sees the field-level descriptions and
+ * the per-command requirements via the tool description below.
+ */
+const MemoryParams = z
+  .object({
+    command: z
+      .enum([
+        "view",
+        "create",
+        "str_replace",
+        "insert",
+        "delete",
+        "rename",
+      ])
+      .describe("Memory operation to perform"),
+    path: z
+      .string()
+      .optional()
+      .describe(
+        "Path under /memories. Required for view/create/str_replace/insert/delete."
+      ),
+    view_range: z
+      .tuple([z.number().int(), z.number().int()])
+      .optional()
+      .describe("view: optional [start, end] line range (1-indexed)"),
+    file_text: z
+      .string()
+      .optional()
+      .describe("create: full contents of the new file"),
+    old_str: z
+      .string()
+      .optional()
+      .describe(
+        "str_replace: exact substring to replace; must appear verbatim and be unique"
+      ),
+    new_str: z
+      .string()
+      .optional()
+      .describe("str_replace: replacement text"),
+    insert_line: z
+      .number()
+      .int()
+      .optional()
+      .describe(
+        "insert: line number to insert at (0-indexed: 0 = before first line, N = after last)"
+      ),
+    insert_text: z
+      .string()
+      .optional()
+      .describe("insert: text to insert"),
+    old_path: z
+      .string()
+      .optional()
+      .describe("rename: existing path under /memories"),
+    new_path: z
+      .string()
+      .optional()
+      .describe("rename: new path under /memories (must not exist)"),
+  })
+  .superRefine((v, ctx) => {
+    const need = (field: string) => {
+      if (v[field as keyof typeof v] === undefined) {
+        ctx.addIssue({
+          code: "custom",
+          path: [field],
+          message: `${field} is required for command=${v.command}`,
+        });
+      }
+    };
+    switch (v.command) {
+      case "view":
+      case "delete":
+        need("path");
+        break;
+      case "create":
+        need("path");
+        need("file_text");
+        break;
+      case "str_replace":
+        need("path");
+        need("old_str");
+        need("new_str");
+        break;
+      case "insert":
+        need("path");
+        need("insert_line");
+        need("insert_text");
+        break;
+      case "rename":
+        need("old_path");
+        need("new_path");
+        break;
+    }
+  });
+
+type MemoryArgs = z.infer<typeof MemoryParams>;
 
 registry.register({
   name: "memory",
   toolset: "memory",
   description: TOOL_DESCRIPTION,
-  parameters: z.object({
-    action: z
-      .enum(["add", "replace", "remove"])
-      .describe("Operation: add new entry, replace existing, or remove existing."),
-    content: z
-      .string()
-      .optional()
-      .describe(
-        "New content. Required for add and replace; ignored for remove."
-      ),
-    old_text: z
-      .string()
-      .optional()
-      .describe(
-        "Short unique substring of an existing entry. Required for replace and remove."
-      ),
-  }),
+  parameters: MemoryParams,
   emoji: "🧠",
   parallelSafe: false,
   handler: async (args) => {
-    const { action, content, old_text } = args as {
-      action: "add" | "replace" | "remove";
-      content?: string;
-      old_text?: string;
-    };
+    const params = args as MemoryArgs;
 
     if (!bindings) {
       return JSON.stringify({
-        ok: false,
         error: "memory not initialized — AgentManager must call bindMemory().",
       });
     }
@@ -77,7 +154,6 @@ registry.register({
     const agentId = getCurrentAgentId();
     if (!agentId) {
       return JSON.stringify({
-        ok: false,
         error: "memory tool requires an active agent context.",
       });
     }
@@ -87,80 +163,62 @@ registry.register({
       charLimit = bindings.getCharLimit(agentId);
     } catch (e) {
       return JSON.stringify({
-        ok: false,
         error: `Could not resolve memory char limit: ${e instanceof Error ? e.message : String(e)}`,
       });
     }
 
     const { store } = bindings;
 
-    if (action === "add") {
-      if (!content || !content.trim()) {
-        return JSON.stringify({
-          ok: false,
-          error: "content is required and must be non-empty for action='add'.",
-        });
+    // After superRefine, the per-command required fields are guaranteed
+    // present — the `!` assertions below can't trip at runtime because
+    // Zod would have rejected the call upstream.
+    switch (params.command) {
+      case "view": {
+        return store.view(agentId, params.path!, params.view_range);
       }
-      const scan = scanMemoryContent(content);
-      if (!scan.ok) {
-        return JSON.stringify({ ok: false, error: scan.reason });
-      }
-      const result = await store.add(agentId, content, charLimit);
-      return JSON.stringify(formatResult(result));
-    }
 
-    if (action === "replace") {
-      if (!old_text) {
-        return JSON.stringify({
-          ok: false,
-          error: "old_text is required for action='replace'.",
-        });
+      case "create": {
+        const scan = scanMemoryContent(params.file_text!);
+        if (!scan.ok) return scan.reason;
+        return await store.create(
+          agentId,
+          params.path!,
+          params.file_text!,
+          charLimit
+        );
       }
-      if (!content || !content.trim()) {
-        return JSON.stringify({
-          ok: false,
-          error:
-            "content is required for action='replace' (use 'remove' to delete an entry).",
-        });
-      }
-      const scan = scanMemoryContent(content);
-      if (!scan.ok) {
-        return JSON.stringify({ ok: false, error: scan.reason });
-      }
-      const result = await store.replace(agentId, old_text, content, charLimit);
-      return JSON.stringify(formatResult(result));
-    }
 
-    // remove
-    if (!old_text) {
-      return JSON.stringify({
-        ok: false,
-        error: "old_text is required for action='remove'.",
-      });
+      case "str_replace": {
+        const scan = scanMemoryContent(params.new_str!);
+        if (!scan.ok) return scan.reason;
+        return await store.strReplace(
+          agentId,
+          params.path!,
+          params.old_str!,
+          params.new_str!,
+          charLimit
+        );
+      }
+
+      case "insert": {
+        const scan = scanMemoryContent(params.insert_text!);
+        if (!scan.ok) return scan.reason;
+        return await store.insert(
+          agentId,
+          params.path!,
+          params.insert_line!,
+          params.insert_text!,
+          charLimit
+        );
+      }
+
+      case "delete": {
+        return await store.delete(agentId, params.path!);
+      }
+
+      case "rename": {
+        return await store.rename(agentId, params.old_path!, params.new_path!);
+      }
     }
-    const result = await store.remove(agentId, old_text, charLimit);
-    return JSON.stringify(formatResult(result));
   },
 });
-
-function formatResult(
-  r: Awaited<ReturnType<MemoryStore["add"]>>
-): Record<string, unknown> {
-  const usageStr = `${r.usage.used}/${r.usage.limit}`;
-  if (r.ok) {
-    return {
-      ok: true,
-      duplicate: r.duplicate ?? false,
-      usage: usageStr,
-      current_entries: r.usage.entries,
-    };
-  }
-  const out: Record<string, unknown> = {
-    ok: false,
-    error: r.error,
-    usage: usageStr,
-    current_entries: r.usage.entries,
-  };
-  if (r.matches) out["matches"] = r.matches;
-  return out;
-}

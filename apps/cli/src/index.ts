@@ -33,7 +33,9 @@ import {
 } from "./commands/mcp.js";
 import {
   memoryShowCommand,
+  memoryShowEntryCommand,
   memoryStatusCommand,
+  memoryLsCommand,
 } from "./commands/memory.js";
 import { showBanner } from "./tui/banner.js";
 
@@ -240,10 +242,19 @@ memory
   .action(memoryStatusCommand);
 
 memory
-  .command("show <agentId>")
-  .description("Print one agent's MEMORY.md (rendered for the system prompt)")
+  .command("show <agentId> [entry]")
+  .description("Print one agent's MEMORY.md index, or a specific entry file when [entry] is given")
   .option("-d, --data-dir <path>", "Data directory (default: ~/.openacme)")
-  .action(memoryShowCommand);
+  .action((agentId: string, entry: string | undefined, opts: { dataDir?: string }) => {
+    if (entry) return memoryShowEntryCommand(agentId, entry, opts);
+    return memoryShowCommand(agentId, opts);
+  });
+
+memory
+  .command("ls <agentId>")
+  .description("Recursive 2-deep listing of an agent's memory dir (same format the agent sees)")
+  .option("-d, --data-dir <path>", "Data directory (default: ~/.openacme)")
+  .action(memoryLsCommand);
 
 // Resolve the data dir once so the LLM provider's OAuth path can find auth.json
 // without us threading the path through every call site.

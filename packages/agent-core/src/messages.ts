@@ -141,18 +141,67 @@ export function sanitizeStoredHistory<M extends { parts: unknown[] }>(
 }
 
 /**
+ * For each user UIMessage carrying a `data-relevant-memory` part,
+ * prepend its `modelContent` as a leading text part. The SDK strips
+ * `data-*` parts in `convertToModelMessages`, so without this
+ * materialization the recall would never reach the model.
+ *
+ * Why persist + rematerialize instead of injecting once per turn: the
+ * pre-rendered modelContent (with freshness "N days ago" baked in at
+ * recall time) is byte-stable across turns. Injecting fresh per turn
+ * would change those bytes (Date.now() shifts the days delta) and
+ * invalidate the prefix cache from the user message onward.
+ *
+ * Note: the data-relevant-memory part itself stays on the message (we
+ * only strip it from the model-input view here — DB storage + UI chip
+ * keep the part). Multiple parts on one message (rare — defensive)
+ * concatenate in order.
+ */
+function materializeRecallContext(messages: UIMessage[]): UIMessage[] {
+  return messages.map((m) => {
+    if (m.role !== "user" || !Array.isArray(m.parts)) return m;
+    const recallTexts: string[] = [];
+    const otherParts: UIMessage["parts"] = [];
+    for (const p of m.parts) {
+      if ((p as { type?: unknown }).type === "data-relevant-memory") {
+        const content = (p as { data?: { modelContent?: unknown } }).data
+          ?.modelContent;
+        if (typeof content === "string" && content.length > 0) {
+          recallTexts.push(content);
+        }
+        // Drop the data-* part from the model-input view (SDK would
+        // strip it anyway). The original message in the caller's array
+        // is untouched (we mapped to a new object).
+      } else {
+        otherParts.push(p);
+      }
+    }
+    if (recallTexts.length === 0) return m;
+    const leadingText = {
+      type: "text" as const,
+      text: recallTexts.join("\n\n"),
+    } as UIMessage["parts"][number];
+    return { ...m, parts: [leadingText, ...otherParts] };
+  });
+}
+
+/**
  * Convert persisted UIMessages to ModelMessages ready for streamText.
- * Inlines local-attachment bytes, finalizes any orphan tool parts, then
- * defers to the SDK's own converter for tool-${name} / text / file mapping.
+ * Materializes recall-context, inlines local-attachment bytes, finalizes
+ * any orphan tool parts, then defers to the SDK's own converter for
+ * tool-${name} / text / file mapping.
  */
 export async function uiToModelMessages(
   messages: UIMessage[],
   opts: { attachmentsRoot: string; tools?: ToolSet }
 ): Promise<ModelMessage[]> {
-  const inlined = inlineFileAttachments(messages, opts.attachmentsRoot);
+  const withRecall = materializeRecallContext(messages);
+  const inlined = inlineFileAttachments(withRecall, opts.attachmentsRoot);
   const sanitized = inlined.map((m) => ({
     ...m,
     parts: ensureStepBoundaries(finalizeOrphanToolParts(m.parts)),
   }));
   return convertToModelMessages(sanitized, { tools: opts.tools });
 }
+
+export const __test = { materializeRecallContext };

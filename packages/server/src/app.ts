@@ -346,6 +346,39 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
           transient: true,
         });
         const agent = manager.getAgent(agentId);
+
+        // Phase-2 recall pass — selector picks up to 5 relevant entries
+        // from the agent's memory dir, returns entries (UI chip +
+        // alreadySurfaced dedup) and a pre-rendered modelContent string
+        // (persisted on the user message for byte-stable replay across
+        // turns → prefix cache hits). No-ops when memory is empty, when
+        // nothing survives the alreadySurfaced filter, when the session
+        // hit the cumulative byte cap, or when the selector model
+        // errors out.
+        const recall = await agent.applyMemoryRecall({
+          history: committed,
+          signal,
+        });
+        // Attach `data-relevant-memory` to the new user message BEFORE
+        // runStream so (a) uiToModelMessages prepends modelContent into
+        // the model input this turn AND (b) onFinish persists the part
+        // — every future load of this message replays identical bytes,
+        // keeping the prefix cache intact from this message onward.
+        // The same part also drives the UI chip + surfaced-set dedup.
+        const recallPart = agent.buildRelevantMemoryPart(
+          recall.entries,
+          recall.modelContent
+        );
+        if (recallPart) {
+          const lastUser = committed[committed.length - 1];
+          if (lastUser?.role === "user") {
+            lastUser.parts = [
+              ...(lastUser.parts as UIMessage["parts"]),
+              recallPart as unknown as UIMessage["parts"][number],
+            ];
+          }
+        }
+
         const result = await agent.runStream({
           sessionId: effectiveSessionId,
           history: committed,
@@ -400,6 +433,26 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
             `Failed to persist chat turn: ${
               e instanceof Error ? e.message : String(e)
             }`
+          );
+        }
+
+        // Phase-3 extractor — fire-and-forget. Agent owns the cursor +
+        // in-progress guard so re-entrant fires (multiple turns
+        // arriving fast) coalesce into one fork. Skip-paths inside the
+        // extractor cover main-agent-already-wrote / no-new-content.
+        try {
+          const agent = manager.getAgent(agentId);
+          const turnHistory = [
+            ...committed,
+            responseMessage as unknown as UIMessage,
+          ];
+          agent.fireExtractor({
+            sessionId: effectiveSessionId,
+            sessionMessages: turnHistory,
+          });
+        } catch (e) {
+          console.warn(
+            `[memory.extractor] launch failed for agent=${agentId}: ${e instanceof Error ? e.message : String(e)}`
           );
         }
       },

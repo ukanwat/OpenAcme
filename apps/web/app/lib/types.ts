@@ -16,6 +16,17 @@ export interface OpenAcmeDataParts {
     kind: "info" | "warn" | "error" | "compressing" | "compressed";
     message: string;
   };
+  /** Persisted on the USER message. Carries entries for the chip + the
+   *  pre-rendered `modelContent` string materialized into model input
+   *  by uiToModelMessages on every load (byte-stable across turns). */
+  "relevant-memory": {
+    entries: Array<{
+      path: string;
+      mtimeMs: number;
+      content: string;
+    }>;
+    modelContent: string;
+  };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   [key: string]: any;
 }

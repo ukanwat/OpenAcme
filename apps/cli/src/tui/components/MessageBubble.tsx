@@ -48,7 +48,26 @@ function PartView({ part, finalized }: { part: Part; finalized: boolean }) {
       </Box>
     );
   }
-  // Unknown / data-* / reasoning / source — silently ignore in v1.
+  if (tp.type === "data-relevant-memory") {
+    const data = (part as { data?: { entries?: Array<{ path: string; mtimeMs: number }> } }).data;
+    const entries = data?.entries ?? [];
+    if (entries.length === 0) return null;
+    const label = entries.length === 1 ? "1 memory recalled" : `${entries.length} memories recalled`;
+    return (
+      <Box flexDirection="column" marginLeft={2}>
+        <Text dimColor>↻ {label}</Text>
+        {entries.map((e, i) => {
+          const name = e.path.split("/").slice(-1)[0] ?? e.path;
+          return (
+            <Box key={i} marginLeft={2}>
+              <Text dimColor>· {name}</Text>
+            </Box>
+          );
+        })}
+      </Box>
+    );
+  }
+  // Unknown / other data-* / reasoning / source — silently ignore in v1.
   return null;
 }
 

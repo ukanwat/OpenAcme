@@ -1,16 +1,39 @@
 /**
- * Per-agent persistent memory store.
+ * Per-agent persistent memory store — directory-backed, six-op shape
+ * matching Anthropic's `memory_20250818` tool spec.
  *
- * Each agent has a `MEMORY.md` next to its `AGENT.md`:
- *   <agentsDir>/<agentId>/MEMORY.md
+ * Layout per agent:
  *
- * Format mirrors Hermes (`tools/memory_tool.py`): char-bounded text,
- * `\n§\n` between entries, deduplicated on load, atomic-rename writes.
+ *   <agentsDir>/<agentId>/memory/
+ *     MEMORY.md            ← always-injected index of one-line pointers
+ *     <topic>.md           ← agent-created entry files (read on demand)
+ *     <subdir>/<topic>.md  ← agent-organized; we don't enforce layout
+ *
+ * Tool calls reference paths in the agent's virtual view: `/memories/...`.
+ * The store translates to filesystem paths internally and rejects anything
+ * that escapes the per-agent root (path-traversal protection per Anthropic
+ * security note).
  *
  * Concurrency: per-agent in-process async mutex serializes
- * read-modify-write. Cross-process safety is NOT provided — atomic
- * rename keeps readers consistent, and we assume one process owns a
- * given dataDir at a time.
+ * read-modify-write. Cross-process safety is NOT provided — atomic rename
+ * keeps readers consistent, and we assume one process owns a given dataDir
+ * at a time.
+ *
+ * Caps:
+ *   - Per-file line cap = 999,999 (Anthropic spec verbatim).
+ *   - MEMORY.md index has a write-time char cap (`memoryCharLimit`,
+ *     default 2200 — Hermes default). Writes that would push it over
+ *     return OpenAcme's existing guidance string ("Memory at X/Y
+ *     chars. ...Replace or remove existing entries first.") so the
+ *     agent has consolidation pressure rather than infinite append.
+ *   - Per-entry files have NO char cap (they're not auto-injected;
+ *     only the per-file line cap applies).
+ *
+ * Return strings: each op returns the EXACT string Anthropic specifies
+ * (line-number format, directory listing format, error wording). Models
+ * are trained against those literals; matching them is what makes
+ * `memory_20250818`-trained behavior carry over without prompt
+ * engineering.
  */
 
 import { randomBytes } from "node:crypto";
@@ -18,85 +41,91 @@ import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 
-const MEMORY_FILE = "MEMORY.md";
-const ENTRY_DELIMITER = "\n§\n";
-const TMP_PREFIX = ".mem_";
-const PREVIEW_LEN = 80;
+import { memoryFreshnessNote } from "./freshness.js";
 
-/** Hermes default. Single source of truth — schema imports from here. */
+// ── Constants ──────────────────────────────────────────────────────────
+
+const MEMORIES_ROOT = "/memories";
+const MEMORY_DIR = "memory";
+const INDEX_FILE = "MEMORY.md";
+const TMP_PREFIX = ".mem_";
+
+/** Per-file line cap (Anthropic spec). */
+const MAX_FILE_LINES = 999_999;
+
+/** Hermes default. Single source of truth for the index char cap. */
 export const DEFAULT_MEMORY_CHAR_LIMIT = 2200;
 
-// Same constraint agent-store uses; duplicated here so this module stays
-// independent of `@openacme/config`.
+/** Same constraint agent-store uses; duplicated here so this module stays
+ * independent of `@openacme/config`. */
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 
-export interface MemoryUsage {
+// ── Types ──────────────────────────────────────────────────────────────
+
+export interface IndexSnapshot {
+  /** Raw `MEMORY.md` content, untruncated. Empty string if the file is
+   *  missing or empty. */
+  content: string;
+  /** Byte length of `content`. */
   used: number;
+  /** Configured char cap (write-time). */
   limit: number;
-  entries: string[];
+  /** Number of `.md` files under `<agentDir>/memory/` excluding
+   *  `MEMORY.md` itself. Used by prompt builder to decide when to append
+   *  Anthropic's "keep your memory folder organized" instruction. */
+  entryCount: number;
 }
 
-export type WriteResult =
-  | {
-      ok: true;
-      usage: MemoryUsage;
-      /** True iff `add` matched an existing entry exactly (silent success). */
-      duplicate?: boolean;
-    }
-  | {
-      ok: false;
-      error: string;
-      usage: MemoryUsage;
-      matches?: string[];
-    };
+// ── Pure helpers ───────────────────────────────────────────────────────
 
-// ── Pure helpers ────────────────────────────────────────────────────
-
-function preview(entry: string): string {
-  if (entry.length <= PREVIEW_LEN) return entry;
-  return entry.slice(0, PREVIEW_LEN) + "...";
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n}`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)}K`;
+  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)}M`;
+  return `${(n / 1024 / 1024 / 1024).toFixed(1)}G`;
 }
 
-function totalChars(entries: string[]): number {
-  if (entries.length === 0) return 0;
-  return (
-    entries.reduce((n, e) => n + e.length, 0) +
-    ENTRY_DELIMITER.length * (entries.length - 1)
-  );
+/** Format a 1-indexed line number in 6-char right-aligned form (Anthropic). */
+function fmtLineNo(n: number): string {
+  return String(n).padStart(6, " ");
 }
 
-function serialize(entries: string[]): string {
-  if (entries.length === 0) return "";
-  return entries.join(ENTRY_DELIMITER) + "\n";
+/** Render file contents with Anthropic's line-number format. */
+function withLineNumbers(content: string): string {
+  const lines = content.length === 0 ? [""] : content.split("\n");
+  return lines.map((line, i) => `${fmtLineNo(i + 1)}\t${line}`).join("\n");
 }
 
-function findUniqueMatch(
-  entries: string[],
-  oldText: string
-): { kind: "none" } | { kind: "one"; index: number } | { kind: "many"; matches: string[] } {
-  if (!oldText) return { kind: "none" };
-  const matchIndices: number[] = [];
-  for (let i = 0; i < entries.length; i++) {
-    if (entries[i]!.includes(oldText)) matchIndices.push(i);
+/** Find ALL line numbers (1-indexed) where `needle` appears in `haystack`. */
+function findOccurrenceLines(haystack: string, needle: string): number[] {
+  const lines: number[] = [];
+  let from = 0;
+  while (true) {
+    const idx = haystack.indexOf(needle, from);
+    if (idx < 0) break;
+    // 1-indexed line number of the occurrence start
+    const lineNo = haystack.slice(0, idx).split("\n").length;
+    lines.push(lineNo);
+    from = idx + needle.length;
   }
-  if (matchIndices.length === 0) return { kind: "none" };
-
-  // Collapse byte-identical matches (load-time dedup makes this rare,
-  // but Hermes keeps the defensive arm — port verbatim).
-  const unique = new Map<string, number>();
-  for (const i of matchIndices) {
-    if (!unique.has(entries[i]!)) unique.set(entries[i]!, i);
-  }
-  if (unique.size === 1) {
-    return { kind: "one", index: unique.values().next().value! };
-  }
-  return {
-    kind: "many",
-    matches: Array.from(unique.keys()).map(preview),
-  };
+  return lines;
 }
 
-// ── MemoryStore ─────────────────────────────────────────────────────
+/** Count occurrences of `needle` in `haystack`. */
+function countOccurrences(haystack: string, needle: string): number {
+  if (needle.length === 0) return 0;
+  let count = 0;
+  let from = 0;
+  while (true) {
+    const idx = haystack.indexOf(needle, from);
+    if (idx < 0) break;
+    count++;
+    from = idx + needle.length;
+  }
+  return count;
+}
+
+// ── MemoryStore ────────────────────────────────────────────────────────
 
 /**
  * Per-agent memory store. One instance per `agentsDir` — multiple
@@ -108,209 +137,537 @@ export class MemoryStore {
 
   constructor(readonly agentsDir: string) {}
 
-  // Public path helper — used by the CLI to show users where memory lives.
-  filePath(agentId: string): string {
+  // ── Path helpers ─────────────────────────────────────────────────────
+
+  /** Absolute path to an agent's memory directory. Does not create it. */
+  dirPath(agentId: string): string {
     if (!SAFE_ID.test(agentId)) {
       throw new Error(
         `Invalid agent id ${JSON.stringify(agentId)}: must match ${SAFE_ID}`
       );
     }
-    return path.join(this.agentsDir, agentId, MEMORY_FILE);
+    return path.join(this.agentsDir, agentId, MEMORY_DIR);
   }
 
-  /** Read entries from disk (sync, no mutex — safe for render paths). */
-  read(agentId: string): string[] {
-    return this.readEntries(this.filePath(agentId));
-  }
-
-  /** Usage struct without rendering. */
-  usage(agentId: string, charLimit: number): MemoryUsage {
-    const entries = this.read(agentId);
-    return { used: totalChars(entries), limit: charLimit, entries };
+  /** Absolute path to the index file for an agent. Does not create it. */
+  indexPath(agentId: string): string {
+    return path.join(this.dirPath(agentId), INDEX_FILE);
   }
 
   /**
-   * Render the system-prompt block (header + entries) for `getSystemPrompt`.
-   * Empty MEMORY.md → empty string so the caller can skip the section
-   * without conditionals.
+   * Translate a virtual `/memories/...` path (as the agent sees it) to
+   * an absolute filesystem path under `<agentsDir>/<agentId>/memory/`.
+   * Rejects:
+   *   - Paths not starting with `/memories`
+   *   - URL-encoded traversal sequences (`%2e%2e%2f`, etc.)
+   *   - Resolved paths that escape the per-agent root
+   *
+   * Returns the absolute path on success, or an error string in the
+   * same wording Anthropic uses for "path does not exist" so the model
+   * sees a familiar shape.
    */
-  renderForPrompt(agentId: string, charLimit: number): string {
-    const entries = this.read(agentId);
-    if (entries.length === 0) return "";
-    const used = totalChars(entries);
-    const pct = Math.round((used / charLimit) * 100);
-    const header = `══════════════════════════════════════════════
-MEMORY [${pct}% — ${used}/${charLimit} chars]
-══════════════════════════════════════════════`;
-    return `${header}\n${entries.join("\n§\n")}`;
+  private translatePath(
+    agentId: string,
+    virtualPath: string
+  ): { ok: true; abs: string } | { ok: false; error: string } {
+    if (typeof virtualPath !== "string" || virtualPath.length === 0) {
+      return {
+        ok: false,
+        error: `The path ${virtualPath} does not exist. Please provide a valid path.`,
+      };
+    }
+    // Reject URL-encoded traversal before any normalization
+    const lowered = virtualPath.toLowerCase();
+    if (lowered.includes("%2e") || lowered.includes("%2f") || lowered.includes("%5c")) {
+      return {
+        ok: false,
+        error: `The path ${virtualPath} does not exist. Please provide a valid path.`,
+      };
+    }
+    if (!virtualPath.startsWith(MEMORIES_ROOT)) {
+      return {
+        ok: false,
+        error: `The path ${virtualPath} does not exist. Please provide a valid path.`,
+      };
+    }
+    // Strip /memories prefix; remainder may be "" (root), "/foo", "/foo/bar.md"
+    const remainder = virtualPath.slice(MEMORIES_ROOT.length);
+    if (remainder.length > 0 && !remainder.startsWith("/")) {
+      // e.g. /memoriesfoo — not actually under /memories
+      return {
+        ok: false,
+        error: `The path ${virtualPath} does not exist. Please provide a valid path.`,
+      };
+    }
+    const root = this.dirPath(agentId);
+    const abs = path.resolve(root, "." + remainder);
+    // Defense in depth: ensure the resolved path is still under root.
+    const rel = path.relative(root, abs);
+    if (rel.startsWith("..") || path.isAbsolute(rel)) {
+      return {
+        ok: false,
+        error: `The path ${virtualPath} does not exist. Please provide a valid path.`,
+      };
+    }
+    return { ok: true, abs };
   }
 
-  /** Add an entry. Exact-duplicate add returns silent success. */
-  async add(
-    agentId: string,
-    content: string,
-    charLimit: number
-  ): Promise<WriteResult> {
-    const file = this.filePath(agentId);
-    return this.withMutex(agentId, async () => {
-      const entries = this.readEntries(file);
-      const trimmed = content.trim();
-      if (!trimmed) {
-        return {
-          ok: false,
-          error: "content is required and must be non-empty",
-          usage: this.makeUsage(entries, charLimit),
-        };
-      }
-      if (entries.includes(trimmed)) {
-        return {
-          ok: true,
-          duplicate: true,
-          usage: this.makeUsage(entries, charLimit),
-        };
-      }
-      const next = [...entries, trimmed];
-      const nextLen = totalChars(next);
-      if (nextLen > charLimit) {
-        const used = totalChars(entries);
-        return {
-          ok: false,
-          error: `Memory at ${used}/${charLimit} chars. Adding this entry (${trimmed.length} chars) would exceed the limit. Replace or remove existing entries first.`,
-          usage: { used, limit: charLimit, entries },
-        };
-      }
-      await this.writeEntries(file, next);
-      return { ok: true, usage: { used: nextLen, limit: charLimit, entries: next } };
-    });
+  /** True if the virtual path points at the index file specifically. */
+  private isIndexPath(virtualPath: string): boolean {
+    return (
+      virtualPath === `${MEMORIES_ROOT}/${INDEX_FILE}` ||
+      virtualPath === `${MEMORIES_ROOT}/${INDEX_FILE}/`
+    );
   }
+
+  // ── Index accessor (for prompt builder) ──────────────────────────────
 
   /**
-   * Replace the unique entry containing `oldText` with `newContent`.
-   * Multiple unique matches → error with previews so the agent can
-   * pick a more specific substring.
+   * Snapshot of the agent's index for system-prompt injection.
+   * Synchronous; safe for render paths. Counts entry files for the
+   * prompt builder's "cluttered memory" trigger.
    */
-  async replace(
-    agentId: string,
-    oldText: string,
-    newContent: string,
-    charLimit: number
-  ): Promise<WriteResult> {
-    const file = this.filePath(agentId);
-    return this.withMutex(agentId, async () => {
-      const entries = this.readEntries(file);
-      if (!oldText) {
-        return {
-          ok: false,
-          error: "old_text is required and must be non-empty",
-          usage: this.makeUsage(entries, charLimit),
-        };
-      }
-      const trimmedNew = newContent.trim();
-      if (!trimmedNew) {
-        return {
-          ok: false,
-          error: "content is required and must be non-empty (use 'remove' to delete entries)",
-          usage: this.makeUsage(entries, charLimit),
-        };
-      }
-      const m = findUniqueMatch(entries, oldText);
-      if (m.kind === "none") {
-        return {
-          ok: false,
-          error: `No entry contains the substring ${JSON.stringify(oldText)}.`,
-          usage: this.makeUsage(entries, charLimit),
-        };
-      }
-      if (m.kind === "many") {
-        return {
-          ok: false,
-          error: `Substring ${JSON.stringify(oldText)} matches multiple entries. Use a more specific substring.`,
-          matches: m.matches,
-          usage: this.makeUsage(entries, charLimit),
-        };
-      }
-      const next = [...entries];
-      next[m.index] = trimmedNew;
-      // Re-dedup: if the new content already exists elsewhere, drop the
-      // duplicate slot (keeping first-seen order).
-      const dedup = Array.from(new Set(next));
-      const nextLen = totalChars(dedup);
-      if (nextLen > charLimit) {
-        const used = totalChars(entries);
-        return {
-          ok: false,
-          error: `Memory at ${used}/${charLimit} chars. Replacement would push it to ${nextLen}/${charLimit}. Shorten or remove other entries first.`,
-          usage: { used, limit: charLimit, entries },
-        };
-      }
-      await this.writeEntries(file, dedup);
-      return { ok: true, usage: { used: nextLen, limit: charLimit, entries: dedup } };
-    });
-  }
-
-  /** Remove the unique entry containing `oldText`. */
-  async remove(
-    agentId: string,
-    oldText: string,
-    charLimit: number
-  ): Promise<WriteResult> {
-    const file = this.filePath(agentId);
-    return this.withMutex(agentId, async () => {
-      const entries = this.readEntries(file);
-      if (!oldText) {
-        return {
-          ok: false,
-          error: "old_text is required and must be non-empty",
-          usage: this.makeUsage(entries, charLimit),
-        };
-      }
-      const m = findUniqueMatch(entries, oldText);
-      if (m.kind === "none") {
-        return {
-          ok: false,
-          error: `No entry contains the substring ${JSON.stringify(oldText)}.`,
-          usage: this.makeUsage(entries, charLimit),
-        };
-      }
-      if (m.kind === "many") {
-        return {
-          ok: false,
-          error: `Substring ${JSON.stringify(oldText)} matches multiple entries. Use a more specific substring.`,
-          matches: m.matches,
-          usage: this.makeUsage(entries, charLimit),
-        };
-      }
-      const next = entries.filter((_, i) => i !== m.index);
-      await this.writeEntries(file, next);
-      return { ok: true, usage: { used: totalChars(next), limit: charLimit, entries: next } };
-    });
-  }
-
-  // ── Internals ────────────────────────────────────────────────────
-
-  private makeUsage(entries: string[], charLimit: number): MemoryUsage {
-    return { used: totalChars(entries), limit: charLimit, entries };
-  }
-
-  private readEntries(file: string): string[] {
-    let raw: string;
+  readIndex(agentId: string, charLimit: number): IndexSnapshot {
+    const indexFile = this.indexPath(agentId);
+    let content = "";
     try {
-      raw = fs.readFileSync(file, "utf-8");
+      content = fs.readFileSync(indexFile, "utf-8");
     } catch (e) {
-      if ((e as NodeJS.ErrnoException).code === "ENOENT") return [];
+      if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+    }
+    const trimmed = content.trim();
+    const used = trimmed.length;
+
+    // Walk the dir for entry files (non-recursive — rare but possible
+    // sub-dirs are counted under the prompt-builder's "cluttered" cap
+    // via reading the same scan elsewhere; for the simple count signal
+    // a flat enumeration is enough).
+    let entryCount = 0;
+    const dir = this.dirPath(agentId);
+    try {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const e of entries) {
+        if (e.isFile() && e.name.endsWith(".md") && e.name !== INDEX_FILE) {
+          entryCount++;
+        }
+      }
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+    }
+
+    return { content: trimmed, used, limit: charLimit, entryCount };
+  }
+
+  // ── view ─────────────────────────────────────────────────────────────
+
+  /**
+   * `view` — show directory contents (2 levels deep) or file contents
+   * with optional line range. For entry files (anything other than
+   * `MEMORY.md`) older than 1 day, prepends `memoryFreshnessNote`.
+   *
+   * Synchronous; no mutex needed (read-only).
+   */
+  view(
+    agentId: string,
+    virtualPath: string,
+    viewRange?: readonly [number, number]
+  ): string {
+    const t = this.translatePath(agentId, virtualPath);
+    if (!t.ok) return t.error;
+    const abs = t.abs;
+
+    // Special case: viewing the root `/memories` of an agent that hasn't
+    // touched memory yet. Return the empty-listing form rather than
+    // "does not exist" — matches Anthropic's example (the header is
+    // emitted even for empty memory dirs) and matches the agent's
+    // mental model that the dir always exists.
+    const isRoot = virtualPath === MEMORIES_ROOT || virtualPath === `${MEMORIES_ROOT}/`;
+
+    let stat: fs.Stats;
+    try {
+      stat = fs.statSync(abs);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") {
+        if (isRoot) return this.viewDirectory(agentId, virtualPath, abs);
+        return `The path ${virtualPath} does not exist. Please provide a valid path.`;
+      }
       throw e;
     }
-    const trimmed = raw.trim();
-    if (!trimmed) return [];
-    const parts = trimmed
-      .split(ENTRY_DELIMITER)
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
-    return Array.from(new Set(parts));
+
+    if (stat.isDirectory()) {
+      return this.viewDirectory(agentId, virtualPath, abs);
+    }
+
+    // File path. Read content; honor optional view_range.
+    let raw: string;
+    try {
+      raw = fs.readFileSync(abs, "utf-8");
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") {
+        return `The path ${virtualPath} does not exist. Please provide a valid path.`;
+      }
+      throw e;
+    }
+
+    const lines = raw.split("\n");
+    if (lines.length > MAX_FILE_LINES) {
+      return `File ${virtualPath} exceeds maximum line limit of 999,999 lines.`;
+    }
+
+    let displayLines = lines;
+    let startOffset = 0;
+    if (viewRange) {
+      const [from, to] = viewRange;
+      const start = Math.max(1, from) - 1;
+      const end = to <= 0 ? lines.length : Math.min(lines.length, to);
+      displayLines = lines.slice(start, end);
+      startOffset = start;
+    }
+
+    const numbered = displayLines
+      .map((line, i) => `${fmtLineNo(i + 1 + startOffset)}\t${line}`)
+      .join("\n");
+
+    const header = `Here's the content of ${virtualPath} with line numbers:`;
+    let out = `${header}\n${numbered}`;
+
+    // Freshness wrap for entry files (not the index).
+    if (!this.isIndexPath(virtualPath)) {
+      const note = memoryFreshnessNote(stat.mtimeMs);
+      if (note.length > 0) out = note + out;
+    }
+    return out;
   }
 
-  private async writeEntries(file: string, entries: string[]): Promise<void> {
-    const dir = path.dirname(file);
+  /**
+   * Directory listing in Anthropic's format, adapted for OpenAcme:
+   * the `node_modules` exclusion clause from the upstream spec is
+   * dropped because OpenAcme's memory dir can never contain one (no
+   * shell access, no package manager runs against it). We still
+   * exclude hidden dotfiles so internal artifacts (future
+   * coordination locks, sidecar state) stay out of the agent's view.
+   */
+  private viewDirectory(
+    agentId: string,
+    virtualPath: string,
+    absRoot: string
+  ): string {
+    const lines: string[] = [
+      `Here're the files and directories up to 2 levels deep in ${virtualPath}, excluding hidden items:`,
+    ];
+
+    // Root entry — total size of contents at depth ≤ 2.
+    let rootBytes = 0;
+
+    type Entry = { virtual: string; bytes: number };
+    const out: Entry[] = [];
+
+    const collect = (currentAbs: string, currentVirtual: string, depth: number) => {
+      if (depth > 2) return;
+      let dirents: fs.Dirent[];
+      try {
+        dirents = fs.readdirSync(currentAbs, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const d of dirents) {
+        if (d.name.startsWith(".")) continue;
+        const childAbs = path.join(currentAbs, d.name);
+        const childVirtual = `${currentVirtual}/${d.name}`;
+        if (d.isDirectory()) {
+          out.push({ virtual: childVirtual, bytes: 0 });
+          collect(childAbs, childVirtual, depth + 1);
+        } else if (d.isFile()) {
+          let size = 0;
+          try {
+            size = fs.statSync(childAbs).size;
+          } catch {
+            // ignore — listing should not fail because one file vanished
+          }
+          out.push({ virtual: childVirtual, bytes: size });
+          rootBytes += size;
+        }
+      }
+    };
+
+    // Ensure the dir exists; if not, fabricate an empty listing rather
+    // than erroring (Anthropic's example shows the root header even when
+    // there are no children — empty memory dir is normal).
+    if (fs.existsSync(absRoot)) {
+      collect(absRoot, virtualPath.replace(/\/$/, ""), 1);
+    }
+
+    lines.push(`${formatBytes(rootBytes)}\t${virtualPath.replace(/\/$/, "")}`);
+    for (const e of out) {
+      lines.push(`${formatBytes(e.bytes)}\t${e.virtual}`);
+    }
+    return lines.join("\n");
+  }
+
+  // ── create ───────────────────────────────────────────────────────────
+
+  /**
+   * `create` — create a new file. Errors if a file already exists at
+   * the target path. For writes targeting `MEMORY.md`, enforces the
+   * write-time char cap with OpenAcme's guidance string. For all
+   * files, enforces the 999,999-line cap.
+   */
+  async create(
+    agentId: string,
+    virtualPath: string,
+    fileText: string,
+    indexCharLimit?: number
+  ): Promise<string> {
+    const t = this.translatePath(agentId, virtualPath);
+    if (!t.ok) return t.error;
+    const abs = t.abs;
+
+    return this.withMutex(agentId, async () => {
+      // Existence check
+      try {
+        await fsp.stat(abs);
+        return `Error: File ${virtualPath} already exists`;
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+      }
+
+      const lineCount = fileText.split("\n").length;
+      if (lineCount > MAX_FILE_LINES) {
+        return `File ${virtualPath} exceeds maximum line limit of 999,999 lines.`;
+      }
+
+      // Write-time cap on MEMORY.md
+      if (this.isIndexPath(virtualPath) && typeof indexCharLimit === "number") {
+        if (fileText.trim().length > indexCharLimit) {
+          return (
+            `Memory at 0/${indexCharLimit} chars. Adding this entry ` +
+            `(${fileText.trim().length} chars) would exceed the limit. ` +
+            `Replace or remove existing entries first.`
+          );
+        }
+      }
+
+      await this.writeFileAtomic(abs, fileText);
+      return `File created successfully at: ${virtualPath}`;
+    });
+  }
+
+  // ── str_replace ──────────────────────────────────────────────────────
+
+  /**
+   * `str_replace` — replace `oldStr` with `newStr` in a file. Errors
+   * on missing file, missing match, or multiple matches (Anthropic's
+   * exact wording).
+   */
+  async strReplace(
+    agentId: string,
+    virtualPath: string,
+    oldStr: string,
+    newStr: string,
+    indexCharLimit?: number
+  ): Promise<string> {
+    const t = this.translatePath(agentId, virtualPath);
+    if (!t.ok) return `Error: ${t.error}`;
+    const abs = t.abs;
+
+    return this.withMutex(agentId, async () => {
+      let stat: fs.Stats;
+      try {
+        stat = await fsp.stat(abs);
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === "ENOENT") {
+          return `Error: The path ${virtualPath} does not exist. Please provide a valid path.`;
+        }
+        throw e;
+      }
+      // Directory passed → "file does not exist" error per Anthropic spec
+      if (stat.isDirectory()) {
+        return `Error: The path ${virtualPath} does not exist. Please provide a valid path.`;
+      }
+
+      const content = await fsp.readFile(abs, "utf-8");
+      const occurrences = countOccurrences(content, oldStr);
+      if (occurrences === 0) {
+        return `No replacement was performed, old_str \`${oldStr}\` did not appear verbatim in ${virtualPath}.`;
+      }
+      if (occurrences > 1) {
+        const lineNos = findOccurrenceLines(content, oldStr);
+        return `No replacement was performed. Multiple occurrences of old_str \`${oldStr}\` in lines: ${lineNos.join(", ")}. Please ensure it is unique`;
+      }
+
+      const next = content.replace(oldStr, newStr);
+
+      // Line-cap check on the result
+      if (next.split("\n").length > MAX_FILE_LINES) {
+        return `File ${virtualPath} exceeds maximum line limit of 999,999 lines.`;
+      }
+
+      // Write-time cap on MEMORY.md
+      if (this.isIndexPath(virtualPath) && typeof indexCharLimit === "number") {
+        const newLen = next.trim().length;
+        const oldLen = content.trim().length;
+        if (newLen > indexCharLimit) {
+          return (
+            `Memory at ${oldLen}/${indexCharLimit} chars. Replacement would push it to ` +
+            `${newLen}/${indexCharLimit}. Shorten or remove other entries first.`
+          );
+        }
+      }
+
+      await this.writeFileAtomic(abs, next);
+
+      // Return success + a snippet-with-line-numbers per Anthropic spec
+      const snippetLineNo = content.slice(0, content.indexOf(oldStr)).split("\n").length;
+      const snippetLines = next.split("\n");
+      const start = Math.max(0, snippetLineNo - 3);
+      const end = Math.min(snippetLines.length, snippetLineNo + 5);
+      const snippet = snippetLines
+        .slice(start, end)
+        .map((line, i) => `${fmtLineNo(i + 1 + start)}\t${line}`)
+        .join("\n");
+      return `The memory file has been edited.\n${snippet}`;
+    });
+  }
+
+  // ── insert ───────────────────────────────────────────────────────────
+
+  /**
+   * `insert` — insert text at a specific line in a file. `insertLine` is
+   * 0-indexed in Anthropic's spec (0 = before first line, N = after last).
+   */
+  async insert(
+    agentId: string,
+    virtualPath: string,
+    insertLine: number,
+    insertText: string,
+    indexCharLimit?: number
+  ): Promise<string> {
+    const t = this.translatePath(agentId, virtualPath);
+    if (!t.ok) return `Error: ${t.error}`;
+    const abs = t.abs;
+
+    return this.withMutex(agentId, async () => {
+      let stat: fs.Stats;
+      try {
+        stat = await fsp.stat(abs);
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === "ENOENT") {
+          return `Error: The path ${virtualPath} does not exist`;
+        }
+        throw e;
+      }
+      if (stat.isDirectory()) {
+        return `Error: The path ${virtualPath} does not exist`;
+      }
+
+      const content = await fsp.readFile(abs, "utf-8");
+      const lines = content.split("\n");
+      const nLines = lines.length;
+      if (insertLine < 0 || insertLine > nLines) {
+        return `Error: Invalid \`insert_line\` parameter: ${insertLine}. It should be within the range of lines of the file: [0, ${nLines}]`;
+      }
+
+      // Splice in insertText (treated as a single block — caller is
+      // responsible for trailing newlines if they want a clean break).
+      const next = [
+        ...lines.slice(0, insertLine),
+        insertText,
+        ...lines.slice(insertLine),
+      ].join("\n");
+
+      if (next.split("\n").length > MAX_FILE_LINES) {
+        return `File ${virtualPath} exceeds maximum line limit of 999,999 lines.`;
+      }
+
+      if (this.isIndexPath(virtualPath) && typeof indexCharLimit === "number") {
+        const newLen = next.trim().length;
+        const oldLen = content.trim().length;
+        if (newLen > indexCharLimit) {
+          return (
+            `Memory at ${oldLen}/${indexCharLimit} chars. Insertion would push it to ` +
+            `${newLen}/${indexCharLimit}. Shorten or remove other entries first.`
+          );
+        }
+      }
+
+      await this.writeFileAtomic(abs, next);
+      return `The file ${virtualPath} has been edited.`;
+    });
+  }
+
+  // ── delete ───────────────────────────────────────────────────────────
+
+  /**
+   * `delete` — recursively delete a file or directory. Anthropic's spec
+   * says "Deletes the directory and all its contents recursively" so
+   * we use `rm -rf` semantics for directories.
+   */
+  async delete(agentId: string, virtualPath: string): Promise<string> {
+    const t = this.translatePath(agentId, virtualPath);
+    if (!t.ok) return `Error: ${t.error}`;
+    const abs = t.abs;
+
+    return this.withMutex(agentId, async () => {
+      let stat: fs.Stats;
+      try {
+        stat = await fsp.stat(abs);
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === "ENOENT") {
+          return `Error: The path ${virtualPath} does not exist`;
+        }
+        throw e;
+      }
+      if (stat.isDirectory()) {
+        await fsp.rm(abs, { recursive: true, force: true });
+      } else {
+        await fsp.unlink(abs);
+      }
+      return `Successfully deleted ${virtualPath}`;
+    });
+  }
+
+  // ── rename ───────────────────────────────────────────────────────────
+
+  /**
+   * `rename` — move or rename a file/directory. Errors if source is
+   * missing or destination already exists (no overwrite).
+   */
+  async rename(
+    agentId: string,
+    oldVirtualPath: string,
+    newVirtualPath: string
+  ): Promise<string> {
+    const t1 = this.translatePath(agentId, oldVirtualPath);
+    if (!t1.ok) return `Error: ${t1.error.replace("does not exist. Please provide a valid path.", "does not exist")}`;
+    const t2 = this.translatePath(agentId, newVirtualPath);
+    if (!t2.ok) return `Error: ${t2.error.replace("does not exist. Please provide a valid path.", "does not exist")}`;
+
+    return this.withMutex(agentId, async () => {
+      try {
+        await fsp.stat(t1.abs);
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === "ENOENT") {
+          return `Error: The path ${oldVirtualPath} does not exist`;
+        }
+        throw e;
+      }
+      try {
+        await fsp.stat(t2.abs);
+        return `Error: The destination ${newVirtualPath} already exists`;
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+      }
+      await fsp.mkdir(path.dirname(t2.abs), { recursive: true });
+      await fsp.rename(t1.abs, t2.abs);
+      return `Successfully renamed ${oldVirtualPath} to ${newVirtualPath}`;
+    });
+  }
+
+  // ── Internals ────────────────────────────────────────────────────────
+
+  /** Atomic write — tmp file + fsync + rename. */
+  private async writeFileAtomic(absPath: string, content: string): Promise<void> {
+    const dir = path.dirname(absPath);
     await fsp.mkdir(dir, { recursive: true });
 
     const tmp = path.join(
@@ -320,11 +677,11 @@ MEMORY [${pct}% — ${used}/${charLimit} chars]
     let fh: fsp.FileHandle | null = null;
     try {
       fh = await fsp.open(tmp, "w");
-      await fh.writeFile(serialize(entries), "utf-8");
+      await fh.writeFile(content, "utf-8");
       await fh.sync();
       await fh.close();
       fh = null;
-      await fsp.rename(tmp, file);
+      await fsp.rename(tmp, absPath);
     } catch (e) {
       if (fh) {
         try {
@@ -360,3 +717,6 @@ MEMORY [${pct}% — ${used}/${charLimit} chars]
     return result;
   }
 }
+
+// Export so tests can verify the line-numbering helper.
+export const __test = { withLineNumbers, formatBytes, fmtLineNo };

@@ -40,6 +40,37 @@ export interface OpenAcmeDataParts {
     kind: "info" | "warn" | "error" | "compressing" | "compressed";
     message: string;
   };
+  /** Memory entries surfaced by the recall selector for THIS user
+   *  message. Lives on the USER UIMessage and serves three purposes:
+   *
+   *    1. UI chip — `RelevantMemoryBlock` walks user messages, finds
+   *       this part, renders the collapsible "N memories recalled"
+   *       block.
+   *    2. Model input — `uiToModelMessages` extracts `modelContent`
+   *       and prepends it as a leading text part on this user message
+   *       before `convertToModelMessages` runs.
+   *    3. Surfaced-set dedup — `collectSurfacedMemories` walks user
+   *       messages, builds a `Set<path>` so the next turn's selector
+   *       skips already-surfaced files.
+   *
+   *  `modelContent` is pre-rendered at recall time (freshness "N days
+   *  ago" frozen in) so subsequent turns send byte-identical content —
+   *  Anthropic / OpenAI prefix cache hits across turns. Recomputing
+   *  freshness per turn would shift the days delta and invalidate the
+   *  cache from this user message onward. */
+  "relevant-memory": {
+    entries: Array<{
+      /** Absolute filesystem path — matches what `scanMemoryFiles`
+       *  returns, so `alreadySurfaced` can dedupe directly. */
+      path: string;
+      mtimeMs: number;
+      /** Full file content, freshness-wrapped at the entry boundary. */
+      content: string;
+    }>;
+    /** Pre-rendered `<system-reminder>...</system-reminder>` block.
+     *  Verbatim bytes prepended to the user message for model input. */
+    modelContent: string;
+  };
   // SDK-required index signature for unknown data-* keys.
   // `any` (not `unknown`) so named keys still narrow on a discriminated union.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -64,8 +95,10 @@ export interface AgentConfig {
   tools: string[];
   maxSteps: number;
   skillsIndex?: string;
-  /** MEMORY.md char cap (Hermes default 2200). Resolved from
-   *  `AgentDefinition.memoryCharLimit`. */
+  /** MEMORY.md (the index) char cap (Hermes default 2200). Resolved
+   *  from `AgentDefinition.memoryCharLimit`. Per-entry topic files
+   *  are uncapped — only the universal 999,999-line cap from
+   *  Anthropic's spec applies to them. */
   memoryCharLimit: number;
   compression?: CompressionConfig;
   /** Wall-clock cap on a single autonomous turn (ms). */
