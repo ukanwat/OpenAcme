@@ -34,12 +34,12 @@ Server emits `{type: "data-session", data: {sessionId}, transient: true}` BEFORE
 - Provider-gate the picker via `activeModalities` from `/api/models` (each preset carries `inputModalities` from the bundled registry). Disable picker + drag-drop overlay when the active model is text-only.
 - Per-file blob preview URL — `URL.revokeObjectURL` after send to avoid leaking object URLs.
 
-## `pnpm dev` does NOT update what Hono serves
+## Dev = `:3000` (web), `:3210` (API only). Published = `:3210` (web + API).
 
-`pnpm dev` runs Next.js dev server (port 3000) and Hono dev server (3210) **side by side**. The static bundle in `packages/server/web/` is **not** updated.
+`pnpm dev` runs Next dev (3000) and Hono (3210) side by side. Hono is **API-only in dev** — it does not mount any static UI. Open `:3000` for the webapp; HMR works there.
 
-- Only a full `pnpm build` rebuilds `apps/web/out/` and copies it into `packages/server/web/`.
-- Implication: web changes show up at the Next dev port immediately, but the production-served path (Hono → static) only after a build.
+- The bundled `packages/server/web/` only exists in published `@openacme/server` installs (materialized at publish time by `prepack`). In the workspace it's absent, so Hono has nothing to serve and `:3210/` is API-only.
+- Don't reintroduce a workspace `apps/web/out` fallback in Hono — that's what made `:3210` show a stale UI alongside `:3000`.
 - Don't try to stream HMR through Hono — the dev server is meant for that.
 
 ## No auth between web and server. Treat as 127.0.0.1 only.
