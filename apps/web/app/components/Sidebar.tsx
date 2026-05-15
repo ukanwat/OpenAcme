@@ -14,6 +14,7 @@ import { cn } from "@/app/lib/utils";
 import { API_BASE } from "@/app/lib/api";
 import { Logotype } from "@/app/components/Logotype";
 import { ThemeToggle } from "@/app/components/ThemeToggle";
+import { ActiveMarker } from "@/app/components/ui/active-marker";
 
 interface NavItem {
   href: string;
@@ -80,13 +81,7 @@ export function Sidebar({ children }: { children?: React.ReactNode }) {
                   : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
               )}
             >
-              <span
-                className={cn(
-                  "absolute inset-y-0 left-0 w-[2px] bg-plot-red transition-opacity",
-                  isActive ? "opacity-100" : "opacity-0"
-                )}
-                aria-hidden
-              />
+              <ActiveMarker active={isActive} />
               <Icon className="size-3.5 shrink-0" />
               <span className="font-medium">{item.label}</span>
             </Link>

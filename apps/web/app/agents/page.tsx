@@ -50,6 +50,8 @@ import {
   SelectValue,
 } from "@/app/components/ui/select";
 import { SectionEyebrow } from "@/app/components/ui/section-eyebrow";
+import { TabularTick } from "@/app/components/ui/tabular-tick";
+import { ActiveMarker } from "@/app/components/ui/active-marker";
 import { cn } from "@/app/lib/utils";
 
 interface Agent {
@@ -423,8 +425,8 @@ function AgentsPageInner() {
               Agents
             </span>
             <span className="h-3 w-px bg-paper-rule" aria-hidden />
-            <span className="font-mono text-[12px] tabular-nums text-ink-soft">
-              {agents.length} configured
+            <span className="font-mono text-[12px] text-ink-soft">
+              <TabularTick value={agents.length} /> configured
             </span>
           </div>
           <Button size="sm" onClick={startCreate}>
@@ -456,13 +458,7 @@ function AgentsPageInner() {
                       : "text-ink-soft hover:bg-paper-sunk hover:text-ink"
                   )}
                 >
-                  <span
-                    className={cn(
-                      "absolute inset-y-0 left-0 w-[2px] bg-plot-red transition-opacity",
-                      isActive ? "opacity-100" : "opacity-0"
-                    )}
-                    aria-hidden
-                  />
+                  <ActiveMarker active={isActive} />
                   <Bot className="size-4 shrink-0 mt-0.5 text-ink-soft" />
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-medium text-ink">
@@ -806,13 +802,7 @@ function McpSection({
                       inherited ? "bg-paper" : "bg-paper-sunk"
                     )}
                   >
-                    <span
-                      className={cn(
-                        "absolute inset-y-0 left-0 w-[2px] bg-plot-red transition-opacity",
-                        inherited ? "opacity-100" : "opacity-0"
-                      )}
-                      aria-hidden
-                    />
+                    <ActiveMarker active={inherited} />
                     <div
                       className={cn(
                         "flex size-4 shrink-0 items-center justify-center border",
@@ -991,13 +981,7 @@ function ToolToggle({
           : "bg-paper-sunk text-ink-soft hover:bg-paper hover:text-ink"
       )}
     >
-      <span
-        className={cn(
-          "absolute inset-y-0 left-0 w-[2px] bg-plot-red transition-opacity",
-          checked ? "opacity-100" : "opacity-0"
-        )}
-        aria-hidden
-      />
+      <ActiveMarker active={checked} />
       <div
         className={cn(
           "mt-0.5 flex size-4 shrink-0 items-center justify-center border transition-colors",

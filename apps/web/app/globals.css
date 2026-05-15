@@ -230,6 +230,13 @@
   --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
 
+  /* Defaults for every `transition`/`transition-colors`/etc. propagate the
+   * DESIGN.md curve instead of Tailwind's Material default. Raw values:
+   * Tailwind v4 doesn't resolve var() refs inside the default-transition
+   * hooks (it inlines the literal at build). */
+  --default-transition-duration: 180ms;
+  --default-transition-timing-function: cubic-bezier(0.25, 1, 0.5, 1);
+
   /* Per-agent tint scaffold. Scope locally via style={{ --agent-tint: ... }}. */
   --agent-tint: var(--plot-red);
 }
@@ -347,6 +354,13 @@
     background-color: var(--plot-red);
     animation: loading-hairline var(--duration-pulse) var(--ease-out-quart) infinite;
   }
+
+  /* Focus scribe-in: outline scribes outward from inside the element on
+   * focus, instead of popping. DESIGN.md §7.3. */
+  .focus-scribe:focus-visible {
+    outline: 2px solid var(--plot-red);
+    animation: focus-scribe var(--duration-state) var(--ease-out-quart) both;
+  }
 }
 
 @keyframes pulse-live {
@@ -374,6 +388,11 @@
   100% { transform: translateX(400%); }
 }
 
+@keyframes focus-scribe {
+  from { outline-offset: -2px; }
+  to   { outline-offset: 2px; }
+}
+
 /* Streaming cursor — a 2px plot-red bar. */
 .cursor-stream {
   display: inline-block;
@@ -388,7 +407,8 @@
 @media (prefers-reduced-motion: reduce) {
   .pulse-live, .cursor-stream,
   .scribe-in, .tick, .section-enter,
-  .loading-hairline {
+  .loading-hairline,
+  .focus-scribe:focus-visible {
     animation: none;
   }
 }

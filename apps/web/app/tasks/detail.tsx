@@ -229,6 +229,8 @@ export function TaskDetailPanel({
             onChange={(e) => onChange({ ...draft, body: e.target.value })}
           />
         </div>
+
+        <CommentsAndEvents taskId={selected.id} assignee={selected.assignee} />
       </div>
 
       {/* Fixed footer with audit metadata */}
@@ -275,7 +277,6 @@ export function TaskDetailPanel({
         )}
       </div>
 
-      <CommentsAndEvents taskId={selected.id} assignee={selected.assignee} />
     </>
   );
 }
@@ -353,56 +354,68 @@ function CommentsAndEvents({
   }
 
   return (
-    <div className="mt-6 space-y-4">
-      <div>
-        <h3 className="mb-2 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
-          Comments {comments.length > 0 ? `(${comments.length})` : ""}
-        </h3>
+    <div className="space-y-6 border-t border-paper-rule pt-5">
+      <section className="space-y-2">
+        <div className="flex items-baseline justify-between">
+          <h3 className="label-faceplate">Comments</h3>
+          {comments.length > 0 && (
+            <span className="font-mono text-[11px] tabular-nums text-ink-faint">
+              {comments.length}
+            </span>
+          )}
+        </div>
         {loading && comments.length === 0 ? (
-          <p className="text-xs text-ink-faint">Loading…</p>
+          <p className="font-mono text-[11px] text-ink-faint">Loading…</p>
         ) : comments.length === 0 ? (
-          <p className="text-xs text-ink-faint">No comments yet.</p>
+          <p className="font-mono text-[11px] text-ink-faint">No comments yet.</p>
         ) : (
           <ul className="space-y-2">
             {comments.map((c) => (
               <li
                 key={c.id}
                 className={cn(
-                  "rounded border border-ink-faint/20 bg-paper-soft px-3 py-2 text-sm",
-                  c.kind === "result" && "border-ink-soft/40 bg-paper",
+                  "border border-paper-rule bg-paper-sunk px-3 py-2 text-sm",
+                  c.kind === "result" && "bg-paper",
                   c.kind === "system" && "italic text-ink-soft"
                 )}
               >
-                <div className="mb-1 flex items-center gap-2 text-[11px] text-ink-faint">
-                  <span className="font-mono">{c.author}</span>
+                <div className="mb-1 flex items-center gap-2 font-mono text-[11px] text-ink-faint">
+                  <span>{c.author}</span>
                   {c.kind && (
-                    <span className="rounded border border-ink-faint/30 px-1.5 py-px text-[10px] uppercase tracking-wider">
+                    <span className="border border-paper-rule px-1.5 py-px text-[10px] uppercase tracking-[0.08em]">
                       {c.kind}
                     </span>
                   )}
                   <span>·</span>
                   <span>{formatRelativeFromUnix(c.createdAt)}</span>
                 </div>
-                <div className="whitespace-pre-wrap break-words">{c.body}</div>
+                <div className="whitespace-pre-wrap break-words text-ink">
+                  {c.body}
+                </div>
               </li>
             ))}
           </ul>
         )}
-        <div className="mt-2 space-y-2">
+        <div className="space-y-2 pt-1">
           <Textarea
             value={draftBody}
             onChange={(e) => setDraftBody(e.target.value)}
-            placeholder="Leave a comment…"
+            placeholder="Leave a comment"
             rows={3}
           />
-          <div className="flex items-center justify-between">
-            <label className="flex items-center gap-2 text-xs text-ink-soft">
+          <div className="flex items-center justify-between gap-3">
+            <label className="flex items-center gap-2 font-mono text-[11px] text-ink-soft">
               <input
                 type="checkbox"
                 checked={postingResult}
                 onChange={(e) => setPostingResult(e.target.checked)}
               />
-              Post as <code className="font-mono">result</code> (you must be the assignee)
+              <span>
+                Post as <code>result</code>
+                <span className="ml-1 text-ink-faint">
+                  (assignee only)
+                </span>
+              </span>
             </label>
             <Button
               size="sm"
@@ -410,40 +423,46 @@ function CommentsAndEvents({
               onClick={postComment}
               disabled={!draftBody.trim() || posting}
             >
-              {posting ? "Posting…" : "Comment"}
+              {posting ? "Posting" : "Comment"}
             </Button>
           </div>
         </div>
-      </div>
+      </section>
 
-      <div>
-        <h3 className="mb-2 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
-          Activity {events.length > 0 ? `(${events.length})` : ""}
-        </h3>
+      <section className="space-y-2">
+        <div className="flex items-baseline justify-between">
+          <h3 className="label-faceplate">Activity</h3>
+          {events.length > 0 && (
+            <span className="font-mono text-[11px] tabular-nums text-ink-faint">
+              {events.length}
+            </span>
+          )}
+        </div>
         {events.length === 0 ? (
-          <p className="text-xs text-ink-faint">No activity yet.</p>
+          <p className="font-mono text-[11px] text-ink-faint">No activity yet.</p>
         ) : (
-          <ul className="space-y-1 text-xs">
+          <ul className="space-y-1 font-mono text-[12px] tabular-nums">
             {events.map((e) => (
               <li key={e.id} className="text-ink-soft">
                 <span className="text-ink-faint">
                   {formatRelativeFromUnix(e.createdAt)}
-                </span>{" "}
-                · <span className="font-mono">{e.kind}</span>
+                </span>
+                <span className="mx-1.5 text-ink-faint">·</span>
+                <span className="text-ink">{e.kind}</span>
                 {e.agentId !== "system:scheduler" && (
                   <>
-                    {" "}
-                    by <span className="font-mono">{e.agentId}</span>
+                    <span className="mx-1.5 text-ink-faint">by</span>
+                    <span>{e.agentId}</span>
                   </>
                 )}
                 {e.payload && (
-                  <span className="ml-1 text-ink-faint">{e.payload}</span>
+                  <span className="ml-2 text-ink-faint">{e.payload}</span>
                 )}
               </li>
             ))}
           </ul>
         )}
-      </div>
+      </section>
     </div>
   );
 }
