@@ -512,6 +512,15 @@ export class AgentManager {
     this.agentStore.delete(id);
   }
 
+  /** Drop the cached `Agent` for `id`. The next chat call rebuilds it,
+   *  which re-walks resources, re-collects MCP tool names, and rebuilds
+   *  the system prompt. Use after any change that affects what
+   *  `createAgentFromDef` would produce — including resource mutations.
+   */
+  evictAgent(id: string): void {
+    this.agents.delete(id);
+  }
+
   /** Current AGENTS.md content, or undefined when the file is absent. */
   getAgentsMd(): string | undefined {
     return this.agentsMd;
@@ -570,6 +579,14 @@ export class AgentManager {
     // AgentConfig build time. The runtime compressor only sees the
     // resolved contextWindow — it never has to know about the snapshot.
     const metadata = lookupModelMetadata(effectiveModel);
+    // User-supplied files under `<agentDir>/resources/`. Walked once at
+    // AgentConfig build time; the cached system prompt mirrors that
+    // snapshot. Mutations via the HTTP route call `evictAgent` so the
+    // next chat rebuilds with fresh listings.
+    const resources = this.agentStore
+      .listResources(def.id)
+      .map((r) => ({ relPath: r.relPath, size: r.size, absPath: r.path }));
+
     const agentConfig: AgentConfig = {
       id: def.id,
       name: def.name,
@@ -597,6 +614,7 @@ export class AgentManager {
       },
       agentsMd: this.agentsMd,
       workspaceDir,
+      resources,
     };
 
     return new Agent(agentConfig, {

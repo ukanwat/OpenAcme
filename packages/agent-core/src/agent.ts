@@ -831,6 +831,7 @@ export class Agent {
       memorySnapshot,
       agentsMd: this.config.agentsMd,
       workspaceDir: this.config.workspaceDir,
+      resources: this.config.resources,
     });
     this.cachedSystemPrompts.set(sessionId, prompt);
 

@@ -36,12 +36,14 @@
   },
   "dependencies": {
     "@openacme/config": "workspace:*",
+    "adm-zip": "^0.5.17",
     "giget": "^3.2.0",
     "gray-matter": "^4.0.3",
     "zod": "^4.1.8"
   },
   "devDependencies": {
     "@repo/typescript-config": "workspace:*",
+    "@types/adm-zip": "^0.5.8",
     "@types/node": "^22.15.3",
     "typescript": "5.9.2"
   }

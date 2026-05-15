@@ -1,8 +1,14 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { randomUUID } from "node:crypto";
 import matter from "gray-matter";
 import { AgentDefinitionSchema, type AgentDefinition } from "./schema.js";
 import { loadGlobalMcpServers } from "./mcp-store.js";
+import {
+  listAgentResources,
+  resolveResourcePath,
+  type AgentResource,
+} from "./resources.js";
 
 /**
  * File-based agent store. Each agent lives in its own folder under
@@ -35,6 +41,19 @@ export interface AgentStore {
   get(id: string): AgentDefinition | null;
   upsert(agent: AgentDefinition): void;
   delete(id: string): void;
+  /** Absolute path to `<agentsDir>/<id>/`. Returns null for unknown id
+   *  shapes (folder may not exist yet). */
+  agentDir(id: string): string | null;
+  /** Files under `<agentDir>/resources/`. Filesystem-derived; no DB. */
+  listResources(id: string): AgentResource[];
+  /** Resolve a POSIX relPath under `resources/` with traversal defense.
+   *  Returns null for invalid input (or unknown agent). */
+  resourceAbsPath(id: string, relPath: string): string | null;
+  /** Atomic write of a resource file. Creates `resources/` and any
+   *  intermediate dirs. Throws on validation failure. */
+  writeResource(id: string, relPath: string, bytes: Buffer): void;
+  /** Unlink a resource file. Returns false on not-found / invalid path. */
+  deleteResource(id: string, relPath: string): boolean;
 }
 
 // Folder names must look like a single safe segment — no path traversal,
@@ -197,6 +216,57 @@ export function createAgentStore(agentsDir: string): AgentStore {
         // rm -rf — the folder may contain sibling assets the user added
         // (custom prompts, attachments). Deleting the agent removes them.
         fs.rmSync(folder, { recursive: true, force: true });
+      }
+    },
+
+    agentDir(id: string): string | null {
+      if (!SAFE_ID.test(id)) return null;
+      return path.join(agentsDir, id);
+    },
+
+    listResources(id: string): AgentResource[] {
+      const dir = this.agentDir(id);
+      if (!dir) return [];
+      return listAgentResources(dir);
+    },
+
+    resourceAbsPath(id: string, relPath: string): string | null {
+      const dir = this.agentDir(id);
+      if (!dir) return null;
+      return resolveResourcePath(dir, relPath);
+    },
+
+    writeResource(id: string, relPath: string, bytes: Buffer): void {
+      const abs = this.resourceAbsPath(id, relPath);
+      if (!abs) {
+        throw new Error(`Invalid resource path: ${relPath}`);
+      }
+      const dir = path.dirname(abs);
+      fs.mkdirSync(dir, { recursive: true });
+      // tmp+rename for atomicity; same-dir tmp guarantees atomic rename on POSIX.
+      const tmp = path.join(dir, `.tmp-${randomUUID()}`);
+      try {
+        fs.writeFileSync(tmp, bytes);
+        fs.renameSync(tmp, abs);
+      } catch (e) {
+        try {
+          fs.unlinkSync(tmp);
+        } catch {
+          // best-effort cleanup
+        }
+        throw e;
+      }
+    },
+
+    deleteResource(id: string, relPath: string): boolean {
+      const abs = this.resourceAbsPath(id, relPath);
+      if (!abs) return false;
+      try {
+        fs.unlinkSync(abs);
+        return true;
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === "ENOENT") return false;
+        throw e;
       }
     },
   };

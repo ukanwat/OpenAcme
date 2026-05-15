@@ -141,6 +141,12 @@ const TASKS_GUIDANCE =
   "before starting work — the system-prompt snapshot is from session start and may " +
   "be stale.";
 
+// Cap on the per-prompt `## Resources` listing. More than this fast-paths
+// to a `... and N more` tail so an agent with hundreds of files doesn't
+// blow the prefix cache. Agent can still `read_file` anything; this is
+// just the index.
+const MAX_RESOURCE_LINES = 50;
+
 export function buildSystemPrompt(options: {
   persona: string;
   toolNames: string[];
@@ -154,6 +160,14 @@ export function buildSystemPrompt(options: {
    *  injected so the agent knows where its default cwd is and that shell
    *  state persists across calls. */
   workspaceDir?: string;
+  /** Files under `<agentDir>/resources/`. When non-empty, a `## Resources`
+   *  section lists relPath + size + absolute path so the agent can
+   *  `read_file` directly. */
+  resources?: ReadonlyArray<{
+    relPath: string;
+    size: number;
+    absPath: string;
+  }>;
 }): string {
   const parts: string[] = [];
 
@@ -177,6 +191,26 @@ export function buildSystemPrompt(options: {
         `exported environment variables, and shell functions all persist. ` +
         `Absolute paths are still allowed; the workspace is just the default, ` +
         `not a sandbox.`
+    );
+  }
+
+  // Resources — user-supplied files under `<agentDir>/resources/`. The
+  // framing also tells the agent that files mentioned by name in its
+  // persona (e.g. "use the style guide", "follow template.json") resolve
+  // to entries here — that mapping is otherwise non-obvious.
+  if (options.resources && options.resources.length > 0) {
+    const shown = options.resources.slice(0, MAX_RESOURCE_LINES);
+    const lines = shown.map(
+      (r) => `- \`${r.relPath}\` (${r.size}B) — ${r.absPath}`
+    );
+    const overflow = options.resources.length - shown.length;
+    const tail =
+      overflow > 0
+        ? `\n... and ${overflow} more (see the resources directory).`
+        : "";
+    parts.push(
+      `\n## Resources\nFiles in your folder. If your persona references a ` +
+        `file by name, find it here. Read via the absolute path.\n${lines.join("\n")}${tail}`
     );
   }
 

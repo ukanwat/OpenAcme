@@ -33,7 +33,7 @@ export function registerSkillsHubRoutes(
     const src = sanitizeSourceFilter(body.source);
     if (!src.ok) {
       return c.json(
-        { error: `source must be one of: github, url, claude-marketplace, all (got '${src.bad}')` },
+        { error: `source must be one of: ${SOURCE_IDS.join(", ")}, all (got '${src.bad}')` },
         400
       );
     }
@@ -59,7 +59,7 @@ export function registerSkillsHubRoutes(
     const src = sanitizeSourceId(body.source);
     if (!src.ok) {
       return c.json(
-        { error: `source must be one of: github, url, claude-marketplace (got '${src.bad}')` },
+        { error: `source must be one of: ${SOURCE_IDS.join(", ")} (got '${src.bad}')` },
         400
       );
     }
@@ -90,7 +90,7 @@ export function registerSkillsHubRoutes(
     const src = sanitizeSourceId(body.source);
     if (!src.ok) {
       return c.json(
-        { error: `source must be one of: github, url, claude-marketplace (got '${src.bad}')` },
+        { error: `source must be one of: ${SOURCE_IDS.join(", ")} (got '${src.bad}')` },
         400
       );
     }
@@ -171,34 +171,38 @@ export function registerSkillsHubRoutes(
     } catch {
       return c.json({ error: "Invalid JSON" }, 400);
     }
-    if (body.source !== "github" && body.source !== "claude-marketplace") {
-      return c.json({ error: "source must be 'github' or 'claude-marketplace'" }, 400);
+    const tapSource = sanitizeTapSource(body.source);
+    if (!tapSource.ok) {
+      return c.json({ error: `source must be one of: ${TAP_SOURCES.join(", ")} (got '${tapSource.bad}')` }, 400);
     }
     const repo = String(body.repo ?? "").trim();
     if (!repo) return c.json({ error: "repo required" }, 400);
     try {
-      const tap = hub.addTap({ source: body.source, repo, path: body.path });
+      const tap = hub.addTap({ source: tapSource.value, repo, path: body.path });
       return c.json(tap, 201);
     } catch (err) {
       return c.json({ error: errMsg(err) }, 400);
     }
   });
 
-  // DELETE /api/skills/hub/taps/:repo  (repo is URL-encoded owner/repo)
-  app.delete("/api/skills/hub/taps/:repo", (c) => {
-    const raw = c.req.param("repo");
-    let repo: string;
+  // DELETE /api/skills/hub/taps  — body: { source, repo }. Path / URL repos
+  // contain slashes, so a path param doesn't survive routing cleanly.
+  app.delete("/api/skills/hub/taps", async (c) => {
+    let body: { source?: string; repo?: string };
     try {
-      repo = decodeURIComponent(raw);
+      body = await c.req.json();
     } catch {
-      return c.json({ error: "invalid repo" }, 400);
+      return c.json({ error: "Invalid JSON" }, 400);
     }
-    if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) {
-      return c.json({ error: "repo must be owner/repo" }, 400);
+    const tapSource = sanitizeTapSource(body.source);
+    if (!tapSource.ok) {
+      return c.json({ error: `source must be one of: ${TAP_SOURCES.join(", ")} (got '${tapSource.bad}')` }, 400);
     }
-    const ok = hub.removeTap(repo);
+    const repo = String(body.repo ?? "").trim();
+    if (!repo) return c.json({ error: "repo required" }, 400);
+    const ok = hub.removeTap(repo, tapSource.value);
     if (!ok) return c.json({ error: "not found" }, 404);
-    return c.json({ repo });
+    return c.json({ repo, source: tapSource.value });
   });
 }
 
@@ -229,7 +233,31 @@ function isAuditAction(
   return typeof v === "string" && VALID_AUDIT_ACTIONS.has(v);
 }
 
-type SourceId = "github" | "url" | "claude-marketplace";
+type SourceId =
+  | "github"
+  | "url"
+  | "claude-marketplace"
+  | "well-known"
+  | "local"
+  | "git-url"
+  | "lobehub"
+  | "skills-sh"
+  | "clawhub";
+
+const SOURCE_IDS: SourceId[] = [
+  "github",
+  "url",
+  "claude-marketplace",
+  "well-known",
+  "local",
+  "git-url",
+  "lobehub",
+  "skills-sh",
+  "clawhub",
+];
+
+type TapSourceId = "github" | "claude-marketplace" | "well-known" | "local";
+const TAP_SOURCES: TapSourceId[] = ["github", "claude-marketplace", "well-known", "local"];
 
 // Returns the source if valid or unset, or a {bad} sentinel so the caller
 // can 400 — silently mapping invalid values to undefined turns "--source bogus"
@@ -238,8 +266,9 @@ function sanitizeSourceFilter(
   v: unknown
 ): { ok: true; value: "all" | SourceId | undefined } | { ok: false; bad: string } {
   if (v === undefined || v === null || v === "") return { ok: true, value: undefined };
-  if (v === "github" || v === "url" || v === "claude-marketplace" || v === "all") {
-    return { ok: true, value: v };
+  if (v === "all") return { ok: true, value: "all" };
+  if (typeof v === "string" && (SOURCE_IDS as string[]).includes(v)) {
+    return { ok: true, value: v as SourceId };
   }
   return { ok: false, bad: String(v) };
 }
@@ -248,8 +277,19 @@ function sanitizeSourceId(
   v: unknown
 ): { ok: true; value: SourceId | undefined } | { ok: false; bad: string } {
   if (v === undefined || v === null || v === "") return { ok: true, value: undefined };
-  if (v === "github" || v === "url" || v === "claude-marketplace") return { ok: true, value: v };
+  if (typeof v === "string" && (SOURCE_IDS as string[]).includes(v)) {
+    return { ok: true, value: v as SourceId };
+  }
   return { ok: false, bad: String(v) };
+}
+
+function sanitizeTapSource(
+  v: unknown
+): { ok: true; value: TapSourceId } | { ok: false; bad: string } {
+  if (typeof v === "string" && (TAP_SOURCES as string[]).includes(v)) {
+    return { ok: true, value: v as TapSourceId };
+  }
+  return { ok: false, bad: String(v ?? "") };
 }
 
 function clampInt(v: unknown, min: number, max: number, fallback: number): number {

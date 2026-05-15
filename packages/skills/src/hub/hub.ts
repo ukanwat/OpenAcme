@@ -11,6 +11,12 @@ import { GitHubAuth } from "./github-auth.js";
 import { GitHubSource } from "./sources/github.js";
 import { UrlSource } from "./sources/url.js";
 import { ClaudeMarketplaceSource } from "./sources/claude-marketplace.js";
+import { WellKnownSource } from "./sources/well-known.js";
+import { LocalSource } from "./sources/local.js";
+import { GitUrlSource } from "./sources/git-url.js";
+import { LobeHubSource } from "./sources/lobehub.js";
+import { SkillsShSource } from "./sources/skills-sh.js";
+import { ClawHubSource } from "./sources/clawhub.js";
 import {
   hubDir,
   skillTargetDir,
@@ -30,6 +36,7 @@ import type {
   SkillMeta,
   SkillSource,
   SkillSourceId,
+  TapSource,
   TrustLevel,
 } from "./types.js";
 
@@ -70,6 +77,12 @@ export class SkillHub {
   private readonly github: GitHubSource;
   private readonly url: UrlSource;
   private readonly marketplace: ClaudeMarketplaceSource;
+  private readonly wellKnown: WellKnownSource;
+  private readonly local: LocalSource;
+  private readonly gitUrl: GitUrlSource;
+  private readonly lobehub: LobeHubSource;
+  private readonly skillsSh: SkillsShSource;
+  private readonly clawhub: ClawHubSource;
 
   constructor(
     private readonly skillsDir: string,
@@ -87,6 +100,12 @@ export class SkillHub {
       this.cache,
       () => this.taps.list()
     );
+    this.wellKnown = new WellKnownSource(this.cache, () => this.taps.list());
+    this.local = new LocalSource(() => this.taps.list());
+    this.gitUrl = new GitUrlSource();
+    this.lobehub = new LobeHubSource(this.cache);
+    this.skillsSh = new SkillsShSource(this.github, this.cache);
+    this.clawhub = new ClawHubSource(this.cache);
   }
 
   // ---------------- Public surface ----------------
@@ -98,14 +117,23 @@ export class SkillHub {
     const results: SkillMeta[] = [];
 
     const parts = await Promise.all(
-      sources.map((src) =>
-        src.search(query, { limit, signal: opts.signal }).catch((err) => {
-          console.warn(
-            `SkillHub.search: ${src.id} failed: ${err instanceof Error ? err.message : String(err)}`
-          );
-          return [] as SkillMeta[];
-        })
-      )
+      sources.map((src) => {
+        // Per-source 8s ceiling so one wedged catalog can't poison Browse.
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 8_000);
+        const combined = opts.signal
+          ? mergeSignals(opts.signal, ctrl.signal)
+          : ctrl.signal;
+        return src
+          .search(query, { limit, signal: combined })
+          .catch((err) => {
+            console.warn(
+              `SkillHub.search: ${src.id} failed: ${err instanceof Error ? err.message : String(err)}`
+            );
+            return [] as SkillMeta[];
+          })
+          .finally(() => clearTimeout(timer));
+      })
     );
 
     for (const part of parts) {
@@ -416,7 +444,7 @@ export class SkillHub {
   }
 
   // Taps wrappers (audit on add/remove).
-  addTap(input: { source: "github" | "claude-marketplace"; repo: string; path?: string }) {
+  addTap(input: { source: TapSource; repo: string; path?: string }) {
     const t = this.taps.add(input);
     this.audit("TAP_ADD", { repo: t.repo, outcome: "ok" });
     // Adding a tap can affect search/inspect — invalidate cache so the
@@ -425,8 +453,8 @@ export class SkillHub {
     return t;
   }
 
-  removeTap(repo: string): boolean {
-    const ok = this.taps.remove(repo);
+  removeTap(repo: string, source?: TapSource): boolean {
+    const ok = this.taps.remove(repo, source);
     if (ok) {
       this.audit("TAP_REMOVE", { repo, outcome: "ok" });
       this.invalidateIndexCache();
@@ -442,15 +470,34 @@ export class SkillHub {
 
   private pickSources(filter?: "all" | SkillSourceId): SkillSource[] {
     if (!filter || filter === "all") {
-      return [this.github, this.marketplace, this.url];
+      // Order matters for dedup-by-identifier in search().
+      return [
+        this.github,
+        this.marketplace,
+        this.wellKnown,
+        this.local,
+        this.lobehub,
+        this.skillsSh,
+        this.clawhub,
+        this.url,
+        this.gitUrl,
+      ];
     }
     return [this.sourceById(filter)];
   }
 
   private sourceById(id: SkillSourceId): SkillSource {
-    if (id === "github") return this.github;
-    if (id === "url") return this.url;
-    return this.marketplace;
+    switch (id) {
+      case "github": return this.github;
+      case "url": return this.url;
+      case "claude-marketplace": return this.marketplace;
+      case "well-known": return this.wellKnown;
+      case "local": return this.local;
+      case "git-url": return this.gitUrl;
+      case "lobehub": return this.lobehub;
+      case "skills-sh": return this.skillsSh;
+      case "clawhub": return this.clawhub;
+    }
   }
 
   private async resolveSource(
@@ -459,6 +506,14 @@ export class SkillHub {
     signal?: AbortSignal
   ): Promise<SkillSource | null> {
     if (explicit) return this.sourceById(explicit);
+    // Explicit prefixes win before any URL/path heuristic.
+    if (identifier.startsWith("well-known:")) return this.wellKnown;
+    if (identifier.startsWith("lobehub/")) return this.lobehub;
+    if (this.gitUrl.looksLikeGitUrl(identifier)) return this.gitUrl;
+    // Absolute local-fs path → LocalSource (used by import endpoints).
+    if (identifier.startsWith("/") || /^[A-Za-z]:[\\/]/.test(identifier)) {
+      return this.local;
+    }
     if (/^https?:\/\//i.test(identifier)) return this.url;
     // owner/repo[/path] heuristic: try GitHub first; fall back to marketplace.
     if (identifier.includes("/")) {
@@ -506,4 +561,15 @@ export class SkillHub {
   trustLevelFor(source: SkillSourceId, identifier: string): TrustLevel {
     return this.sourceById(source).trustLevelFor(identifier);
   }
+}
+
+function mergeSignals(a: AbortSignal, b: AbortSignal): AbortSignal {
+  if (a.aborted) return a;
+  if (b.aborted) return b;
+  const ctrl = new AbortController();
+  const onA = () => ctrl.abort(a.reason);
+  const onB = () => ctrl.abort(b.reason);
+  a.addEventListener("abort", onA, { once: true });
+  b.addEventListener("abort", onB, { once: true });
+  return ctrl.signal;
 }
