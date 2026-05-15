@@ -23,6 +23,7 @@ import { ActiveMarker } from "@/app/components/ui/active-marker";
 import {
   STATUS_LABEL,
   STATUS_ORDER,
+  dueUrgencyClass,
   formatDate,
   formatRelativeFutureFromIso,
   shortRecurrenceLabel,
@@ -180,7 +181,11 @@ function BoardCard({
         <div className="line-clamp-1 text-sm font-medium text-ink">{task.title}</div>
         <div className="flex flex-wrap gap-x-3 gap-y-0.5 font-mono text-[11px] tabular-nums text-ink-faint">
           <span>@{task.assignee}</span>
-          {task.due_at && <span>due {formatDate(task.due_at)}</span>}
+          {task.due_at && (
+            <span className={dueUrgencyClass(task.due_at)}>
+              due {formatDate(task.due_at)}
+            </span>
+          )}
           {task.start_at &&
             (new Date(task.start_at).getTime() > Date.now() ? (
               <span className="text-signal-blue">

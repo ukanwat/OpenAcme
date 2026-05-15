@@ -249,7 +249,7 @@ function StatusDot({ status }: { status: Status }) {
   }
   const cls =
     status === "running"
-      ? "bg-plot-red"
+      ? "bg-signal-blue"
       : status === "error"
         ? "bg-destructive"
         : "bg-ink";
@@ -263,7 +263,7 @@ function StatusLabel({ status }: { status: Status }) {
       : status === "interrupted"
         ? "text-ink-faint"
         : status === "running"
-          ? "text-plot-red"
+          ? "text-signal-blue"
           : "text-ink-faint";
   return (
     <span

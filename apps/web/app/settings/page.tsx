@@ -116,13 +116,17 @@ function aggregateStatus(
 function statePillClass(state: McpServerStatus["state"]): string {
   switch (state) {
     case "connected":
-      return "bg-paper text-ink border border-plot-red";
+      // OK role per §2 — daemon up, MCP healthy.
+      return "bg-paper text-ink border border-signal-green";
     case "awaiting_oauth":
+      // WAIT role — action pending, here ochre rather than amber so
+      // it doesn't compete with the in-flow BLOCKED chip.
       return "bg-paper text-warn-ochre border border-warn-ochre";
     case "failed":
       return "bg-paper text-destructive border border-destructive";
     case "connecting":
-      return "bg-paper text-plot-red border border-plot-red";
+      // WORKING role per §2 — transient transitional state.
+      return "bg-paper text-signal-blue border border-signal-blue";
     case "disabled":
       return "bg-paper-sunk text-ink-faint border border-paper-rule";
     default:
