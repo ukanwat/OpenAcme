@@ -33,7 +33,7 @@
     "build": "tsc --build",
     "check-types": "tsc --noEmit",
     "dev": "tsc --watch",
-    "test": "vitest run"
+    "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
     "playwright-core": "^1.50.0"
