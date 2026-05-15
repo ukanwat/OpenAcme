@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Kanban, ListChecks, Rows3 } from "lucide-react";
 import { toast } from "sonner";
 import { Sidebar } from "../components/Sidebar";
@@ -34,6 +35,17 @@ type ViewMode = "board" | "list";
 const VIEW_MODE_STORAGE_KEY = "openacme.tasks.viewMode";
 
 export default function TasksPage() {
+  return (
+    <Suspense fallback={null}>
+      <TasksPageInner />
+    </Suspense>
+  );
+}
+
+function TasksPageInner() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const urlId = searchParams.get("id");
   const [tasks, setTasks] = useState<Task[]>([]);
   const [agents, setAgents] = useState<AgentOption[]>([]);
   const [loading, setLoading] = useState(true);
@@ -60,6 +72,16 @@ export default function TasksPage() {
     void loadAgents(ctrl.signal);
     return () => ctrl.abort();
   }, []);
+
+  // URL → selection state. /tasks/<id> loads that task; /tasks resets.
+  useEffect(() => {
+    if (urlId) {
+      void loadOne(urlId);
+    } else {
+      setSelected(null);
+      setDraft(null);
+    }
+  }, [urlId]);
 
   const load = async (signal?: AbortSignal) => {
     try {
@@ -193,13 +215,11 @@ export default function TasksPage() {
         }
         throw new Error(err.message ?? err.error ?? `HTTP ${res.status}`);
       }
-      if (selected?.id === id) {
-        setSelected(null);
-        setDraft(null);
-      }
+      const wasSelected = selected?.id === id;
       await load();
       toast.success("Deleted");
       setConfirmDelete(null);
+      if (wasSelected) router.push("/tasks");
       return true;
     } catch (e) {
       toast.error((e as Error).message);
@@ -291,16 +311,13 @@ export default function TasksPage() {
             <TasksBoard
               tasks={tasks}
               selectedId={selected?.id ?? null}
-              onPick={(id) => void loadOne(id)}
+              onPick={(id) => router.push(`/tasks?id=${id}`)}
               onMove={(id, target) => void moveStatus(id, target)}
             />
             <Dialog
               open={!!selected && !!draft}
               onOpenChange={(open) => {
-                if (!open) {
-                  setSelected(null);
-                  setDraft(null);
-                }
+                if (!open) router.push("/tasks");
               }}
             >
               <DialogContent
@@ -324,10 +341,7 @@ export default function TasksPage() {
                     onChange={setDraft}
                     onSave={() => void save()}
                     onDeleteClick={() => setConfirmDelete(selected.id)}
-                    onClose={() => {
-                      setSelected(null);
-                      setDraft(null);
-                    }}
+                    onClose={() => router.push("/tasks")}
                   />
                 )}
               </DialogContent>
@@ -351,7 +365,7 @@ export default function TasksPage() {
                         return (
                           <button
                             key={t.id}
-                            onClick={() => void loadOne(t.id)}
+                            onClick={() => router.push(`/tasks?id=${t.id}`)}
                             className={cn(
                               "group relative flex flex-col items-start gap-1 border-b border-paper-rule px-4 py-3 text-left transition-colors",
                               isActive

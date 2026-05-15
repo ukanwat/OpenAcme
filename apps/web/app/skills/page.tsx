@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useMemo, useRef } from "react";
+import { Suspense, useState, useEffect, useMemo, useRef } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Plus, Search, Trash2, Upload } from "lucide-react";
 import { LoadingHairline } from "@/app/components/ui/loading-hairline";
 import { toast } from "sonner";
@@ -52,6 +53,19 @@ interface Skill {
 }
 
 export default function SkillsPage() {
+  return (
+    <Suspense fallback={null}>
+      <SkillsPageInner />
+    </Suspense>
+  );
+}
+
+function SkillsPageInner() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const urlName = searchParams.get("name");
+  const urlCreate = searchParams.get("create") === "1";
+
   const [skills, setSkills] = useState<SkillIndexEntry[]>([]);
   const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -74,6 +88,22 @@ export default function SkillsPage() {
     loadSkills(ctrl.signal);
     return () => ctrl.abort();
   }, []);
+
+  // ?name=<name> selects a skill; ?create=1 opens the create form.
+  useEffect(() => {
+    if (urlCreate) {
+      setIsCreating(true);
+      setSelectedSkill(null);
+      return;
+    }
+    if (urlName) {
+      setIsCreating(false);
+      loadSkillDetail(urlName);
+      return;
+    }
+    setIsCreating(false);
+    setSelectedSkill(null);
+  }, [urlName, urlCreate]);
 
   const loadSkills = async (signal?: AbortSignal) => {
     try {
@@ -126,9 +156,10 @@ export default function SkillsPage() {
       });
       if (res.ok) {
         toast.success("Skill created");
+        const createdName = formData.name.trim();
         setFormData({ name: "", description: "", tags: "", body: "" });
-        setIsCreating(false);
         loadSkills();
+        router.push(`/skills?name=${encodeURIComponent(createdName)}`);
       } else {
         const data = await res.json();
         toast.error("Failed to create skill", { description: data.error });
@@ -170,7 +201,7 @@ export default function SkillsPage() {
         const data = await res.json();
         toast.success(`Imported skill '${data.name}'`);
         loadSkills();
-        if (data.name) loadSkillDetail(data.name);
+        if (data.name) router.push(`/skills?name=${encodeURIComponent(data.name)}`);
       } else {
         const data = await res.json().catch(() => ({}));
         toast.error("Import failed", { description: data.error });
@@ -193,8 +224,8 @@ export default function SkillsPage() {
       });
       if (res.ok) {
         toast.success("Skill deleted");
-        setSelectedSkill(null);
         loadSkills();
+        router.push("/skills");
       } else {
         toast.error("Failed to delete skill");
       }
@@ -262,13 +293,7 @@ export default function SkillsPage() {
               )}
               Import folder
             </Button>
-            <Button
-              size="sm"
-              onClick={() => {
-                setIsCreating(true);
-                setSelectedSkill(null);
-              }}
-            >
+            <Button size="sm" onClick={() => router.push("/skills?create=1")}>
               <Plus className="size-4" />
               New skill
             </Button>
@@ -334,7 +359,7 @@ export default function SkillsPage() {
                   return (
                     <button
                       key={skill.name}
-                      onClick={() => loadSkillDetail(skill.name)}
+                      onClick={() => router.push(`/skills?name=${encodeURIComponent(skill.name)}`)}
                       className={cn(
                         "group relative flex w-full flex-col items-start gap-0.5 border-b border-paper-rule px-4 py-2.5 text-left transition-colors",
                         isActive
@@ -417,7 +442,7 @@ export default function SkillsPage() {
                     />
                   </div>
                   <div className="flex gap-2 justify-end">
-                    <Button variant="outline" onClick={() => setIsCreating(false)}>
+                    <Button variant="outline" onClick={() => router.push("/skills")}>
                       Cancel
                     </Button>
                     <Button onClick={createSkill} disabled={saving}>
@@ -466,7 +491,7 @@ export default function SkillsPage() {
                               key={name}
                               variant="ghost"
                               size="xs"
-                              onClick={() => loadSkillDetail(name)}
+                              onClick={() => router.push(`/skills?name=${encodeURIComponent(name)}`)}
                             >
                               {name}
                             </Button>
@@ -509,7 +534,7 @@ export default function SkillsPage() {
                 </Card>
               </div>
             ) : skills.length === 0 ? (
-              <EmptySkillsState onCreate={() => setIsCreating(true)} />
+              <EmptySkillsState onCreate={() => router.push("/skills?create=1")} />
             ) : (
               <NoSkillPicked />
             )}
