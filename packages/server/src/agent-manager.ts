@@ -552,20 +552,17 @@ export class AgentManager {
       workforce: { skills: [], mcpServers: [] },
     };
 
-    // Stage 1a — recommended skills
+    // Stage 1a — bundled skills.
+    // SkillHub is the single source of truth for "is this installed". An
+    // in-process SkillRegistry pre-check would short-circuit the heal path
+    // when the registry has a stale view (e.g. skill files removed by hand
+    // since boot). Always call install and translate the outcome.
     if (template.bundledSkills.length > 0) {
       const skillsDir = path.isAbsolute(this.config.skills.directory)
         ? this.config.skills.directory
         : path.join(this.config.dataDir, this.config.skills.directory);
       const hub = new SkillHub(skillsDir, this.skillRegistry);
       for (const s of template.bundledSkills) {
-        const already = this.skillRegistry
-          .getIndex()
-          .some((e) => e.name === s.name);
-        if (already) {
-          manifest.workforce.skills.push({ name: s.name, action: "kept" });
-          continue;
-        }
         try {
           await hub.install(s.identifier, {
             source: s.source,
@@ -573,11 +570,8 @@ export class AgentManager {
           });
           manifest.workforce.skills.push({ name: s.name, action: "installed" });
         } catch (err) {
-          // ALREADY_INSTALLED means the lockfile says it's there — the
-          // user's intent (skill present in workforce) is already met,
-          // so record `kept`, not `failed`. SkillHub self-heals stale
-          // lockfile entries below, so we shouldn't normally see this
-          // case for a missing-on-disk install, only true repeats.
+          // ALREADY_INSTALLED — lockfile + disk agree the skill is there.
+          // User's intent met; record kept, not failed.
           if (err instanceof HubError && err.code === "ALREADY_INSTALLED") {
             manifest.workforce.skills.push({ name: s.name, action: "kept" });
             continue;
