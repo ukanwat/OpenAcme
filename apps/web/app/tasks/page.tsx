@@ -325,7 +325,7 @@ function TasksPageInner() {
             >
               <DialogContent
                 showCloseButton={false}
-                className="max-h-[85vh] max-w-3xl overflow-hidden"
+                className="h-[94vh] max-h-[94vh] w-[min(72rem,96vw)] max-w-none overflow-hidden sm:max-w-none"
               >
                 <VisuallyHidden.Root>
                   <DialogTitle>{selected?.title ?? "Task"}</DialogTitle>
