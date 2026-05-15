@@ -21,6 +21,17 @@ export async function chatCommand(opts: {
   dataDir?: string;
 }): Promise<void> {
   const config = loadConfig(opts.dataDir);
+  // In interactive TUI mode, Ink owns the terminal — pino's default stderr
+  // sink would corrupt the rendered UI. Route logs to a side file in the
+  // data dir before any agent code runs (the logger reads this env on
+  // first write). Headless mode is fine on stderr.
+  if (
+    !process.env["OPENACME_LOG_FILE"] &&
+    process.stdout.isTTY === true &&
+    process.stdin.isTTY === true
+  ) {
+    process.env["OPENACME_LOG_FILE"] = `${config.dataDir}/openacme-tui.log`;
+  }
   const manager = new AgentManager(config);
   await manager.initMCP();
   // Materialize the default Acme agent on a fresh install so terminal

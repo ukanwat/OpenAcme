@@ -1,3 +1,4 @@
+import { createLogger } from "@openacme/config/logger";
 import type {
   SkillBundle,
   SkillMeta,
@@ -8,6 +9,8 @@ import type {
 import type { GitHubAuth } from "../github-auth.js";
 import type { IndexCache } from "../index-cache.js";
 import type { GitHubSource } from "./github.js";
+
+const log = createLogger("skills.hub.claude-marketplace");
 
 const API_BASE = "https://api.github.com";
 const TRUSTED_REPOS = new Set<string>(["anthropics/skills"]);
@@ -82,9 +85,7 @@ export class ClaudeMarketplaceSource implements SkillSource {
           out.push(entry);
         }
       } catch (err) {
-        console.warn(
-          `ClaudeMarketplaceSource: tap ${tap.repo} search failed: ${err instanceof Error ? err.message : String(err)}`
-        );
+        log.warn({ err, tap: tap.repo }, "tap search failed");
       }
       if (out.length >= limit) break;
     }

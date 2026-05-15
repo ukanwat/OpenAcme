@@ -10,6 +10,10 @@
  * dropped — the client refetches history on reconnect.
  */
 
+import { createLogger } from "@openacme/config/logger";
+
+const log = createLogger("server.broadcaster");
+
 export type SessionBroadcastEvent =
   | {
       kind: "ui_message_part";
@@ -113,18 +117,14 @@ export class SessionBroadcaster {
       try {
         fn(env);
       } catch (e) {
-        console.warn(
-          `SessionBroadcaster listener threw for ${sessionId}: ${e instanceof Error ? e.message : String(e)}`
-        );
+        log.warn({ err: e, sessionId }, "broadcaster listener threw");
       }
     }
     for (const fn of this.workforceListeners) {
       try {
         fn(sessionId, env);
       } catch (e) {
-        console.warn(
-          `SessionBroadcaster workforce listener threw: ${e instanceof Error ? e.message : String(e)}`
-        );
+        log.warn({ err: e }, "workforce listener threw");
       }
     }
   }

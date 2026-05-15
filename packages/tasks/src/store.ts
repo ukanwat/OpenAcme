@@ -57,11 +57,14 @@ import {
   type TaskStatus,
   type TaskUpdate,
 } from "./types.js";
+import { createLogger } from "@openacme/config/logger";
 import { computeNextFire, validateRecurrence } from "./recurrence.js";
 import {
   renderForPrompt as renderForPromptPure,
   renderRecentActivity as renderRecentActivityPure,
 } from "./prompt-render.js";
+
+const log = createLogger("tasks.store");
 import type {
   Comment,
   CommentInput,
@@ -154,9 +157,7 @@ function parseTaskFile(filePath: string): Task | null {
   } catch (e) {
     if (!warnedMalformed.has(filePath)) {
       warnedMalformed.add(filePath);
-      console.warn(
-        `Skipping malformed task file ${filePath}: ${e instanceof Error ? e.message : String(e)}`
-      );
+      log.warn({ err: e, filePath }, "skipping malformed task file");
     }
     return null;
   }
@@ -649,9 +650,7 @@ export class TaskStore {
       try {
         this.commentStore?.deleteByTask(id);
       } catch (e) {
-        console.warn(
-          `delete: failed to drop comments for ${id}: ${e instanceof Error ? e.message : String(e)}`
-        );
+        log.warn({ err: e, taskId: id }, "delete: failed to drop comments");
       }
       // Emit the deletion before recursing so the dependent's wake
       // sees this task already terminal in the prompt's recent activity.
@@ -727,9 +726,7 @@ export class TaskStore {
         await this.update(t.id, { status: "open" });
         reset.push(t.id);
       } catch (e) {
-        console.warn(
-          `sweepStale: failed to reset ${t.id}: ${e instanceof Error ? e.message : String(e)}`
-        );
+        log.warn({ err: e, taskId: t.id }, "sweepStale: failed to reset task");
       }
     }
     return reset;
@@ -867,9 +864,7 @@ export class TaskStore {
           });
         }
       } catch (e) {
-        console.warn(
-          `unblockDependents: failed for ${dep.id}: ${e instanceof Error ? e.message : String(e)}`
-        );
+        log.warn({ err: e, taskId: dep.id }, "unblockDependents failed");
       }
     }
   }
@@ -925,9 +920,7 @@ export class TaskStore {
     try {
       this.onChange();
     } catch (e) {
-      console.warn(
-        `TaskStore onChange threw: ${e instanceof Error ? e.message : String(e)}`
-      );
+      log.warn({ err: e }, "onChange callback threw");
     }
   }
 
@@ -936,9 +929,7 @@ export class TaskStore {
     try {
       this.eventStore.append(input);
     } catch (e) {
-      console.warn(
-        `TaskStore eventStore.append threw: ${e instanceof Error ? e.message : String(e)}`
-      );
+      log.warn({ err: e }, "eventStore.append threw");
     }
   }
 

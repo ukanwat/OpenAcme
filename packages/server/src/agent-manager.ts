@@ -11,6 +11,9 @@ import {
   type MCPServerConfig,
   type ModelConfig,
 } from "@openacme/config";
+import { createLogger } from "@openacme/config/logger";
+
+const log = createLogger("server.agent-manager");
 import {
   createDatabase,
   createSessionStore,
@@ -74,9 +77,7 @@ function readAgentsMd(dataDir: string): string | undefined {
     return content.trim().length > 0 ? content : undefined;
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    console.warn(
-      `Failed to read ${file}: ${e instanceof Error ? e.message : String(e)}`
-    );
+    log.warn({ err: e, file }, "failed to read file");
     return undefined;
   }
 }
@@ -284,8 +285,9 @@ export class AgentManager {
           return { content, mtimeMs: st.mtimeMs };
         } catch (e) {
           if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
-          console.warn(
-            `peerNoteFor(${callerId}, ${peerId}) read failed: ${e instanceof Error ? e.message : String(e)}`
+          log.warn(
+            { err: e, callerId, peerId },
+            "peerNoteFor read failed"
           );
           return null;
         }
@@ -358,9 +360,7 @@ export class AgentManager {
       try {
         this.sessionStore.delete(s.id);
       } catch (e) {
-        console.warn(
-          `purgeOrphans: failed to drop session ${s.id}: ${e instanceof Error ? e.message : String(e)}`
-        );
+        log.warn({ err: e, sessionId: s.id }, "purgeOrphans: failed to drop session");
       }
     }
     // Tasks: best-effort delete with force. TaskStore.delete is async
@@ -374,9 +374,7 @@ export class AgentManager {
             actor: "system:purge-orphans",
           });
         } catch (e) {
-          console.warn(
-            `purgeOrphans: failed to drop task ${t.id}: ${e instanceof Error ? e.message : String(e)}`
-          );
+          log.warn({ err: e, taskId: t.id }, "purgeOrphans: failed to drop task");
         }
       }
     })();
@@ -648,8 +646,9 @@ export class AgentManager {
         this.broadcaster.forget(s.id);
         this.sessionStore.delete(s.id);
       } catch (e) {
-        console.warn(
-          `deleteAgent: failed to drop session ${s.id} for ${id}: ${e instanceof Error ? e.message : String(e)}`
+        log.warn(
+          { err: e, sessionId: s.id, agentId: id },
+          "deleteAgent: failed to drop session"
         );
       }
     }
@@ -669,8 +668,9 @@ export class AgentManager {
           actor: "system:agent-delete",
         });
       } catch (e) {
-        console.warn(
-          `deleteAgent: failed to drop task ${t.id} for ${id}: ${e instanceof Error ? e.message : String(e)}`
+        log.warn(
+          { err: e, taskId: t.id, agentId: id },
+          "deleteAgent: failed to drop task"
         );
       }
     }
@@ -807,8 +807,9 @@ export class AgentManager {
             size: r.size,
           });
         } catch (err) {
-          console.warn(
-            `[agent-catalog] copy ${r.relPath} → ${dest} failed: ${err instanceof Error ? err.message : String(err)}`
+          log.warn(
+            { err, relPath: r.relPath, dest },
+            "agent-catalog: copy resource failed"
           );
         }
       }
@@ -840,9 +841,7 @@ export class AgentManager {
     try {
       await this.importAgentFromTemplate("acme", {});
     } catch (e) {
-      console.warn(
-        `Failed to materialize default Acme agent: ${e instanceof Error ? e.message : String(e)}`
-      );
+      log.warn({ err: e }, "failed to materialize default Acme agent");
     }
   }
 

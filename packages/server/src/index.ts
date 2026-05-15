@@ -1,8 +1,11 @@
 import "@openacme/config/telemetry-bootstrap";
 import { serve, getRequestListener } from "@hono/node-server";
 import { loadConfig } from "@openacme/config";
+import { createLogger } from "@openacme/config/logger";
 import { createApp } from "./app.js";
 import { createDevHttpServer } from "./dev-proxy.js";
+
+const log = createLogger("server.index");
 
 /**
  * Start the OpenAcme agent server.
@@ -88,5 +91,5 @@ const isDirectRun =
   process.argv[1]?.endsWith("/server/dist/index.js");
 
 if (isDirectRun) {
-  startServer().catch(console.error);
+  startServer().catch((err) => log.error({ err }, "server boot failed"));
 }

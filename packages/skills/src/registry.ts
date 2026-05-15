@@ -1,8 +1,11 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import matter from "gray-matter";
+import { createLogger } from "@openacme/config/logger";
 import { parseSkillDirectory } from "./parser.js";
 import type { Skill, SkillIndexEntry } from "./types.js";
+
+const log = createLogger("skills.registry");
 
 // Maximum skill file size: 1MB
 const MAX_SKILL_FILE_SIZE = 1024 * 1024;
@@ -61,8 +64,9 @@ export class SkillRegistry {
 
       const stat = fs.statSync(realPath);
       if (stat.size > MAX_SKILL_FILE_SIZE) {
-        console.warn(
-          `Skill file too large (${stat.size} bytes): ${filePath}. Max size: ${MAX_SKILL_FILE_SIZE} bytes.`
+        log.warn(
+          { filePath, size: stat.size, max: MAX_SKILL_FILE_SIZE },
+          "skill file too large; skipped"
         );
         return;
       }
@@ -70,10 +74,8 @@ export class SkillRegistry {
       const fallbackName = path.basename(parentDir);
       const skill = parseSkillDirectory(realPath, fallbackName);
       this.skills.set(skill.name, skill);
-    } catch (error) {
-      console.warn(
-        `Failed to load skill from ${filePath}: ${error instanceof Error ? error.message : String(error)}`
-      );
+    } catch (err) {
+      log.warn({ err, filePath }, "failed to load skill");
     }
   }
 

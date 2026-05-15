@@ -2,7 +2,9 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { z } from 'zod';
 import { MCPServerConfigSchema, type MCPServerConfig } from "./schema.js";
+import { createLogger } from "./logger.js";
 
+const log = createLogger("config.mcp-store");
 const FILE_NAME = "mcp.json";
 
 /**
@@ -41,8 +43,9 @@ export function loadGlobalMcpServers(
     const raw = JSON.parse(fs.readFileSync(p, "utf-8")) as unknown;
     return McpJsonSchema.parse(raw).mcpServers;
   } catch (e) {
-    console.warn(
-      `Failed to parse ${FILE_NAME}: ${e instanceof Error ? e.message : String(e)}. Treating as empty.`
+    log.warn(
+      { err: e, file: FILE_NAME },
+      "failed to parse MCP catalog; treating as empty"
     );
     return {};
   }

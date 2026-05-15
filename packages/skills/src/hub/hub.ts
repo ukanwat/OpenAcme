@@ -2,7 +2,10 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as crypto from "node:crypto";
 import matter from "gray-matter";
+import { createLogger } from "@openacme/config/logger";
 import { SkillRegistry } from "../registry.js";
+
+const log = createLogger("skills.hub");
 import { HubLockFile } from "./lockfile.js";
 import { TapsManager } from "./taps.js";
 import { appendAuditLog, readAuditLog } from "./audit.js";
@@ -130,9 +133,7 @@ export class SkillHub {
         return src
           .search(query, { limit, signal: combined })
           .catch((err) => {
-            console.warn(
-              `SkillHub.search: ${src.id} failed: ${err instanceof Error ? err.message : String(err)}`
-            );
+            log.warn({ err, source: src.id }, "search source failed");
             return [] as SkillMeta[];
           })
           .finally(() => clearTimeout(timer));
@@ -237,8 +238,9 @@ export class SkillHub {
     // (manual `rm -rf`, partial install, restored backup). Drop the
     // stale entry and proceed with a fresh install.
     if (existing && !fs.existsSync(target)) {
-      console.warn(
-        `[SkillHub] healing stale lockfile entry for '${candidateName}' — target dir missing`
+      log.warn(
+        { skill: candidateName },
+        "healing stale lockfile entry — target dir missing"
       );
       this.lockfile.remove(candidateName);
       existing = undefined;

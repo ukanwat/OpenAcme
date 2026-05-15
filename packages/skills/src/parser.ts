@@ -1,8 +1,11 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import matter from "gray-matter";
+import { createLogger } from "@openacme/config/logger";
 import type { Skill, SkillFrontmatter, SkillResource } from "./types.js";
 import { SkillFrontmatterSchema } from "./types.js";
+
+const log = createLogger("skills.parser");
 
 const MAX_RESOURCES_PER_SKILL = 200;
 
@@ -19,8 +22,9 @@ export function parseSkillFile(
 
   const parseResult = SkillFrontmatterSchema.safeParse(data);
   if (!parseResult.success) {
-    console.warn(
-      `Invalid frontmatter in ${filePath}: ${parseResult.error.message}`
+    log.warn(
+      { filePath, err: parseResult.error.message },
+      "invalid skill frontmatter"
     );
   }
 

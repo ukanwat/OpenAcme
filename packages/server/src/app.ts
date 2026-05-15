@@ -1,6 +1,10 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import * as crypto from "node:crypto";
+import { createLogger } from "@openacme/config/logger";
+
+const log = createLogger("server.app");
+
 import {
   createUIMessageStream,
   type UIMessage,
@@ -252,8 +256,9 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
       try {
         await manager.taskStore.update(t.id, patch, { actor: "system:user" });
       } catch (e) {
-        console.warn(
-          `Failed to clear task ${t.id} binding on session ${id} delete: ${e instanceof Error ? e.message : String(e)}`
+        log.warn(
+          { err: e, taskId: t.id, sessionId: id },
+          "failed to clear task binding on session delete"
         );
       }
     }
@@ -426,9 +431,7 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
             ],
           });
         } catch (e) {
-          console.warn(
-            `User message pre-persist skipped: ${e instanceof Error ? e.message : String(e)}`
-          );
+          log.warn({ err: e }, "user message pre-persist skipped");
         }
       }
     }
@@ -1075,9 +1078,7 @@ async function runChatTurn(args: {
               part: r.value,
             });
           } catch (e) {
-            console.warn(
-              `runChatTurn broadcaster forward failed: ${e instanceof Error ? e.message : String(e)}`
-            );
+            log.warn({ err: e }, "runChatTurn broadcaster forward failed");
           }
         }
       } finally {
@@ -1118,11 +1119,7 @@ async function runChatTurn(args: {
         });
         manager.sessionStore.touch(sessionId);
       } catch (e) {
-        console.error(
-          `Failed to persist chat turn: ${
-            e instanceof Error ? e.message : String(e)
-          }`
-        );
+        log.error({ err: e }, "failed to persist chat turn");
       }
       // Idle goes AFTER persist + messages_appended so the client's
       // running→idle refetch can't race the DB write.
@@ -1141,9 +1138,7 @@ async function runChatTurn(args: {
           sessionMessages: turnHistory,
         });
       } catch (e) {
-        console.warn(
-          `[memory.extractor] launch failed for agent=${agentId}: ${e instanceof Error ? e.message : String(e)}`
-        );
+        log.warn({ err: e, agentId }, "memory.extractor launch failed");
       }
       try {
         manager.getAgent(agentId).fireTitle({
@@ -1151,9 +1146,7 @@ async function runChatTurn(args: {
           sessionMessages: turnHistory,
         });
       } catch (e) {
-        console.warn(
-          `[title] launch failed for agent=${agentId}: ${e instanceof Error ? e.message : String(e)}`
-        );
+        log.warn({ err: e, agentId }, "title generation launch failed");
       }
     },
   });
@@ -1174,9 +1167,7 @@ async function runChatTurn(args: {
       kind: "session_state",
       state: "idle",
     });
-    console.warn(
-      `runChatTurn errored for session=${sessionId}: ${e instanceof Error ? e.message : String(e)}`
-    );
+    log.warn({ err: e, sessionId }, "runChatTurn errored");
   } finally {
     try {
       drainReader.releaseLock();

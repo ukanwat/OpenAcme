@@ -11,6 +11,7 @@ import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { getModel } from "@openacme/llm-provider";
+import { createLogger } from "@openacme/config/logger";
 import { toolCallContext, type ToolRegistry } from "@openacme/tools";
 import {
   DEFAULT_MEMORY_CHAR_LIMIT,
@@ -42,6 +43,8 @@ import {
   finalizeOrphanToolParts,
 } from "./messages.js";
 import type { AgentConfig, MessageMetadata, TokenUsage } from "./types.js";
+
+const log = createLogger("agent-core.agent");
 
 const DEFAULT_AUTONOMOUS_TIMEOUT_MS = 5 * 60 * 1000;
 
@@ -365,8 +368,9 @@ export class Agent {
         );
       }
     } catch (e) {
-      console.warn(
-        `Failed to load recent activity for ${opts.sessionId}: ${e instanceof Error ? e.message : String(e)}`
+      log.warn(
+        { err: e, sessionId: opts.sessionId },
+        "failed to load recent activity"
       );
     }
 
@@ -422,9 +426,7 @@ export class Agent {
         ],
       });
     } catch (e) {
-      console.warn(
-        `runAutonomous: failed to pre-persist auto user message: ${e instanceof Error ? e.message : String(e)}`
-      );
+      log.warn({ err: e }, "runAutonomous: failed to pre-persist auto user message");
     }
 
     const timeoutMs =
@@ -515,8 +517,10 @@ export class Agent {
           ],
         };
       } catch (e) {
-        console.warn(
-          `Mid-turn event injection failed for ${turnSessionId}: ${e instanceof Error ? e.message : String(e)}`
+        // Body kept verbatim — referenced in CLAUDE.md / scheduler docs.
+        log.warn(
+          { err: e, sessionId: turnSessionId },
+          `Mid-turn event injection failed for ${turnSessionId}`
         );
         return undefined;
       }
@@ -558,9 +562,8 @@ export class Agent {
               try {
                 bc.broadcast(sid, { kind: "ui_message_part", part: r.value });
               } catch (e) {
-                console.warn(
-                  `runAutonomous broadcaster part failed: ${e instanceof Error ? e.message : String(e)}`
-                );
+                // Body kept verbatim — referenced in scheduler docs.
+                log.warn({ err: e }, "runAutonomous broadcaster part failed");
               }
             }
           } finally {
@@ -672,9 +675,7 @@ export class Agent {
     try {
       this.sessionStore.markEventsSeen(sessionId, ts);
     } catch (e) {
-      console.warn(
-        `markEventsSeen failed for ${sessionId}: ${e instanceof Error ? e.message : String(e)}`
-      );
+      log.warn({ err: e, sessionId }, "markEventsSeen failed");
     }
   }
 
@@ -762,8 +763,10 @@ export class Agent {
       }));
       this.messageStore.appendMany(child.id, rows);
     } catch (e) {
-      console.error(
-        `Failed to persist compressed messages for ${child.id}: ${e instanceof Error ? e.message : String(e)}`
+      // Body kept verbatim — referenced in CLAUDE.md compression notes.
+      log.error(
+        { err: e, childSessionId: child.id },
+        `Failed to persist compressed messages for ${child.id}`
       );
       throw e;
     }
@@ -805,10 +808,9 @@ export class Agent {
         fs.mkdirSync(path.dirname(dstAbs), { recursive: true });
         fs.copyFileSync(srcAbs, dstAbs);
       } catch (e) {
-        console.error(
-          `Compression: failed to copy ${srcAbs} → ${dstAbs}: ${
-            e instanceof Error ? e.message : String(e)
-          }`
+        log.error(
+          { err: e, src: srcAbs, dst: dstAbs },
+          "compression: failed to copy attachment"
         );
         // File didn't copy — leave the URL alone; the next render will
         // 404 against this attachment but the rest of the message
@@ -878,8 +880,10 @@ export class Agent {
         },
       });
     } catch (e) {
-      console.warn(
-        `Pre-compaction memory flush failed for ${sessionId}: ${e instanceof Error ? e.message : String(e)}`
+      // Body kept verbatim — referenced in CLAUDE.md / agent-core rules.
+      log.warn(
+        { err: e, sessionId },
+        `Pre-compaction memory flush failed for ${sessionId}`
       );
     }
   }
@@ -899,8 +903,9 @@ export class Agent {
       }
     }
     if (missingTools.length > 0) {
-      console.warn(
-        `Agent '${this.config.id}': Missing tools: ${missingTools.join(", ")}`
+      log.warn(
+        { agentId: this.config.id, missingTools },
+        "agent has missing tool references"
       );
     }
 
@@ -915,8 +920,9 @@ export class Agent {
         DEFAULT_MEMORY_CHAR_LIMIT
       );
     } catch (e) {
-      console.warn(
-        `Failed to read memory index for agent ${this.config.id}: ${e instanceof Error ? e.message : String(e)}`
+      log.warn(
+        { err: e, agentId: this.config.id },
+        "failed to read memory index"
       );
     }
 
@@ -929,8 +935,9 @@ export class Agent {
       );
       if (rendered) tasksContext = rendered;
     } catch (e) {
-      console.warn(
-        `Failed to render tasks for agent ${this.config.id}: ${e instanceof Error ? e.message : String(e)}`
+      log.warn(
+        { err: e, agentId: this.config.id },
+        "failed to render tasks for prompt"
       );
     }
 
@@ -954,9 +961,7 @@ export class Agent {
     try {
       this.sessionStore.updateSystemPrompt(sessionId, prompt);
     } catch (e) {
-      console.error(
-        `Failed to update system prompt: ${e instanceof Error ? e.message : String(e)}`
-      );
+      log.error({ err: e, sessionId }, "failed to persist system prompt");
     }
     return prompt;
   }
@@ -1003,9 +1008,7 @@ export class Agent {
         signal: opts.signal,
       });
     } catch (e) {
-      console.warn(
-        `[memory.recall] agent=${this.config.id}: ${e instanceof Error ? e.message : String(e)}`
-      );
+      log.warn({ err: e, agentId: this.config.id }, "memory.recall selector failed");
       return { entries: [], modelContent: null };
     }
 
@@ -1098,14 +1101,16 @@ export class Agent {
           if (lastAsst) this.extractionCursor.set(opts.sessionId, lastAsst);
         }
         if (res.status === "failed") {
-          console.warn(
-            `[memory.extractor] agent=${this.config.id} session=${opts.sessionId}: ${res.error ?? "unknown"}`
+          log.warn(
+            { agentId: this.config.id, sessionId: opts.sessionId, error: res.error ?? "unknown" },
+            "memory.extractor failed"
           );
         }
       })
       .catch((e) => {
-        console.warn(
-          `[memory.extractor] agent=${this.config.id} session=${opts.sessionId} threw: ${e instanceof Error ? e.message : String(e)}`
+        log.warn(
+          { err: e, agentId: this.config.id, sessionId: opts.sessionId },
+          "memory.extractor threw"
         );
       })
       .finally(() => {
@@ -1138,10 +1143,9 @@ export class Agent {
       try {
         this.sessionStore.updateTitle(opts.sessionId, fallback);
       } catch (e) {
-        console.warn(
-          `[title] agent=${this.config.id} session=${opts.sessionId} fallback write failed: ${
-            e instanceof Error ? e.message : String(e)
-          }`
+        log.warn(
+          { err: e, agentId: this.config.id, sessionId: opts.sessionId },
+          "title fallback write failed"
         );
       }
     };
@@ -1161,8 +1165,9 @@ export class Agent {
         writeFallback();
       })
       .catch((e) => {
-        console.warn(
-          `[title] agent=${this.config.id} session=${opts.sessionId} threw: ${e instanceof Error ? e.message : String(e)}`
+        log.warn(
+          { err: e, agentId: this.config.id, sessionId: opts.sessionId },
+          "title generation threw"
         );
         writeFallback();
       })

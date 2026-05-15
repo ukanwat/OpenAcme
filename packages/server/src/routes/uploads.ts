@@ -2,7 +2,10 @@ import type { Hono } from "hono";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
+import { createLogger } from "@openacme/config/logger";
 import type { AgentManager } from "../agent-manager.js";
+
+const log = createLogger("server.uploads");
 
 export const MAX_FILE_BYTES = 5 * 1024 * 1024;
 export const MAX_REQUEST_BYTES = 25 * 1024 * 1024;
@@ -104,20 +107,12 @@ export function registerUploadsRoutes(
   try {
     fs.rmSync(pendingRoot, { recursive: true, force: true });
   } catch (e) {
-    console.error(
-      `Failed to clear pending dir ${pendingRoot}: ${
-        e instanceof Error ? e.message : String(e)
-      }`
-    );
+    log.error({ err: e, dir: pendingRoot }, "failed to clear pending dir");
   }
   try {
     fs.mkdirSync(pendingRoot, { recursive: true });
   } catch (e) {
-    console.error(
-      `Failed to create pending dir ${pendingRoot}: ${
-        e instanceof Error ? e.message : String(e)
-      }`
-    );
+    log.error({ err: e, dir: pendingRoot }, "failed to create pending dir");
   }
 
   // TTL sweep every 5 min.
@@ -302,11 +297,7 @@ export function registerUploadsRoutes(
           // best-effort
         }
       } catch (e) {
-        console.error(
-          `Failed to commit attachment ${pendingId}: ${
-            e instanceof Error ? e.message : String(e)
-          }`
-        );
+        log.error({ err: e, pendingId }, "failed to commit attachment");
         // Leave the pending entry in place; sweeper will eventually
         // clean it up. Caller falls back to surfacing an error.
         return null;

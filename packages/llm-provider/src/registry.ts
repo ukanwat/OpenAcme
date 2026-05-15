@@ -4,6 +4,7 @@ import {
   type LanguageModel,
 } from "ai";
 import type { ModelConfig, Provider } from "@openacme/config";
+import { createLogger } from "@openacme/config/logger";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
@@ -19,15 +20,14 @@ import {
 } from "@openacme/auth";
 import { injectAnthropicCacheControl } from "./openrouter-cache.js";
 
+const log = createLogger("llm-provider");
+
 function resolveDataDir(): string {
   const fromEnv = process.env["OPENACME_DATA_DIR"];
   if (fromEnv && fromEnv.trim()) return fromEnv;
   // Fallback only used if neither CLI nor server set the env var.
   return `${process.env["HOME"] ?? ""}/.openacme`;
 }
-
-const DEBUG = process.env["OPENACME_DEBUG"]?.includes("auth")
-  || process.env["OPENACME_DEBUG"] === "1";
 
 /**
  * Last-seen OAuth account_id per provider. Logged on change so the user
@@ -44,11 +44,17 @@ function noteAccount(
   if (prev === next) return;
   lastSeenAccount[provider] = next;
   if (prev) {
-    console.error(
-      `[openacme] auth: ${provider} active account changed: ${maskAccount(prev)} → ${maskAccount(next)}`
+    // Body kept verbatim — documented in `.claude/rules/llm-provider.md`
+    // as the breadcrumb users grep for.
+    log.info(
+      { provider, prev: maskAccount(prev), next: maskAccount(next) },
+      `auth: ${provider} active account changed: ${maskAccount(prev)} → ${maskAccount(next)}`
     );
-  } else if (DEBUG) {
-    console.error(`[openacme] auth: ${provider} active account ${maskAccount(next)}`);
+  } else {
+    log.debug(
+      { provider, account: maskAccount(next) },
+      `auth: ${provider} active account ${maskAccount(next)}`
+    );
   }
 }
 
@@ -174,7 +180,7 @@ const providerFactories: Record<
           const rewritten = init && newBody !== init.body
             ? { ...init, body: newBody as RequestInit["body"] }
             : init;
-          if (DEBUG) console.error("[openacme] →", url, rewritten?.body);
+          log.debug({ provider: "openai", url, body: rewritten?.body }, "outbound request");
 
           const send = async (force: boolean) =>
             fetch(url as string | URL, {
@@ -184,11 +190,11 @@ const providerFactories: Record<
 
           let res = await send(false);
           if (res.status === 401) {
-            if (DEBUG) console.error("[openacme] openai 401 — forcing token refresh and retrying");
+            log.debug({ provider: "openai" }, "openai 401 — forcing token refresh and retrying");
             try {
               res = await send(true);
             } catch (e) {
-              if (DEBUG) console.error("[openacme] openai refresh-on-401 failed:", e);
+              log.debug({ provider: "openai", err: e }, "openai refresh-on-401 failed");
               throw e;
             }
           }
@@ -311,7 +317,7 @@ const providerFactories: Record<
         const rewritten = init && newBody !== init.body
           ? { ...init, body: newBody as RequestInit["body"] }
           : init;
-        if (DEBUG) console.error("[openacme] →", url, rewritten?.body);
+        log.debug({ provider: "anthropic", url, body: rewritten?.body }, "outbound request");
 
         const send = async (force: boolean) =>
           fetch(url as string | URL, {
@@ -330,11 +336,11 @@ const providerFactories: Record<
         // "stored refresh_token still good" and "user just swapped
         // accounts in Claude Code" without extra work here.
         if (oauthNow && res.status === 401) {
-          if (DEBUG) console.error("[openacme] anthropic 401 — forcing token refresh and retrying");
+          log.debug({ provider: "anthropic" }, "anthropic 401 — forcing token refresh and retrying");
           try {
             res = await send(true);
           } catch (e) {
-            if (DEBUG) console.error("[openacme] anthropic refresh-on-401 failed:", e);
+            log.debug({ provider: "anthropic", err: e }, "anthropic refresh-on-401 failed");
             throw e;
           }
         }
@@ -347,7 +353,7 @@ const providerFactories: Record<
         if (oauthNow && res.status === 429) {
           const active = tryReimportClaudeCode(dataDir);
           if (active && active !== lastSentToken) {
-            if (DEBUG) console.error("[openacme] anthropic 429 — claude-code creds changed, retrying with new bearer");
+            log.debug({ provider: "anthropic" }, "anthropic 429 — claude-code creds changed, retrying with new bearer");
             res = await send(false);
           }
         }
@@ -364,8 +370,11 @@ const providerFactories: Record<
             const body = await res.clone().text();
             if (ANTHROPIC_NO_1M_ENTITLEMENT_RX.test(body)) {
               anthropic1mDisabled = true;
-              console.warn(
-                "[openacme] Anthropic 1M-context not entitled for this account; falling back to 200k for this and future requests."
+              // Body kept verbatim — users grep for this string when
+              // debugging context-size fallbacks.
+              log.warn(
+                { provider: "anthropic", contextWindow: 200_000 },
+                "Anthropic 1M-context not entitled for this account; falling back to 200k for this and future requests."
               );
               res = await send(false);
             }
