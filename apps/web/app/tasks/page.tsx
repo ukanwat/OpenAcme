@@ -402,15 +402,7 @@ function TasksPageInner() {
                                 <span>due {formatDate(t.due_at)}</span>
                               )}
                               {t.start_at && (
-                                <span
-                                  className={cn(
-                                    new Date(t.start_at).getTime() > Date.now()
-                                      ? "text-signal-cyan"
-                                      : undefined
-                                  )}
-                                >
-                                  starts {formatDate(t.start_at)}
-                                </span>
+                                <span>starts {formatDate(t.start_at)}</span>
                               )}
                               {t.depends_on.length > 0 && (
                                 <span>
