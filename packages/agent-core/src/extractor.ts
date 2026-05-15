@@ -1,25 +1,7 @@
 /**
- * Memory extraction subagent — Phase 3 (see plan §H). Port of Claude
- * Code `services/extractMemories/extractMemories.ts`, adapted to drop
- * the type taxonomy (matches Phase 1's convention).
- *
- * Triggered post-turn (after `streamText` completes). Two paths in
- * parallel by design:
- *   1. Main agent writes during the turn (primary; convention text
- *      taught in the system prompt).
- *   2. Extractor reads the just-completed transcript and writes
- *      anything the main agent missed (safety net).
- *
- * Skip-when-main-agent-wrote: scan the just-completed turn for any
- * `tool-memory` parts whose input has `command ∈ {create, str_replace,
- * insert}`. If present, the main agent did the job; skip the fork.
- *
- * Failure-tolerant — extractor failure must NOT fail the parent
- * activation. Caller fires with `void` and ignores the promise.
- *
- * Trigger source is opaque: runs at end of every successful agent
- * activation regardless of what brought the agent in (user message,
- * task wakeup, peer message, cron tick).
+ * Post-turn extractor — safety net when the main agent didn't save to
+ * memory itself. Forked subagent restricted to the memory tool. Never
+ * throws; caller fires with `void`.
  */
 
 import { stepCountIs } from "ai";
@@ -45,31 +27,21 @@ export type ExtractorStatus =
 
 export interface ExtractorResult {
   status: ExtractorStatus;
-  /** Wrapped result from the underlying fork when it ran. */
   fork?: ForkedSubagentResult;
   error?: string;
 }
 
 export interface RunExtractorArgs {
   agent: Agent;
-  /** Session id whose just-completed turn drives extraction. */
   sessionId: string;
-  /** Full message history including the latest assistant turn. */
   sessionMessages: readonly UIMessage[];
-  /** New-message count since the last extraction cursor. The cursor
-   *  itself is owned by the caller (e.g. server route holding a Map
-   *  per-session). Pass the full list size if no cursor exists. */
+  /** New-message count since the caller's extraction cursor (or full
+   *  list size when no cursor exists). */
   newMessageCount: number;
   abortSignal?: AbortSignal;
 }
 
-/**
- * Returns true if any assistant message in `messages` contains a
- * `tool-memory` part whose input was a write op (`create`,
- * `str_replace`, `insert`). Read-only commands (`view`, `delete`,
- * `rename`) don't count — the cue we want is "did the main agent put
- * a fact into memory."
- */
+/** True iff an assistant turn ran a write op (create/str_replace/insert). */
 export function hasMemoryWritesIn(
   messages: readonly UIMessage[]
 ): boolean {
@@ -79,9 +51,7 @@ export function hasMemoryWritesIn(
       const p = part as { type?: unknown; input?: unknown; state?: unknown };
       if (typeof p.type !== "string") continue;
       if (p.type !== "tool-memory") continue;
-      // Only count parts the SDK marks as having actually run; in-flight
-      // (input-streaming/input-available) ones are speculative until the
-      // result lands.
+      // Only count parts the SDK marks as actually run.
       if (p.state !== "input-available" && p.state !== "output-available") {
         continue;
       }
@@ -95,14 +65,7 @@ export function hasMemoryWritesIn(
   return false;
 }
 
-/**
- * Build the extraction prompt. Adapted from Claude Code's
- * `buildExtractAutoOnlyPrompt`, with the type taxonomy stripped (the
- * Phase-1 convention has no `type` field in the frontmatter).
- *
- * The manifest is pre-injected so the fork doesn't burn a turn on
- * `view /memories` to learn what's already there.
- */
+// Manifest pre-injected so the fork doesn't burn a turn on `view /memories`.
 function buildExtractionPrompt(
   newMessageCount: number,
   existingManifest: string
@@ -145,11 +108,6 @@ export async function runExtractor(
   if (args.newMessageCount <= 0) {
     return { status: "skipped-no-new-content" };
   }
-
-  // Mutual exclusion with the main agent: when the main agent already
-  // wrote to memory during this turn, the fork is redundant. Skip and
-  // let the cursor (caller-owned) advance past this range so we don't
-  // re-evaluate next turn either.
   if (hasMemoryWritesIn(args.sessionMessages)) {
     return { status: "skipped-main-wrote" };
   }
@@ -160,8 +118,7 @@ export async function runExtractor(
     const headers = await scanMemoryFiles(memoryDir, args.abortSignal);
     manifest = formatMemoryManifest(headers);
   } catch {
-    // Scan failure is recoverable — fall through with an empty manifest;
-    // the fork will just call `view /memories` if it wants the listing.
+    // Scan failure: fork can `view /memories` itself if needed.
   }
 
   const prompt = buildExtractionPrompt(args.newMessageCount, manifest);
@@ -172,21 +129,13 @@ export async function runExtractor(
       mode: "forked",
       parent: args.agent,
       parentSessionId: args.sessionId,
-      // Fork sees the parent's full session history with the extractor
-      // prompt appended. Without this the prompt's "analyze the
-      // messages above" refers to nothing — the fork would have no
-      // conversation to extract from. Identical context across turns
-      // shares the prompt cache; only the seed prompt is new.
+      // Without this, "messages above" in the prompt refers to nothing.
+      // Identical context across turns shares the prompt cache.
       contextMessages: args.sessionMessages,
       initialMessage: prompt,
       stopWhen: stepCountIs(EXTRACTOR_STEP_CAP),
       timeoutMs: EXTRACTOR_TIMEOUT_MS,
       abortSignal: args.abortSignal,
-      // Restrict to memory only — the fork is fire-and-forget and
-      // unsupervised; allowing shell/edit/web on background work is a
-      // cost+safety hazard. The system prompt still says all tools
-      // exist (it's the parent's), but unavailable tools just produce
-      // a "tool not available" recovery — minor confusion, no breakage.
       toolFilter: EXTRACTOR_TOOLS,
       telemetryFunctionId: `${args.agent.config.id}:subagent.forked.extractor`,
     });

@@ -40,35 +40,18 @@ export interface OpenAcmeDataParts {
     kind: "info" | "warn" | "error" | "compressing" | "compressed";
     message: string;
   };
-  /** Memory entries surfaced by the recall selector for THIS user
-   *  message. Lives on the USER UIMessage and serves three purposes:
-   *
-   *    1. UI chip — `RelevantMemoryBlock` walks user messages, finds
-   *       this part, renders the collapsible "N memories recalled"
-   *       block.
-   *    2. Model input — `uiToModelMessages` extracts `modelContent`
-   *       and prepends it as a leading text part on this user message
-   *       before `convertToModelMessages` runs.
-   *    3. Surfaced-set dedup — `collectSurfacedMemories` walks user
-   *       messages, builds a `Set<path>` so the next turn's selector
-   *       skips already-surfaced files.
-   *
-   *  `modelContent` is pre-rendered at recall time (freshness "N days
-   *  ago" frozen in) so subsequent turns send byte-identical content —
-   *  Anthropic / OpenAI prefix cache hits across turns. Recomputing
-   *  freshness per turn would shift the days delta and invalidate the
-   *  cache from this user message onward. */
+  /** Recall surfacing for a user turn. Lives on the user UIMessage:
+   *  drives the chip (RelevantMemoryBlock), the model input
+   *  (materializeRecallContext prepends `modelContent`), and the
+   *  surfaced-set dedup (collectSurfacedMemories). `modelContent` is
+   *  pre-baked at recall time so subsequent turns replay identical
+   *  bytes → prefix cache hits. */
   "relevant-memory": {
     entries: Array<{
-      /** Absolute filesystem path — matches what `scanMemoryFiles`
-       *  returns, so `alreadySurfaced` can dedupe directly. */
       path: string;
       mtimeMs: number;
-      /** Full file content, freshness-wrapped at the entry boundary. */
       content: string;
     }>;
-    /** Pre-rendered `<system-reminder>...</system-reminder>` block.
-     *  Verbatim bytes prepended to the user message for model input. */
     modelContent: string;
   };
   // SDK-required index signature for unknown data-* keys.

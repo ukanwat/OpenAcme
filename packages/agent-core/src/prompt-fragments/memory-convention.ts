@@ -1,25 +1,7 @@
 /**
- * Memory convention text — verbatim port of Claude Code's auto-memory
- * system-prompt section, adapted for OpenAcme:
- *
- *   1. Type taxonomy (`user` / `feedback` / `project` / `reference`) DROPPED.
- *      Claude Code's four types were designed for a developer-at-CLI use
- *      case and don't fit OpenAcme's autonomous-agent fleet (no "user"
- *      present in cron-woken agents; "feedback" overloaded across
- *      human/peer/error sources; many agents have no "project").
- *      Frontmatter is `name` + `description` only.
- *
- *   2. "user" wording → "work-item" wording in recall/access rules so
- *      the convention covers user messages, task payloads, peer-agent
- *      messages, and cron triggers identically (autonomous-future
- *      design constraint).
- *
- *   3. Body structure (Claude Code: per-type) → general guidance applied
- *      to all entries: lead with the point, then **Why:**, then
- *      **How to apply:**.
- *
- * Single exported string so the convention is auditable in one place
- * and the verification tests can grep for verbatim phrases.
+ * CC auto-memory convention, adapted: type taxonomy dropped, "user" →
+ * "work-item" for autonomous mode, body structure generalized across
+ * all entries. Single string so verification tests can grep verbatim.
  */
 
 export const MEMORY_CONVENTION = `## Memory convention

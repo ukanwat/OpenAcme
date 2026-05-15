@@ -1,49 +1,12 @@
 /**
- * Subagent primitive — one entry point for all "subordinate model
- * invocations" an agent makes during a turn (recall side queries,
- * post-turn extraction, future side-quests / consolidation / etc).
- *
- * Two modes today; extensible by adding a new branch to the
- * discriminated spec without touching call sites that don't care.
- *
- *   mode: "forked"
- *     Multi-turn agent loop that inherits the parent's cached system
- *     prompt + tools (with optional `toolFilter` to drop tools the
- *     fork shouldn't have). Routes through `parent.runStream` so
- *     provider-side prompt-cache sharing kicks in. Used by the
- *     extractor — needs the memory tool, may take 2-4 turns.
- *
- *   mode: "structured"
- *     One-shot side query with a custom system prompt and a JSON
- *     schema for the output. Routes through `generateObject` against
- *     the parent's model. Used by the recall selector — focused
- *     judgment over a manifest, no tools, no agent identity needed.
- *
- * Both modes share:
- *   - Bounded execution: `timeoutMs` (default 120s) + caller
- *     `abortSignal`, combined via `AbortSignal.any`.
- *   - Failure tolerance: never throws. Returns a discriminated
- *     `SubagentStatus` so callers handle outcomes uniformly.
- *   - Telemetry: structured mode is tagged
- *     `${agent.id}:subagent.structured`; forked mode passes
- *     `telemetryFunctionId` (default uses the parent's tag, callers
- *     override per subagent kind — e.g. extractor uses
- *     `:subagent.forked.extractor`). Telemetry is OFF unless
- *     `OPENACME_TELEMETRY=1` (dev-only Logfire export); when on,
- *     these tags split subagent usage from main-turn usage in the
- *     dashboard.
- *
- * Cross-provider notes:
- *   - "forked" mode works wherever the agent's main model works
- *     (every provider OpenAcme supports today).
- *   - "structured" mode uses `generateObject`, which uses
- *     provider-native structured output where available (Anthropic
- *     tool-calling, OpenAI structured outputs, Google JSON schema,
- *     OpenRouter pass-through). For models that don't support it
- *     (small Ollama models, some custom endpoints), `generateObject`
- *     throws → caller sees `status: "failed"` and degrades. The
- *     selector treats that as "no recall this turn"; agent still
- *     functions normally.
+ * Subagent primitive. Two modes:
+ *   forked     — multi-turn loop sharing the parent's prompt + tools
+ *                (optional toolFilter). Used by the extractor.
+ *   structured — one-shot generateObject with custom system + JSON
+ *                schema. Used by the recall selector.
+ * Both bound execution via timeoutMs + abortSignal, never throw,
+ * return a discriminated `SubagentStatus`. Telemetry tags split
+ * subagent vs main-turn usage when OPENACME_TELEMETRY=1.
  */
 
 import {
@@ -73,52 +36,33 @@ interface CommonArgs {
   parent: Agent;
   /** Wall-clock cap. Default 120_000ms. */
   timeoutMs?: number;
-  /** External abort. Combined with the timeout via `AbortSignal.any`. */
   abortSignal?: AbortSignal;
 }
 
 export interface ForkedSubagentArgs extends CommonArgs {
   mode: "forked";
-  /** Session id to share the parent's cached system prompt + ALS
-   *  context. The fork's work is NOT persisted under this session;
-   *  the session id is purely for cache + tool-handler lookups. */
+  /** Session id for cache + ALS context. Fork's work is NOT persisted here. */
   parentSessionId: string;
-  /** Single user-shape text seed appended to the fork's history. */
+  /** User-shape text seed appended to the fork's history. */
   initialMessage: string;
-  /** Optional UIMessages to include BEFORE the seed message. The fork's
-   *  effective history becomes `[...contextMessages, seedMsg]` so the
-   *  model can analyze the parent's conversation when the seed prompt
-   *  refers to "the messages above" (e.g. the extractor's "analyze the
-   *  most recent N messages"). Identical context across turns shares
-   *  the provider-side prompt cache; only the seed is new each call.
-   *
-   *  Omit for fresh-context forks (e.g. a side-quest that doesn't
-   *  need to see what the user just said). */
+  /** Prepended before the seed so prompts referring to "messages above"
+   *  resolve. Identical bytes across turns share the prompt cache. */
   contextMessages?: readonly UIMessage[];
-  /** Override the agentic step cap. Default `stepCountIs(10)`. */
   stopWhen?: StopCondition<ToolSet>;
-  /** Restrict the fork's tools to this subset of `parent.config.tools`.
-   *  Omit to inherit all of the parent's tools. */
+  /** Subset of parent's tools. Omit to inherit all. */
   toolFilter?: ReadonlySet<string>;
-  /** Override telemetry functionId for cost attribution in dev
-   *  (Logfire). Default uses the parent's tag. Forks set this so
-   *  extractor / future side-quest usage can be split out from main
-   *  turns. No-op when telemetry is off (production default). */
+  /** Telemetry tag override. Default uses parent's tag. */
   telemetryFunctionId?: string;
 }
 
 export interface StructuredSubagentArgs<S extends ZodTypeAny>
   extends CommonArgs {
   mode: "structured";
-  /** Custom system prompt — focused on the side-query task. Does NOT
-   *  see the parent's system prompt. */
+  /** Side-query system prompt (does NOT see the parent's system). */
   system: string;
-  /** Single user message body. */
   user: string;
-  /** Output schema. The model's response is validated against this; on
-   *  validation failure the call counts as `failed`. */
+  /** Output schema — validation failure → `status: "failed"`. */
   schema: S;
-  /** Output token cap. Cheap structured calls usually need <512. */
   maxOutputTokens?: number;
 }
 
@@ -150,8 +94,7 @@ export type SubagentResult<T = unknown> =
   | ForkedSubagentResult
   | StructuredSubagentResult<T>;
 
-// Function overloads — preserves typed return based on the mode and
-// the schema's inferred type for structured calls.
+// Overloads preserve the per-mode return type.
 export function runSubagent(args: ForkedSubagentArgs): Promise<ForkedSubagentResult>;
 export function runSubagent<S extends ZodTypeAny>(
   args: StructuredSubagentArgs<S>
@@ -188,9 +131,6 @@ async function runForked(
     parts: [{ type: "text", text: args.initialMessage }],
   };
 
-  // History the model sees: parent's conversation (when supplied) +
-  // the fork's seed at the end. Identical context across turns shares
-  // provider-side prompt caching; only the seed differs each call.
   const history: UIMessage[] = args.contextMessages
     ? [...args.contextMessages, seedMsg]
     : [seedMsg];
@@ -208,8 +148,6 @@ async function runForked(
       telemetryFunctionId: args.telemetryFunctionId,
     });
 
-    // SDK's canonical UIMessage assembler — handles step boundaries +
-    // tool-call/result pairing the same way the host route does.
     const stream = result.toUIMessageStream({ sendStart: false });
     for await (const m of readUIMessageStream<UIMessage>({ stream })) {
       assembled = m;
@@ -257,12 +195,7 @@ async function runForked(
   }
 }
 
-/**
- * Compose multiple AbortSignals into one that fires when any input
- * fires. Polyfill for Node 18 (where `AbortSignal.any` doesn't exist —
- * it landed in Node 19.13). On Node ≥20 we delegate to the native
- * implementation; older runtimes get the manual listener path.
- */
+// Polyfill: `AbortSignal.any` landed in Node 19.13.
 function combineAbortSignals(signals: AbortSignal[]): AbortSignal {
   const native = (AbortSignal as unknown as {
     any?: (s: AbortSignal[]) => AbortSignal;

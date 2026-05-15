@@ -204,13 +204,9 @@ export default function ChatPage() {
       toast.error("Chat failed", { description: err.message });
     },
     onFinish: () => {
-      // The server's onFinish persists the user message with both
-      // (a) rewritten attachment URLs (pending → committed) and
-      // (b) any `data-relevant-memory` part attached by the recall
-      // selector. Both modifications happen server-side and useChat's
-      // local user-message snapshot doesn't reflect them. Refetch on
-      // every turn finish so the chip renders + attachment chips
-      // resolve. Cheap: single GET of <50 short messages typical.
+      // Refetch — server modifies the user message (commits attachment
+      // URLs, appends recall data part) but useChat's local snapshot
+      // doesn't reflect that.
       const sid = activeSessionIdRef.current;
       if (!sid) return;
       fetch(`${API_BASE}/api/sessions/${sid}/messages`)
@@ -1027,9 +1023,7 @@ function MessageBubble({
     const others = files.filter(
       (f) => !(f as { mediaType: string }).mediaType.startsWith("image/")
     );
-    // Recall chip — `data-relevant-memory` lives on the user message
-    // (selector picked these for THIS turn). Renders as a collapsible
-    // block under the user's text.
+    // Recall chip from the user message's `data-relevant-memory` part.
     const recallEntries: Array<{
       path: string;
       mtimeMs: number;
@@ -1150,9 +1144,7 @@ function MessageBubble({
               </div>
             );
           }
-          // `data-relevant-memory` lives on the USER message (chip
-          // rendered there). reasoning, file, source, other data-* —
-          // silently ignore in v1.
+          // reasoning / file / source / other data-* — ignored in v1.
           return null;
         })}
       </div>
