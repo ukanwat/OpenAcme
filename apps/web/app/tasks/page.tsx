@@ -8,6 +8,7 @@ import { API_BASE } from "../lib/api";
 import { Button } from "@/app/components/ui/button";
 import { Badge } from "@/app/components/ui/badge";
 import { Skeleton } from "@/app/components/ui/skeleton";
+import { SectionEyebrow } from "@/app/components/ui/section-eyebrow";
 import {
   Dialog,
   DialogContent,
@@ -284,25 +285,7 @@ export default function TasksPage() {
             <Skeleton className="h-12 w-full" />
           </div>
         ) : tasks.length === 0 ? (
-          <div className="flex flex-1 items-start justify-center pt-24 px-6">
-            <div className="max-w-md">
-              <div className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-faint">
-                Empty board
-              </div>
-              <h3 className="mt-2 text-base font-semibold text-ink">
-                No tasks filed yet
-              </h3>
-              <p className="mt-2 text-sm leading-relaxed text-ink-soft">
-                Tasks are how agents track work — for themselves and for
-                you. They appear here as agents file them. Ask an agent in
-                chat to{" "}
-                <span className="font-mono text-ink">
-                  file a task to investigate X
-                </span>{" "}
-                to start.
-              </p>
-            </div>
-          </div>
+          <EmptyTasksState />
         ) : viewMode === "board" ? (
           <>
             <TasksBoard
@@ -501,4 +484,65 @@ function explainAutoCorrect(actual: TaskStatus, requested: TaskStatus): string {
     return "Dependencies aren't all done yet.";
   }
   return `Server returned status ${actual} instead of ${requested}.`;
+}
+
+type TaskState = "open" | "in_progress" | "done";
+const TASK_STATE_CYCLE: { state: TaskState; label: string; ms: number }[] = [
+  { state: "open",        label: "OPEN",        ms: 1400 },
+  { state: "in_progress", label: "IN PROGRESS", ms: 1400 },
+  { state: "done",        label: "DONE",        ms: 1400 },
+];
+
+function EmptyTasksState() {
+  const [idx, setIdx] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => {
+      setIdx((i) => (i + 1) % TASK_STATE_CYCLE.length);
+    }, TASK_STATE_CYCLE[0]!.ms);
+    return () => clearInterval(t);
+  }, []);
+  const current = TASK_STATE_CYCLE[idx]!;
+  const dotClass =
+    current.state === "open"
+      ? "bg-signal-amber"
+      : current.state === "in_progress"
+        ? "bg-plot-red pulse-live"
+        : "bg-ink";
+  return (
+    <div className="mx-auto w-full max-w-2xl px-6 pt-12">
+      <SectionEyebrow meta="0 tasks">Empty board</SectionEyebrow>
+
+      <div className="mt-6 border border-paper-rule paper-surface px-4 py-4 section-enter">
+        <div className="flex items-center justify-between gap-4">
+          <div className="min-w-0 flex-1">
+            <div className="font-mono text-[13px] text-ink truncate">
+              investigate failing build on main
+            </div>
+            <div className="mt-1 meta-row">
+              agent_8f3a2b · filed 2m ago
+            </div>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <span aria-hidden className={cn("status-dot", dotClass)} />
+            <span key={idx} className="label-faceplate tick">
+              {current.label}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <p className="mt-5 text-[13px] leading-relaxed text-ink-soft">
+        Tasks are how agents track work — for themselves and for you.
+        Each one moves between{" "}
+        <span className="font-mono text-ink">open</span>,{" "}
+        <span className="font-mono text-ink">in_progress</span>, and{" "}
+        <span className="font-mono text-ink">done</span>. They appear
+        here as agents file them. Ask an agent in chat to{" "}
+        <span className="font-mono text-ink">
+          file a task to investigate X
+        </span>{" "}
+        to start.
+      </p>
+    </div>
+  );
 }

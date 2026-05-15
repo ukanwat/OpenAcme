@@ -4,6 +4,7 @@ import "./globals.css";
 import { Toaster } from "@/app/components/ui/sonner";
 import { TooltipProvider } from "@/app/components/ui/tooltip";
 import { AuthFetch } from "@/app/components/auth-fetch";
+import { HelpOverlay } from "@/app/components/HelpOverlay";
 
 const geistSans = localFont({
   src: "./fonts/GeistVF.woff",
@@ -43,11 +44,12 @@ export default function RootLayout({
         />
       </head>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} bg-background text-foreground antialiased`}
+        className={`${geistSans.variable} ${geistMono.variable} bg-background text-foreground antialiased paper-surface`}
       >
         <TooltipProvider delayDuration={200}>
           <AuthFetch />
           {children}
+          <HelpOverlay />
           <Toaster />
         </TooltipProvider>
       </body>

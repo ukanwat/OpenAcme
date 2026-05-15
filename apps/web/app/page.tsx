@@ -27,8 +27,12 @@ import { Markdown } from "./components/Markdown";
 import { AttachmentChip } from "./components/AttachmentChip";
 import { ToolBlock } from "./components/ToolBlock";
 import { API_BASE } from "./lib/api";
+import Link from "next/link";
 import { Button } from "@/app/components/ui/button";
 import { Textarea } from "@/app/components/ui/textarea";
+import { SectionEyebrow } from "@/app/components/ui/section-eyebrow";
+import { ScribedRule } from "@/app/components/ui/scribed-rule";
+import { JargonChip } from "@/app/components/ui/jargon-chip";
 import {
   Select,
   SelectContent,
@@ -747,32 +751,12 @@ export default function ChatPage() {
         {messages.length === 0 ? (
           <div className="flex flex-1 items-start justify-center overflow-y-auto px-6 py-16">
             <div className="w-full max-w-2xl">
-              <div className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-faint">
-                Session · Empty
-              </div>
-              <h2 className="mt-2 text-2xl font-semibold leading-tight tracking-tight text-ink">
-                {activeAgent ? activeAgent.name : "No agent selected"}
-              </h2>
-              <p className="mt-3 max-w-prose text-sm leading-relaxed text-ink-soft">
-                {activeAgent
-                  ? "Send a message to begin a session. The agent has access to its configured tools, skills, and memory. Conversation, tool calls, and results all persist to this session and remain editable."
-                  : "Pick an agent in the sidebar to start a session. Each agent owns its own model, tools, skills, and memory."}
-              </p>
-              {activeAgent && (
-                <div className="mt-8 grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 border-t border-paper-rule pt-4 font-mono text-[12px] tabular-nums">
-                  <span className="text-ink-faint uppercase tracking-[0.08em] text-[10px]">Model</span>
-                  <span className="text-ink-soft">
-                    {activeAgent.model.provider}/{activeAgent.model.model}
-                  </span>
-                  <span className="text-ink-faint uppercase tracking-[0.08em] text-[10px]">Tools</span>
-                  <span className="text-ink-soft">
-                    {activeAgent.tools.length} available
-                  </span>
-                  <span className="text-ink-faint uppercase tracking-[0.08em] text-[10px]">Persona</span>
-                  <span className="text-ink-soft truncate">
-                    {activeAgent.persona || "—"}
-                  </span>
-                </div>
+              {agents.length === 0 ? (
+                <ChatNoAgentsState />
+              ) : activeAgent ? (
+                <ChatAgentReadyState agent={activeAgent} />
+              ) : (
+                <ChatSelectAgentState />
               )}
             </div>
           </div>
@@ -796,7 +780,7 @@ export default function ChatPage() {
                 />
               ))}
               {error && (
-                <div className="mt-4 border-l-2 border-destructive bg-paper-sunk px-3 py-2 font-mono text-[12px] text-destructive">
+                <div className="mt-4 border-l-2 border-destructive bg-paper-sunk px-3 py-2 font-mono text-[12px] text-destructive section-enter">
                   <span className="uppercase tracking-[0.08em] text-[10px] mr-2">Error</span>
                   {error.message}
                 </div>
@@ -805,7 +789,7 @@ export default function ChatPage() {
                 <div
                   key={id}
                   className={cn(
-                    "mt-3 flex items-center gap-3 px-3 py-1.5 font-mono text-[12px]",
+                    "mt-3 flex items-center gap-3 px-3 py-1.5 font-mono text-[12px] section-enter",
                     s.kind === "error" && "bg-paper-sunk text-destructive",
                     s.kind === "warn" && "bg-paper-sunk text-warn-ochre",
                     (s.kind === "info" ||
@@ -1023,28 +1007,12 @@ function MessageBubble({
     const others = files.filter(
       (f) => !(f as { mediaType: string }).mediaType.startsWith("image/")
     );
-    // Recall chip from the user message's `data-relevant-memory` part.
-    const recallEntries: Array<{
-      path: string;
-      mtimeMs: number;
-      content: string;
-    }> = [];
-    for (const p of message.parts) {
-      if ((p as { type?: unknown }).type !== "data-relevant-memory") continue;
-      const data = (p as { data?: { entries?: typeof recallEntries } }).data;
-      if (Array.isArray(data?.entries)) recallEntries.push(...data.entries);
-    }
     return (
       <section className="border-t border-paper-rule py-5 first:border-t-0 first:pt-0">
         <MessageHeader role="user" />
         {text && (
           <div className="text-sm leading-relaxed text-ink whitespace-pre-wrap break-words">
             {text}
-          </div>
-        )}
-        {recallEntries.length > 0 && (
-          <div className="mt-3">
-            <RelevantMemoryBlock entries={recallEntries} />
           </div>
         )}
         {images.length > 0 && (
@@ -1152,43 +1120,6 @@ function MessageBubble({
   );
 }
 
-function RelevantMemoryBlock({
-  entries,
-}: {
-  entries: Array<{ path: string; mtimeMs: number; content: string }>;
-}) {
-  const [open, setOpen] = useState(false);
-  const label = entries.length === 1 ? "1 memory recalled" : `${entries.length} memories recalled`;
-  return (
-    <div className="border border-paper-rule bg-paper-sunk text-sm">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-between px-3 py-2 text-left text-ink-faint hover:bg-paper hover:text-ink"
-      >
-        <span className="flex items-center gap-2">
-          <span className="font-mono text-[11px] uppercase tracking-[0.08em]">memory</span>
-          <span>{label}</span>
-        </span>
-        <span className="font-mono text-[11px]">{open ? "−" : "+"}</span>
-      </button>
-      {open && (
-        <div className="border-t border-paper-rule">
-          {entries.map((e, i) => {
-            const name = e.path.split("/").slice(-1)[0] ?? e.path;
-            return (
-              <div key={i} className="border-b border-paper-rule p-3 last:border-b-0">
-                <div className="mb-1 font-mono text-[11px] text-ink-faint">{name}</div>
-                <pre className="whitespace-pre-wrap break-words text-xs text-ink">{e.content}</pre>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function ModelQuickSwitch({
   agent,
   catalog,
@@ -1266,5 +1197,91 @@ function ModelQuickSwitch({
         ))}
       </SelectContent>
     </Select>
+  );
+}
+
+function ChatNoAgentsState() {
+  return (
+    <>
+      <SectionEyebrow meta="0 agents">No agents configured</SectionEyebrow>
+      <p className="mt-5 max-w-prose text-[14px] leading-relaxed text-ink-soft">
+        An{" "}
+        <JargonChip
+          term="Agent"
+          explanation="A YAML+prose file at ~/.openacme/agents/<id>/AGENT.md. Owns its own model, tools, MCP servers, sessions, memory, and tasks. Loaded into the daemon at startup and on edit."
+        >
+          <span className="text-ink">agent</span>
+        </JargonChip>{" "}
+        in OpenAcme is a file at{" "}
+        <code className="px-1 py-0.5 font-mono text-[12px] text-ink">
+          ~/.openacme/agents/&lt;id&gt;/AGENT.md
+        </code>{" "}
+        — YAML frontmatter for its model, tools, and MCP servers, plus
+        prose for its persona. Each one owns its own sessions, memory,
+        and tasks.
+      </p>
+      <div className="mt-6 flex flex-wrap items-center gap-3">
+        <Button asChild>
+          <Link href="/agents">Create your first agent</Link>
+        </Button>
+        <span className="text-[12px] text-ink-faint">
+          or run{" "}
+          <code className="px-1 py-0.5 font-mono text-[12px] text-ink">
+            openacme setup
+          </code>{" "}
+          in the CLI
+        </span>
+      </div>
+    </>
+  );
+}
+
+function ChatSelectAgentState() {
+  return (
+    <>
+      <SectionEyebrow>Select an agent</SectionEyebrow>
+      <p className="mt-5 max-w-prose text-[14px] leading-relaxed text-ink-soft">
+        Choose an agent from the sidebar to start a session. Each agent
+        owns its model, tools, skills, and memory; sessions persist on
+        disk under the daemon&apos;s data dir.
+      </p>
+    </>
+  );
+}
+
+function ChatAgentReadyState({ agent }: { agent: Agent }) {
+  return (
+    <>
+      <SectionEyebrow
+        meta={
+          <span>
+            <span className="text-ink-faint">model · </span>
+            <span className="text-ink">
+              {agent.model.provider}/{agent.model.model}
+            </span>
+          </span>
+        }
+      >
+        {agent.name}
+      </SectionEyebrow>
+      {agent.persona && (
+        <p className="mt-5 max-w-prose text-[14px] leading-relaxed text-ink-soft">
+          {agent.persona}
+        </p>
+      )}
+      <div className="mt-8">
+        <ScribedRule delay={200} />
+        <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-1.5 meta-row">
+          <span>
+            <span className="text-ink-faint">tools · </span>
+            <span className="text-ink">{agent.tools.length}</span>
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span aria-hidden className="status-dot bg-ink" />
+            <span className="label-faceplate">Ready</span>
+          </span>
+        </div>
+      </div>
+    </>
   );
 }

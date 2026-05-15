@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect, useMemo, useRef } from "react";
-import { Plus, Search, Trash2, Loader2, Upload } from "lucide-react";
+import { Plus, Search, Trash2, Upload } from "lucide-react";
+import { LoadingHairline } from "@/app/components/ui/loading-hairline";
 import { toast } from "sonner";
 import { Sidebar } from "../components/Sidebar";
 import { API_BASE } from "../lib/api";
@@ -18,6 +19,7 @@ import {
   CardDescription,
 } from "@/app/components/ui/card";
 import { Skeleton } from "@/app/components/ui/skeleton";
+import { SectionEyebrow } from "@/app/components/ui/section-eyebrow";
 import {
   Dialog,
   DialogContent,
@@ -254,7 +256,7 @@ export default function SkillsPage() {
               onClick={() => folderInputRef.current?.click()}
             >
               {importing ? (
-                <Loader2 className="size-4 animate-spin" />
+                <LoadingHairline inline />
               ) : (
                 <Upload className="size-4" />
               )}
@@ -419,7 +421,7 @@ export default function SkillsPage() {
                       Cancel
                     </Button>
                     <Button onClick={createSkill} disabled={saving}>
-                      {saving && <Loader2 className="size-4 animate-spin" />}
+                      {saving && <LoadingHairline inline />}
                       Create skill
                     </Button>
                   </div>
@@ -506,24 +508,10 @@ export default function SkillsPage() {
                   </CardContent>
                 </Card>
               </div>
+            ) : skills.length === 0 ? (
+              <EmptySkillsState onCreate={() => setIsCreating(true)} />
             ) : (
-              <div className="flex h-full items-start justify-center pt-24">
-                <div className="max-w-sm">
-                  <div className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-faint">
-                    No selection
-                  </div>
-                  <h3 className="mt-2 text-base font-semibold text-ink">
-                    Pick a skill to view
-                  </h3>
-                  <p className="mt-2 text-sm leading-relaxed text-ink-soft">
-                    Skills are markdown documents with frontmatter that
-                    agents can load on demand. Select one from the index,
-                    or use{" "}
-                    <span className="font-mono text-ink">+ New skill</span>{" "}
-                    to author one.
-                  </p>
-                </div>
-              </div>
+              <NoSkillPicked />
             )}
           </div>
         </div>
@@ -553,6 +541,86 @@ export default function SkillsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+function EmptySkillsState({ onCreate }: { onCreate: () => void }) {
+  const [expanded, setExpanded] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setExpanded(true), 800);
+    return () => clearTimeout(t);
+  }, []);
+  return (
+    <div className="mx-auto max-w-2xl">
+      <SectionEyebrow meta="0 skills">No skills installed</SectionEyebrow>
+
+      <div className="mt-6 border border-paper-rule paper-surface">
+        {/* Index-entry form: name · description · tags. This is what
+         * the agent's system prompt actually receives — the rest is
+         * loaded on demand via the skill_view tool. */}
+        <div className="border-b border-paper-rule px-4 py-3 section-enter">
+          <div className="flex items-baseline gap-3">
+            <span className="font-mono text-[13px] text-ink">
+              triage-issue
+            </span>
+            <span className="meta-row">tags: triage, github</span>
+          </div>
+          <div className="mt-1 text-[13px] leading-snug text-ink-soft">
+            Decide whether an incoming issue is a bug, feature request,
+            or noise.
+          </div>
+        </div>
+
+        {/* Expanded body — appears after a delay. The full markdown
+         * content the agent loads when it calls skill_view. */}
+        {expanded && (
+          <div
+            className="px-4 py-3 section-enter"
+            style={{ animationDelay: "0ms" }}
+          >
+            <div className="label-faceplate mb-2">Loaded on demand</div>
+            <pre className="font-mono text-[12px] leading-relaxed whitespace-pre-wrap break-words text-ink m-0 border-0 p-0 bg-transparent">
+{`# Triage issue
+
+Read the body. If it's a bug, file under bugs/.
+If it's a feature request, file under proposals/.
+If it's noise, close with a polite note.
+
+Always link to the relevant commit when possible.`}
+            </pre>
+          </div>
+        )}
+      </div>
+
+      <p className="mt-5 text-[13px] leading-relaxed text-ink-soft">
+        A skill is a markdown file with frontmatter. The index above is
+        what agents see in their system prompt; the body loads only when
+        the agent calls{" "}
+        <code className="px-1 py-0.5 font-mono text-[12px] text-ink">
+          skill_view
+        </code>
+        . Progressive disclosure keeps context small.
+      </p>
+
+      <div className="mt-5">
+        <Button onClick={onCreate}>
+          <Plus className="size-4" />
+          Author your first skill
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function NoSkillPicked() {
+  return (
+    <div className="mx-auto max-w-2xl">
+      <SectionEyebrow>Select a skill</SectionEyebrow>
+      <p className="mt-3 text-[13px] leading-relaxed text-ink-soft">
+        Pick a row from the index on the left to view its full markdown
+        body and edit frontmatter.
+      </p>
     </div>
   );
 }

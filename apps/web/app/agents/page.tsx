@@ -31,7 +31,6 @@ import {
   CardContent,
   CardHeader,
   CardTitle,
-  CardDescription,
 } from "@/app/components/ui/card";
 import {
   Dialog,
@@ -49,6 +48,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/app/components/ui/select";
+import { SectionEyebrow } from "@/app/components/ui/section-eyebrow";
 import { cn } from "@/app/lib/utils";
 
 interface Agent {
@@ -425,8 +425,11 @@ export default function AgentsPage() {
                     <div className="truncate text-sm font-medium text-ink">
                       {agent.name}
                     </div>
-                    <div className="truncate font-mono text-[11px] tabular-nums text-ink-faint">
-                      {agent.model.provider}/{agent.model.model.split("/").pop()}
+                    <div
+                      className="truncate font-mono text-[11px] tabular-nums text-ink-faint"
+                      title={`${agent.model.provider}/${agent.model.model}`}
+                    >
+                      {agent.model.provider}/{agent.model.model}
                     </div>
                   </div>
                 </button>
@@ -445,11 +448,6 @@ export default function AgentsPage() {
                     <CardTitle>
                       {isCreating ? "Create agent" : "Edit agent"}
                     </CardTitle>
-                    <CardDescription>
-                      {isCreating
-                        ? "Configure a new agent's model, persona, and tools."
-                        : "Update this agent's configuration."}
-                    </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-5">
                     <div className="grid gap-2">
@@ -601,24 +599,10 @@ export default function AgentsPage() {
                   </Button>
                 </div>
               </form>
+            ) : agents.length === 0 ? (
+              <EmptyFleetState onCreate={startCreate} />
             ) : (
-              <div className="flex h-full items-start justify-center pt-24">
-                <div className="max-w-sm">
-                  <div className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-faint">
-                    No selection
-                  </div>
-                  <h3 className="mt-2 text-base font-semibold text-ink">
-                    Pick an agent to edit
-                  </h3>
-                  <p className="mt-2 text-sm leading-relaxed text-ink-soft">
-                    Each agent owns its model, persona, tool selection,
-                    and MCP servers. Choose one from the roster on the
-                    left, or use{" "}
-                    <span className="font-mono text-ink">+ New agent</span>{" "}
-                    to create one.
-                  </p>
-                </div>
-              </div>
+              <NoAgentPicked />
             )}
           </div>
         </div>
@@ -961,5 +945,130 @@ function ToolToggle({
         </div>
       </div>
     </button>
+  );
+}
+
+function EmptyFleetState({ onCreate }: { onCreate: () => void }) {
+  const rowDelay = (i: number) => 80 + i * 120;
+  return (
+    <div className="mx-auto max-w-2xl">
+      <SectionEyebrow meta="0 agents">The fleet is empty</SectionEyebrow>
+
+      <div className="mt-6 border border-paper-rule paper-surface">
+        {/* Faux dossier — visual demonstration of an AGENT.md. Every row
+         * is real mono with real metadata shape so the operator reads
+         * the format off the page, not off external docs. */}
+        <div
+          className="border-b border-paper-rule px-4 py-3"
+          style={{
+            animation: "section-enter 320ms var(--ease-out-quart) both",
+            animationDelay: `${rowDelay(0)}ms`,
+          }}
+        >
+          <div className="font-mono text-[12px] uppercase tracking-[0.06em] text-ink">
+            triage-bot
+          </div>
+          <div className="mt-1 meta-row">agent_8f3a2b</div>
+        </div>
+
+        <div
+          className="border-b border-paper-rule px-4 py-3 meta-row"
+          style={{
+            animation: "section-enter 320ms var(--ease-out-quart) both",
+            animationDelay: `${rowDelay(1)}ms`,
+          }}
+        >
+          <span className="text-ink-faint">model · </span>
+          <span className="text-ink">anthropic/claude-sonnet-4-20250514</span>
+        </div>
+
+        <div
+          className="border-b border-paper-rule px-4 py-3"
+          style={{
+            animation: "section-enter 320ms var(--ease-out-quart) both",
+            animationDelay: `${rowDelay(2)}ms`,
+          }}
+        >
+          <div className="label-faceplate mb-1">Persona</div>
+          <div className="text-[13px] leading-snug text-ink-soft">
+            Triages incoming github issues and routes them to the right repo.
+          </div>
+        </div>
+
+        <div
+          className="border-b border-paper-rule px-4 py-3 meta-row flex items-center gap-4"
+          style={{
+            animation: "section-enter 320ms var(--ease-out-quart) both",
+            animationDelay: `${rowDelay(3)}ms`,
+          }}
+        >
+          <span>
+            <span className="text-ink-faint">tools · </span>
+            <span className="text-ink">12</span>
+          </span>
+          <span>
+            <span className="text-ink-faint">mcp · </span>
+            <span className="text-ink">3</span>
+          </span>
+          <span>
+            <span className="text-ink-faint">skills · </span>
+            <span className="text-ink">2</span>
+          </span>
+        </div>
+
+        <div
+          className="px-4 py-3 flex items-center gap-2"
+          style={{
+            animation: "section-enter 320ms var(--ease-out-quart) both",
+            animationDelay: `${rowDelay(4)}ms`,
+          }}
+        >
+          <span aria-hidden className="status-dot bg-ink" />
+          <span className="label-faceplate">Ready</span>
+        </div>
+      </div>
+
+      {/* Teaching caption — instrument-register, not marketing. Tells the
+       * operator where files live in one sentence. */}
+      <div
+        className="mt-5 text-[13px] leading-relaxed text-ink-soft"
+        style={{
+          animation: "section-enter 320ms var(--ease-out-quart) both",
+          animationDelay: `${rowDelay(5)}ms`,
+        }}
+      >
+        This is the shape of an agent. Yours will live at{" "}
+        <code className="px-1 py-0.5 font-mono text-[12px] text-ink">
+          ~/.openacme/agents/&lt;id&gt;/AGENT.md
+        </code>
+        {" "}— YAML frontmatter for model, tools, and MCP servers, plus
+        prose for the persona.
+      </div>
+
+      <div
+        className="mt-5"
+        style={{
+          animation: "section-enter 320ms var(--ease-out-quart) both",
+          animationDelay: `${rowDelay(6)}ms`,
+        }}
+      >
+        <Button onClick={onCreate}>
+          <Plus className="size-4" />
+          Create your first agent
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function NoAgentPicked() {
+  return (
+    <div className="mx-auto max-w-2xl">
+      <SectionEyebrow>Select an agent</SectionEyebrow>
+      <p className="mt-3 text-[13px] leading-relaxed text-ink-soft">
+        Pick a row from the roster on the left to edit its model, persona,
+        tools, and MCP servers.
+      </p>
+    </div>
   );
 }

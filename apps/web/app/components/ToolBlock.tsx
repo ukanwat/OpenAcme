@@ -87,7 +87,7 @@ function KnownToolBlock({
   );
 
   return (
-    <div className="border border-paper-rule bg-paper-sunk">
+    <div className="border border-paper-rule section-enter">
       <HeaderRow toolName={toolName} status={status} summary={summary} />
       {body && <div className="border-t border-paper-rule">{body}</div>}
     </div>
@@ -113,7 +113,7 @@ function UnknownToolBlock({
     part.errorText !== undefined;
 
   return (
-    <div className="border border-paper-rule bg-paper-sunk">
+    <div className="border border-paper-rule section-enter">
       <button
         type="button"
         onClick={() => hasIO && setOpen((o) => !o)}
@@ -416,7 +416,7 @@ function renderBody({
 }): ReactNode {
   if (errorText && errorText !== "[interrupted]") {
     return (
-      <div className="bg-paper px-3 py-2 font-mono text-[11px] leading-snug text-destructive whitespace-pre-wrap break-words">
+      <div className="px-3 py-2 font-mono text-[11px] leading-snug text-destructive whitespace-pre-wrap break-words">
         {errorText}
       </div>
     );
@@ -447,7 +447,7 @@ function renderBody({
       const results = pickResults(out);
       if (!results || results.length === 0) return null;
       return (
-        <div className="divide-y divide-paper-rule bg-paper">
+        <div className="divide-y divide-paper-rule">
           {results.slice(0, 8).map((r, i) => (
             <div key={i} className="px-3 py-2">
               {r.title && (
@@ -473,7 +473,7 @@ function renderBody({
       const log = out && (str(out.output) ?? str(out.log));
       if (!log) return null;
       return (
-        <pre className="max-h-60 overflow-auto bg-paper px-3 py-2 font-mono text-[11px] leading-snug text-ink-soft whitespace-pre-wrap break-words">
+        <pre className="max-h-60 overflow-auto px-3 py-2 font-mono text-[11px] leading-snug text-ink-soft whitespace-pre-wrap break-words">
           {trim(log, 4000)}
         </pre>
       );
@@ -493,7 +493,7 @@ function ShellOutputView({ output }: { output: unknown }) {
   const errMsg = out && str(out.error);
   if (!stdout && !stderr && !value && !errMsg) return null;
   return (
-    <div className="space-y-2 bg-paper px-3 py-2">
+    <div className="space-y-2 px-3 py-2">
       {stdout && (
         <pre className="overflow-x-auto font-mono text-[11px] leading-snug text-ink-soft whitespace-pre-wrap break-words">
           {trim(stdout, 4000)}
@@ -707,7 +707,7 @@ function parseV4APatch(text: string): DiffFile[] {
 function FileDiffView({ files }: { files: DiffFile[] }) {
   if (files.length === 0) return null;
   return (
-    <div className="divide-y divide-paper-rule bg-paper">
+    <div className="divide-y divide-paper-rule">
       {files.map((f, i) => (
         <FileDiffBlock key={i} file={f} />
       ))}
@@ -747,7 +747,7 @@ function FileDiffBlock({ file }: { file: DiffFile }) {
   const gutter = Math.max(2, String(Math.max(maxOld, maxNew)).length);
   return (
     <div>
-      <div className="flex items-baseline gap-3 bg-paper-sunk px-3 py-1.5">
+      <div className="flex items-baseline gap-3 px-3 py-1.5">
         <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint shrink-0">
           {kindLabel[file.kind]}
         </span>
@@ -774,7 +774,7 @@ function HunksView({ hunks, gutter }: { hunks: DiffHunk[]; gutter: number }) {
   let oldNo = 1;
   let newNo = 1;
   return (
-    <div className="overflow-x-auto bg-paper font-mono text-[11px] leading-[1.45]">
+    <div className="overflow-x-auto font-mono text-[11px] leading-[1.45]">
       {hunks.map((h, hi) => (
         <div key={hi} className={hi > 0 ? "border-t border-paper-rule" : undefined}>
           {h.lines.map((line, li) => {
@@ -834,20 +834,20 @@ function RawIOBody({ part }: { part: ToolPart }) {
     <>
       {part.input !== undefined && (
         <div>
-          <div className="bg-paper px-3 py-1 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
+          <div className="px-3 py-1 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
             Input
           </div>
-          <pre className="max-h-60 overflow-auto bg-paper px-3 py-2 font-mono text-[11px] leading-snug text-ink-soft whitespace-pre-wrap break-all">
+          <pre className="max-h-60 overflow-auto px-3 py-2 font-mono text-[11px] leading-snug text-ink-soft whitespace-pre-wrap break-all">
             {trim(safeStringify(part.input), 4000)}
           </pre>
         </div>
       )}
       {(part.output !== undefined || part.errorText !== undefined) && (
         <div>
-          <div className="border-t border-paper-rule bg-paper px-3 py-1 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
+          <div className="border-t border-paper-rule px-3 py-1 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
             {part.errorText ? "Error" : "Output"}
           </div>
-          <pre className="max-h-60 overflow-auto bg-paper px-3 py-2 font-mono text-[11px] leading-snug text-ink-soft whitespace-pre-wrap break-all">
+          <pre className="max-h-60 overflow-auto px-3 py-2 font-mono text-[11px] leading-snug text-ink-soft whitespace-pre-wrap break-all">
             {trim(formatOutput(part.output, part.errorText), 4000)}
           </pre>
         </div>

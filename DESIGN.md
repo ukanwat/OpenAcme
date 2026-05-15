@@ -306,3 +306,83 @@ The label is mandatory — no dot without a label. This satisfies the "no color-
 - **Don't** hide primary metadata behind hover. Hover may reveal secondary detail (full hashes, descriptive tooltips); hover may not be the only path to a session ID, timestamp, or status.
 - **Don't** animate layout properties (width, height, top, left, padding, margin). Animate `transform`, `opacity`, `background-color`, `border-color`, `outline-color` only.
 - **Don't** use exclamation points in product copy. "Saved" not "Saved!". "Agent created" not "Agent created!".
+
+## 7. Where Character Lives
+
+§1–§6 above are the fence — what *not* to do. This section is the garden inside it.
+
+The discipline of "no shadow, no radius, single accent, no gradient" prevents the four anti-references PRODUCT.md rejects. It does *not*, on its own, produce instrument-grade craft. Restraint without character lands in the second-order trap: editorial-minimal SaaS — "Linear with red." To stay out of that trap, the system commits to specific positive moves — material warmth, weighted motion, considered detail — each of which lives within §2–§6's rules.
+
+What follows is the *positive* design vocabulary: where character is added on purpose, the references that inform it, and the failure modes to watch for.
+
+### 7.1 Positive References
+
+The four anti-references in PRODUCT.md tell you what we're not. These tell you what we are aspiring toward:
+
+- **Linear** — single-typeface discipline at scale, tabular numerals everywhere they matter, weighted hover/focus motion, density as trust signal. The reference for "instrument-grade SaaS that respects the operator's intelligence."
+- **Teenage Engineering OP-1** — restraint plus character. Every detail is considered: the knurling on the knobs, the alignment of the silkscreen, the curve of the buttons. Nothing decorative, everything precise. The reference for "tactile and exact."
+- **Vintage Tektronix oscilloscope faceplates** — engraved UPPERCASE labels in monospace, hairline-ruled regions, signal lights that mean something, no display ornament. The reference for the faceplate-mono label system and the status-indicator vocabulary.
+- **iA Writer** — paper as a surface, single typeface, restraint that *feels* warm rather than sterile. The reference for "materiality through paper warmth, not through ornament."
+
+When in doubt, ask: *what would Linear / OP-1 / Tektronix / iA Writer do here?* Three of those four answer the question instantly.
+
+### 7.2 The Register
+
+The product's register has three pillars. Every character move belongs to one of them.
+
+**Materiality.** The page reads as a *surface* — warmed paper or cool graphite — not a flat color field. Paper has tooth (faint grain). Surfaces age (ruled lines on a notebook page). Code is distinct from prose (its surface is cooler, edged with a hairline). Selection has a color of its own. Cumulative effect: every screen feels like it could be touched.
+
+**Precision.** Alignment is exact. Hairlines are 1px, never "around 1px." Spacing is on a 4px grid; ad-hoc values are forbidden. Numbers are tabular. Mono-for-truth: anything you might paste into a query is in mono, anything you might read is in sans. Visual rhythm rewards close inspection. A reader who looks twice notices that everything was placed on purpose.
+
+**Weighted motion.** Every interaction has *mass* — never bounce, never spring, never elastic. Motion uses a 3-step duration scale (80ms micro-shifts, 180ms state changes, 320ms panel reveals) and ease-out curves only. The page responds the way well-machined controls respond: with deliberate inertia. Choreographed sequences are forbidden; weight is the texture.
+
+### 7.3 The Character Moves
+
+Each of the following is a *primitive* — a named, reusable move. Use the existing one before inventing a new one.
+
+#### Materiality
+
+- **`.paper-surface`** — applies a barely-visible fractal-noise overlay (~2% opacity in light, ~5% in dark) to a region. Use on body so every page reads as a surface. Use on inset panels for additional tooth. Never apply twice in the same hierarchy.
+- **`.paper-ruled`** — repeating 1px hairlines every 24px at ~35% paper-rule alpha. Use sparingly: the daemon footer manifest, a persona textarea, a recent-activity timeline. Don't apply globally.
+- **Code surface tint** — inline `<code>` and `<pre>` sit on a slightly cooler tint than `paper-sunk`, with a 1px hairline border. Use everywhere code appears: chat messages, persona drafts, ID chips.
+- **`::selection`** — a ~18% plot-red wash. One selection treatment for the whole product.
+
+#### Precision
+
+- **Tabular numerals** — `font-feature-settings: "tnum" 1` on body and everything `font-mono`. Use without thinking; never accept a number that reflows on change.
+- **Mono-for-truth** — IDs, timestamps, durations, file sizes, model names, exit codes, file paths, hashes: all `font-mono`. Human prose: sans. The visual is the contract: if it's mono, you can copy it.
+- **`<SectionEyebrow>`** — UPPERCASE Geist Mono label at 11px tracked 0.08em + a scribed hairline. Replaces the SaaS card header. Opens every ruled section.
+- **`<Kbd>`** — mono pill rendering a key combo (`⌘K`, `⇧⏎`, `Esc`). Goes next to every action that has a shortcut. Visible shortcuts respect the operator's time.
+
+#### Weighted motion
+
+- **Hover micro-motion** — `transition-colors duration-state ease-out-quart` on every interactive element. Universal; no element is decorative-only.
+- **Focus scribe-in** — `outline-offset` animated from `-2px` to `2px` over 180ms when an element gains focus. Replaces instant focus rings.
+- **`.scribe-in`** — `transform: scaleX(0) → scaleX(1)` over 220ms. Used on hairline rules that appear with newly-mounted sections.
+- **`.tick`** — `opacity: 0.35 → 1` over 180ms. Used on any cell whose numeric value just changed (token count, "X minutes ago", session count).
+- **`.section-enter`** — `opacity: 0 → 1` + `translateY(2px → 0)` over 320ms. Used on every newly-mounted panel, modal, dialog, overlay.
+- **`<LoadingHairline />`** — a 1px hairline traveling left → right. Replaces `<Loader2 className="animate-spin" />` everywhere. Use whenever waiting on data.
+
+#### Experiential
+
+- **`<JargonChip term="...">`** — inline `[?]` chip next to a domain term; click expands an in-voice paragraph. Use at the *first* occurrence of any of: Agent, Session, MCP, Skill, Task, Persona, Tool, Daemon. Each term explained once per page.
+- **`Cmd-/` help overlay** — a reference card (not a tour) listing shortcuts and concepts for the current page. Open with `?` or `Cmd-/`, dismiss with `Esc`.
+- **Designed empty states** — every empty list is a teaching moment, not a placeholder. A faux instance scribes in to demonstrate the format. A caption explains where files live. A primary action follows. No mascots, no exclamation points, no "let's get started."
+
+### 7.4 Anti-Failure Modes
+
+Three traps that defeat the character vocabulary even when each individual move is correctly applied.
+
+**Editorial-minimal drift.** When the product reduces to *single typeface + hairlines + one accent + max-w-prose body text*, the result looks like a Linear clone or a generic Notion-template settings page. The corrective: ensure paper-surface materiality, weighted motion, and per-state functional color are propagating — not just the typography and the hairlines. After each major surface ships, ask: *would someone read this as "Linear with red"?* If yes, materiality and motion aren't pulling hard enough.
+
+**Choreographed motion.** When animations stagger, sequence, dance, or play multiple curves at once, motion stops being weight and becomes personality — closer to a marketing-site preloader than to a piece of lab equipment. The corrective: one curve, one duration, per primitive. No `delay` chains except in the explicit experiential moments (the `<SectionEyebrow>` content scribe-in is a deliberate 4-step sequence; nothing else in the product gets one).
+
+**Friendly empty states.** When an empty state aims for warmth via exclamation points, "Welcome!", "Get Started", "Pick an agent to edit", or a smiling tone, it crosses out of register. The corrective: every empty-state copy is read aloud during review. If it sounds like it could appear in any SaaS app's onboarding email, rewrite it in PRODUCT.md voice — short, declarative, teaching the substrate rather than greeting the user.
+
+### Named Rules
+
+**The Garden-Inside-the-Fence Rule.** §6's "Don't" list is the perimeter. §7's character moves are the planted ground inside it. A surface that follows §6 but skips §7 lands in editorial-minimal drift. A surface that uses §7 but breaks §6 lands in cute-or-flashy territory. Both halves are required.
+
+**The Three-Pillar Rule.** Every character move maps to materiality, precision, or weighted motion. If a proposed move doesn't fit one of the three, it isn't in register — either drop it or re-justify it against the pillar it strengthens.
+
+**The Read-Aloud Rule.** Every empty-state copy and every status string is read aloud during review. Acceptance test: does it sound like a piece of lab equipment, or does it sound like marketing copy? The first passes; the second gets rewritten.
