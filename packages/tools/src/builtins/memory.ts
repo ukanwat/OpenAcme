@@ -21,17 +21,18 @@ export function bindMemory(b: MemoryBindings): void {
 }
 
 /**
- * Verbatim port of Anthropic's auto-injected memory protocol from the
- * `memory_20250818` tool docs. Models trained on the canonical tool
- * recognize this exact wording — paraphrasing loses the trained behavior.
+ * The MEMORY.md index is already in the system prompt (`buildMemorySection`
+ * in agent-core) and a full convention section ships alongside it. This
+ * description is therefore opt-in: when to view, when to write — not the
+ * eager "ALWAYS VIEW FIRST" preamble from Anthropic's memory_20250818 docs.
+ * That preamble suits headless agents whose context can reset arbitrarily;
+ * with the index already attached and a chat user present, it just adds
+ * a tool round-trip and a "I'll check my memory" preface to every first turn.
  */
 const TOOL_DESCRIPTION = [
-  "IMPORTANT: ALWAYS VIEW YOUR MEMORY DIRECTORY BEFORE DOING ANYTHING ELSE.",
-  "MEMORY PROTOCOL:",
-  "1. Use the `view` command of your `memory` tool to check for earlier progress.",
-  "2. ... (work on the task) ...",
-  "     - As you make progress, record status / progress / thoughts etc in your memory.",
-  "ASSUME INTERRUPTION: Your context window might be reset at any moment, so you risk losing any progress that is not recorded in your memory directory.",
+  "Read and write entries in your persistent /memories/ directory.",
+  "Your MEMORY.md index is already in your system prompt; use `view` on a specific entry file when it looks relevant to the work, when the user references prior conversations, or when you're explicitly asked to recall.",
+  "Use `create` / `str_replace` / `insert` / `delete` / `rename` to maintain memory entries — see the memory convention in your system prompt for the file shape and what NOT to save.",
 ].join("\n");
 
 /**
