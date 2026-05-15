@@ -16,6 +16,7 @@ import { LoadingHairline } from "@/app/components/ui/loading-hairline";
 import { Input } from "@/app/components/ui/input";
 import { Textarea } from "@/app/components/ui/textarea";
 import { Label } from "@/app/components/ui/label";
+import { SectionEyebrow } from "@/app/components/ui/section-eyebrow";
 import { Badge } from "@/app/components/ui/badge";
 import {
   Select,
@@ -485,7 +486,7 @@ function CommentRow({
             {formatRelativeFromUnix(comment.createdAt)}
           </span>
         </div>
-        <div className="mt-1 border-l border-paper-rule pl-3 text-sm text-ink">
+        <div className="mt-1 max-w-prose border-l border-paper-rule pl-3 text-sm text-ink">
           <Markdown>{comment.body}</Markdown>
         </div>
       </div>
@@ -514,7 +515,7 @@ function ResultRow({
             {formatRelativeFromUnix(comment.createdAt)}
           </span>
         </div>
-        <div className="mt-1.5 text-sm text-ink">
+        <div className="mt-1.5 max-w-prose text-sm text-ink">
           <Markdown>{comment.body}</Markdown>
         </div>
       </div>
@@ -999,20 +1000,18 @@ function RecurrenceEditor({
   };
 
   return (
-    <div className="space-y-3 border border-paper-rule bg-paper-sunk p-4">
-      <div className="flex items-center justify-between">
-        <Label>Recurrence</Label>
-        <Select value={kind} onValueChange={(v) => setKind(v as RecurrenceKind)}>
-          <SelectTrigger className="w-40">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="none">None</SelectItem>
-            <SelectItem value="cron">Cron</SelectItem>
-            <SelectItem value="interval">Interval</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
+    <div className="space-y-3">
+      <SectionEyebrow rule={false}>Recurrence</SectionEyebrow>
+      <Select value={kind} onValueChange={(v) => setKind(v as RecurrenceKind)}>
+        <SelectTrigger className="w-full">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="none">None</SelectItem>
+          <SelectItem value="cron">Cron</SelectItem>
+          <SelectItem value="interval">Interval</SelectItem>
+        </SelectContent>
+      </Select>
 
       {value && value.kind === "cron" && (
         <div className="grid grid-cols-2 gap-4">

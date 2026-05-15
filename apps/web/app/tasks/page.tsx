@@ -56,6 +56,9 @@ function TasksPageInner() {
   const [draft, setDraft] = useState<Task | null>(null);
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [confirmDeleteMode, setConfirmDeleteMode] = useState<
+    "simple" | "cascade"
+  >("simple");
   const [viewMode, setViewMode] = useState<ViewMode>("board");
 
   useEffect(() => {
@@ -466,42 +469,92 @@ function TasksPageInner() {
         <Dialog
           open={!!confirmDelete}
           onOpenChange={(open) => {
-            if (!open) setConfirmDelete(null);
+            if (!open) {
+              setConfirmDelete(null);
+              setConfirmDeleteMode("simple");
+            }
           }}
         >
           <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Delete this task?</DialogTitle>
-              <DialogDescription>
-                Permanent. If other tasks depend on this one, you&apos;ll be asked
-                whether to cascade.
-              </DialogDescription>
-            </DialogHeader>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setConfirmDelete(null)}>
-                Cancel
-              </Button>
-              <Button
-                variant="destructive"
-                onClick={async () => {
-                  if (!confirmDelete) return;
-                  const ok = await remove(confirmDelete, false);
-                  if (!ok) {
-                    if (
-                      window.confirm(
-                        "Other tasks depend on this one. Cascade delete?"
-                      )
-                    ) {
-                      await remove(confirmDelete, true);
-                    } else {
+            {confirmDeleteMode === "simple" ? (
+              <>
+                <DialogHeader>
+                  <DialogTitle>Delete this task?</DialogTitle>
+                  <DialogDescription>
+                    Permanent. If other tasks depend on this one, you&apos;ll be
+                    asked whether to cascade.
+                  </DialogDescription>
+                </DialogHeader>
+                <DialogFooter>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
                       setConfirmDelete(null);
-                    }
-                  }
-                }}
-              >
-                Delete
-              </Button>
-            </DialogFooter>
+                      setConfirmDeleteMode("simple");
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    onClick={async () => {
+                      if (!confirmDelete) return;
+                      const ok = await remove(confirmDelete, false);
+                      if (!ok) setConfirmDeleteMode("cascade");
+                    }}
+                  >
+                    Delete
+                  </Button>
+                </DialogFooter>
+              </>
+            ) : (
+              <>
+                <DialogHeader>
+                  <DialogTitle>Cascade delete?</DialogTitle>
+                  <DialogDescription>
+                    Other tasks depend on this one. Cascading removes them
+                    all.
+                  </DialogDescription>
+                </DialogHeader>
+                {confirmDelete && (
+                  <ol className="my-2 max-h-48 space-y-1.5 overflow-y-auto border-t border-paper-rule pt-3">
+                    {tasks
+                      .filter((t) => t.depends_on.includes(confirmDelete))
+                      .map((t) => (
+                        <li
+                          key={t.id}
+                          className="flex items-baseline gap-2 text-sm"
+                        >
+                          <span className="font-mono text-[12px] tabular-nums text-ink-faint">
+                            {t.id.slice(0, 8)}
+                          </span>
+                          <span className="truncate text-ink">{t.title}</span>
+                        </li>
+                      ))}
+                  </ol>
+                )}
+                <DialogFooter>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setConfirmDelete(null);
+                      setConfirmDeleteMode("simple");
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    onClick={async () => {
+                      if (!confirmDelete) return;
+                      await remove(confirmDelete, true);
+                    }}
+                  >
+                    Cascade
+                  </Button>
+                </DialogFooter>
+              </>
+            )}
           </DialogContent>
         </Dialog>
       </main>
