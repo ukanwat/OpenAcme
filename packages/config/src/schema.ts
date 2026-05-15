@@ -141,6 +141,17 @@ export const AgentDefinitionSchema = z.object({
       "web_extract",
       "execute_code",
       "process",
+      "browser_navigate",
+      "browser_snapshot",
+      "browser_click",
+      "browser_type",
+      "browser_press_key",
+      "browser_take_screenshot",
+      "browser_wait_for",
+      "browser_evaluate",
+      "browser_console_messages",
+      "browser_tabs",
+      "browser_act",
     ]),
   // Agent-PRIVATE MCP servers — names must not collide with the global
   // catalog at `<dataDir>/mcp.json`. The agent-store enforces this on
@@ -330,6 +341,46 @@ export const WebConfigSchema = z.object({
 export type WebConfig = z.infer<typeof WebConfigSchema>;
 
 /**
+ * Browser configuration — managed Chrome via CDP.
+ *
+ * One Chrome process per OpenAcme install under
+ * `<dataDir>/browser-profile/`. Headed by default so the user can log into
+ * accounts that every agent then inherits. Set `headless: true` for
+ * server/CI deployments.
+ */
+export const BrowserConfigSchema = z.object({
+  enabled: z.boolean().default(true),
+  executablePath: z
+    .string()
+    .optional()
+    .describe(
+      "Override path to a Chrome / Brave / Edge / Chromium binary. If unset, common install locations are searched."
+    ),
+  port: z
+    .number()
+    .int()
+    .min(1)
+    .max(65_535)
+    .default(9322)
+    .describe(
+      "Chrome --remote-debugging-port. Default 9322; change if it clashes with another local service."
+    ),
+  headless: z
+    .boolean()
+    .default(false)
+    .describe(
+      "Run Chrome without a visible window. Default false — the user needs to see the window to log in to sites the fleet shares."
+    ),
+  noSandbox: z
+    .boolean()
+    .default(false)
+    .describe(
+      "Pass --no-sandbox to Chrome. Required when running as root in Docker / certain CI images."
+    ),
+});
+export type BrowserConfig = z.infer<typeof BrowserConfigSchema>;
+
+/**
  * Root configuration schema — maps to config.yaml
  *
  * Agents are not stored here. They live as folders under
@@ -343,5 +394,6 @@ export const ConfigSchema = z.object({
   behavior: AgentBehaviorSchema.prefault({}),
   skills: SkillsConfigSchema.prefault({}),
   web: WebConfigSchema.prefault({}),
+  browser: BrowserConfigSchema.prefault({}),
 });
 export type Config = z.infer<typeof ConfigSchema>;

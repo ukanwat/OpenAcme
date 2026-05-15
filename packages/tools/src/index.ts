@@ -26,6 +26,10 @@ export {
   bindTaskStore,
   type TaskStoreBindings,
 } from "./builtins/tasks.js";
+export {
+  bindBrowser,
+  type BrowserBindings,
+} from "./builtins/browser/bindings.js";
 export { SYSTEM_TOOLS, type SystemTool } from "./system.js";
 
 // Import builtins to trigger self-registration
@@ -41,3 +45,4 @@ import "./builtins/process.js";
 import "./builtins/skill.js";
 import "./builtins/memory.js";
 import "./builtins/tasks.js";
+import "./builtins/browser/index.js";
