@@ -1,6 +1,6 @@
 import type Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
-import { and, desc, gt, inArray } from "drizzle-orm";
+import { and, desc, gt, inArray, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { taskEvents, type TaskEventRow } from "../schema.js";
 
@@ -88,9 +88,11 @@ export function createEventStore(db: Database.Database) {
 
     /**
      * Events for the given tasks, newer than `sinceTs`, most-recent-first.
-     * `taskIds` is computed by the caller from the session's involvement
-     * (bound tasks + agent's assigned/created tasks without a session).
-     * Empty `taskIds` returns no rows.
+     * Secondary order by `rowid DESC` so same-second events are stable
+     * in reverse insertion order — without it, a recurring close emits
+     * `task_completed_run` and `status_changed` in the same unixepoch
+     * second and the readback order is undefined, scrambling event log
+     * presentation in the UI and the "Recent activity" prompt section.
      */
     recentForTasks(
       taskIds: string[],
@@ -107,7 +109,7 @@ export function createEventStore(db: Database.Database) {
             gt(taskEvents.createdAt, sinceTs)
           )
         )
-        .orderBy(desc(taskEvents.createdAt))
+        .orderBy(desc(taskEvents.createdAt), sql`rowid desc`)
         .limit(limit)
         .all();
     },
