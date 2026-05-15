@@ -19,6 +19,7 @@ import { registerUploadsRoutes, type UploadsContext } from "./routes/uploads.js"
 import { registerTaskRoutes } from "./routes/tasks.js";
 import { registerSetupRoutes } from "./routes/setup.js";
 import { registerSkillsHubRoutes } from "./routes/skills-hub.js";
+import { SkillHub } from "@openacme/skills";
 import {
   AgentDefinitionSchema,
   MCPServerConfigSchema,
@@ -730,6 +731,14 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
     const deleted = manager.skillRegistry.deleteSkill(skillsDir, name);
     if (!deleted) {
       return c.json({ error: "Skill not found" }, 404);
+    }
+    // If this skill was hub-managed, drop the lockfile entry too so we
+    // don't leave a zombie behind (lock claims installed, disk doesn't).
+    // uninstall() is a no-op if not in the lockfile.
+    try {
+      new SkillHub(skillsDir, manager.skillRegistry).uninstall(name);
+    } catch {
+      // best-effort cleanup; legacy delete already succeeded
     }
     return c.json({ success: true });
   });

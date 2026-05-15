@@ -16,7 +16,7 @@ export const HubLockEntrySchema = z.object({
   contentHash: ContentHashSchema,
   source: SkillSourceIdSchema,
   identifier: z.string().min(1).max(512),
-  resolvedRef: z.string().max(64).optional(),
+  resolvedRef: z.string().max(512).optional(),
   trustLevel: TrustLevelSchema,
   installedAt: z.string().datetime(),
   updatedAt: z.string().datetime(),

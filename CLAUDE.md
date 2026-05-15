@@ -283,9 +283,10 @@ Lives at `packages/server/test/task-scheduler.test.ts` (real DB + temp filesyste
 - **Stores are the boundary** to SQLite. App code uses `SessionStore` / `MessageStore`, not raw `db.prepare`. Agents are filesystem-backed via `AgentStore` (YAML), not in the DB.
 - **Errors**: throw `Error` with a clear message. The server's `createUIMessageStream` surfaces it as a stream error; the CLI's `result.fullStream` `error` event handles the same. Don't swallow.
 - **No emojis** in code or commit messages unless the user asks.
-- **No new docs** unless asked. Working notes belong in PRs / commits, not in `docs/`.
+- **No new docs** unless asked. Working notes belong in commit messages, not in `docs/`.
 - **Comments**: keep short or don't write them. See the **Comments** section below — this is enforced.
 - **No backwards-compat shims** for unreleased / unpublished surfaces — change the code.
+- **Trunk-based, no PRs.** Work commits directly to `main`. Don't open pull requests, don't create feature branches, don't reference a "PR-N" sequence in plans or commit messages — phrase staged work as "commit 1, commit 2…" instead. Each commit should pass type-check + lint on its own.
 
 ---
 

@@ -47,12 +47,14 @@ export function BrowseTab({ onInstalled }: { onInstalled?: () => void }) {
   const abortRef = useRef<AbortController | null>(null);
 
   // First mount: pull a default empty-query browse so the user sees
-  // something immediately. Trusted-repo results surface first.
+  // something immediately. Also re-fetch whenever the source filter
+  // changes — without this the dropdown looks dead until the user
+  // hits Search.
   useEffect(() => {
-    void doSearch("");
+    void doSearch(query);
     return () => abortRef.current?.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [source]);
 
   async function doSearch(q: string) {
     abortRef.current?.abort();
