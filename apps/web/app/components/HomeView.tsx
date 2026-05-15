@@ -107,12 +107,18 @@ function SessionRow({ s, onClick, compact, active }: RowProps) {
       <button
         onClick={onClick}
         className={cn(
-          "group flex w-full items-start gap-2 border-b border-paper-rule px-3 py-2 text-left transition-colors",
+          "group relative flex w-full items-start gap-2 border-b border-paper-rule px-3 py-2 text-left transition-colors",
           active
-            ? "bg-sidebar-accent text-sidebar-accent-foreground"
+            ? "bg-paper text-ink"
             : "hover:bg-sidebar-accent/40"
         )}
       >
+        {active && (
+          <span
+            className="absolute inset-y-0 left-0 w-[3px] bg-plot-red"
+            aria-hidden
+          />
+        )}
         <span
           className={cn("status-dot mt-1.5", statusDot)}
           aria-hidden
