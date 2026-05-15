@@ -256,9 +256,16 @@ export function registerUploadsRoutes(
       if (!fs.existsSync(abs)) return c.json({ error: "Not found" }, 404);
       const stat = fs.statSync(abs);
       const stream = fs.createReadStream(abs);
-      const safeName = filename.replace(/"/g, "");
+      // Content-Disposition is HTTP header-safe = ASCII only. Filenames may
+      // contain non-ASCII (e.g. macOS screenshots use U+202F before AM/PM);
+      // emit RFC 5987 filename*= for the precise name plus an ASCII-only
+      // fallback. Without this, Response throws on non-ASCII header bytes.
+      const asciiName = filename.replace(/[^\x20-\x7E]/g, "_").replace(/"/g, "");
       c.header("Content-Length", String(stat.size));
-      c.header("Content-Disposition", `inline; filename="${safeName}"`);
+      c.header(
+        "Content-Disposition",
+        `inline; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(filename)}`
+      );
       const webStream = new ReadableStream<Uint8Array>({
         start(controller) {
           stream.on("data", (chunk: Buffer | string) =>
