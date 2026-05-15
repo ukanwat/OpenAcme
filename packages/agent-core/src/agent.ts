@@ -26,6 +26,11 @@ import { findRelevantMemories, type RelevantMemory } from "./selector.js";
 import { collectSurfacedMemories } from "./surfaced.js";
 import { runExtractor } from "./extractor.js";
 import {
+  runTitle,
+  extractTitleInputs,
+  sliceFallbackTitle,
+} from "./title.js";
+import {
   anthropicCachePolicy,
   applyAnthropicCacheControl,
 } from "./cache-control.js";
@@ -167,6 +172,9 @@ export class Agent {
   private extractionCursor = new Map<string, string>();
   // Coalesces re-entrant fires (fast successive turns → one fork).
   private extractionInProgress = new Set<string>();
+  // Per-session lock so concurrent onFinish callbacks coalesce into one
+  // structured-subagent call. Released in `.finally(...)`.
+  private titleInProgress = new Set<string>();
 
   constructor(
     config: AgentConfig,
@@ -995,6 +1003,64 @@ export class Agent {
       })
       .finally(() => {
         this.extractionInProgress.delete(opts.sessionId);
+      });
+  }
+
+  /**
+   * Fire-and-forget session title generation. LLM (structured subagent)
+   * primary; slice-of-first-assistant-text fallback. No-op if the session
+   * already has a title or another title call is in flight.
+   */
+  fireTitle(opts: {
+    sessionId: string;
+    /** Session history including the just-finished assistant turn. */
+    sessionMessages: readonly UIMessage[];
+    abortSignal?: AbortSignal;
+  }): void {
+    if (this.titleInProgress.has(opts.sessionId)) return;
+
+    const session = this.sessionStore.get(opts.sessionId);
+    if (!session || session.title) return;
+
+    const { userText, assistantText } = extractTitleInputs(opts.sessionMessages);
+    if (!userText && !assistantText) return;
+
+    const writeFallback = () => {
+      const fallback = sliceFallbackTitle(opts.sessionMessages);
+      if (!fallback) return;
+      try {
+        this.sessionStore.updateTitle(opts.sessionId, fallback);
+      } catch (e) {
+        console.warn(
+          `[title] agent=${this.config.id} session=${opts.sessionId} fallback write failed: ${
+            e instanceof Error ? e.message : String(e)
+          }`
+        );
+      }
+    };
+
+    this.titleInProgress.add(opts.sessionId);
+    void runTitle({
+      parent: this,
+      userText,
+      assistantText,
+      abortSignal: opts.abortSignal,
+    })
+      .then((title) => {
+        if (title) {
+          this.sessionStore.updateTitle(opts.sessionId, title);
+          return;
+        }
+        writeFallback();
+      })
+      .catch((e) => {
+        console.warn(
+          `[title] agent=${this.config.id} session=${opts.sessionId} threw: ${e instanceof Error ? e.message : String(e)}`
+        );
+        writeFallback();
+      })
+      .finally(() => {
+        this.titleInProgress.delete(opts.sessionId);
       });
   }
 

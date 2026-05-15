@@ -448,21 +448,6 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
             parts: sanitizedParts as unknown[],
           });
 
-          // Title from the assistant's first text-part if the session
-          // doesn't have one yet.
-          const session = manager.sessionStore.get(effectiveSessionId);
-          if (session && !session.title) {
-            const text = responseMessage.parts
-              .filter(
-                (p): p is { type: "text"; text: string } =>
-                  (p as { type?: unknown }).type === "text"
-              )
-              .map((p) => p.text)
-              .join(" ")
-              .slice(0, 80)
-              .replace(/\n/g, " ");
-            if (text) manager.sessionStore.updateTitle(effectiveSessionId, text);
-          }
           manager.sessionStore.touch(effectiveSessionId);
         } catch (e) {
           console.error(
@@ -476,12 +461,12 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
         // in-progress guard so re-entrant fires (multiple turns
         // arriving fast) coalesce into one fork. Skip-paths inside the
         // extractor cover main-agent-already-wrote / no-new-content.
+        const turnHistory = [
+          ...committed,
+          responseMessage as unknown as UIMessage,
+        ];
         try {
           const agent = manager.getAgent(agentId);
-          const turnHistory = [
-            ...committed,
-            responseMessage as unknown as UIMessage,
-          ];
           agent.fireExtractor({
             sessionId: effectiveSessionId,
             sessionMessages: turnHistory,
@@ -489,6 +474,21 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
         } catch (e) {
           console.warn(
             `[memory.extractor] launch failed for agent=${agentId}: ${e instanceof Error ? e.message : String(e)}`
+          );
+        }
+
+        // Session title — fire-and-forget. LLM (structured subagent)
+        // primary; slice-of-first-assistant-text fallback. No-op once
+        // the session has a title.
+        try {
+          const agent = manager.getAgent(agentId);
+          agent.fireTitle({
+            sessionId: effectiveSessionId,
+            sessionMessages: turnHistory,
+          });
+        } catch (e) {
+          console.warn(
+            `[title] launch failed for agent=${agentId}: ${e instanceof Error ? e.message : String(e)}`
           );
         }
       },
