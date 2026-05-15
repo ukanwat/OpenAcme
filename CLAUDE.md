@@ -4,8 +4,6 @@ TypeScript agent platform. Multi-provider LLM with streaming tool-calls, SQLite-
 
 **Design lens.** This is an *AI workforce* platform — a structured set of role-specialized agents working for a small human team — not a single-agent assistant. Each agent carries a `name`, a `role` (third-person paragraph for coworkers), and a `persona` (second-person system prompt), and owns its own config, model, tools, skills, MCP servers, sessions, tasks, memory, workspace, and resources. When designing new state or behavior, the question is "does this hold for N agents working in parallel under different roles?" — not "does this work for the agent." Anywhere you'd reach for a global table or a singleton, default to scoping by `agent_id` instead. Cross-agent work — one agent assigning a task to another, one agent looking up coworkers via `agent_list` — is a first-class primitive, so anything you add should be addressable by agent.
 
-The task subsystem runs end-to-end today: filesystem `TaskStore` (`packages/tasks`, shared across the workforce; isolation by `assignee`), `task_*` system tools (`packages/tools/src/builtins/tasks.ts`), task comments + events in SQLite, and `TaskScheduler` (`packages/server/src/task-scheduler.ts`) that lazily allocates sessions, arms future `start_at`s via croner, runs the agent autonomously through `Agent.runAutonomous`, and self-resets recurring tasks (cron + interval) on `done`. Any agent can `task_create({assignee: other})`.
-
 ---
 
 ## Workspace layout
@@ -53,7 +51,7 @@ Default server: `127.0.0.1:3210`. Default model: `openrouter` + `anthropic/claud
 
 ## The agent loop — request path
 
-User message → response, end-to-end. We use AI SDK v6's `UIMessage` shape end-to-end and the SDK's UIMessageStream protocol on the wire.
+User message → response, end-to-end.
 
 1. **Web** `apps/web/app/page.tsx` uses `useChat` (`@ai-sdk/react`) + `DefaultChatTransport` with `prepareSendMessagesRequest` to POST `{ agentId, sessionId?, messages: UIMessage[] }` to `/api/chat`.
 2. **Server route** `packages/server/src/app.ts` (`/api/chat`):
@@ -180,15 +178,11 @@ TUI (`apps/cli/src/tui/`) is React-on-Ink. `render.tsx` mounts the app; `state.t
 
 `apps/web/` — Next.js 16 App Router. Pages: `/` (chat), `/agents`, `/tasks`, `/skills` (Browse + Sources tabs for the Skills Hub), `/settings` (model/auth/MCP/Context — the **Context** tab edits `<dataDir>/AGENTS.md`). Tailwind + Radix primitives + react-markdown. First-run wizard at `/setup` handles provider credentials when no auth is configured.
 
-**One URL, dev and published: `http://127.0.0.1:3210`.** In dev, Hono fronts both API and UI — `/api/*` is handled in-process; everything else (including `_next/*` HMR over WebSocket) is proxied to a Next dev server bound to a private loopback port. In published installs, the static export at `packages/server/web/` (copied in by `prepack`) is served by Hono on the same `:3210`. `next.config.js`'s rewrites are gone — same-origin works because the browser only ever talks to `:3210`.
-
-Dev wiring: `packages/server/scripts/dev.mjs` and `apps/web/scripts/dev.mjs` share `scripts/lib/dev-ports.mjs`, which reads `<dataDir>/config.yaml`'s `server.port` and derives the web dev port as **`server.port` + 10**. Single source of truth, no env vars. A `~/.openacme-test/config.yaml` with `server.port: 3219` automatically uses `:3229` for `next dev`; two parallel `pnpm dev` sessions against different data dirs just work as long as their API ports differ:
+**One URL in dev and published: `http://127.0.0.1:3210`.** See the gotcha below for the proxy/static-fallback detail. Dev wiring: `scripts/lib/dev-ports.mjs` reads `<dataDir>/config.yaml`'s `server.port` and derives the web dev port as `server.port + 10` — single source of truth, no env vars. Two parallel `pnpm dev` sessions against different data dirs just work as long as their API ports differ:
 
 ```sh
 OPENACME_DATA_DIR=~/.openacme-test pnpm dev   # → :3219 + :3229
 ```
-
-This is dev-only — published installs serve everything on `server.port` from the bundled static and don't run Next.
 
 The chat page uses `@ai-sdk/react`'s `useChat` with a `DefaultChatTransport` configured via `prepareSendMessagesRequest` to inject `agentId` + `sessionId` into the body each send. Streaming is the SDK's UIMessageStream protocol — the SDK handles parsing; we don't write our own. Custom data parts (`data-session`) arrive via the `onData` callback; `useChat`'s `messages` is the canonical render source.
 
@@ -331,7 +325,6 @@ The scheduler is the **wake mechanism**, not the dispatcher. `runAutonomous({ses
 - `scheduleWake` debounces 7s to coalesce bursts and floors a 10s gap between successive wakes per session. Rate-limit is a **delay, not a drop** — events that arrive in the floor window fire when it opens. Events arriving DURING a turn set `wakeRequestedDuringTurn` so the wake re-fires after the turn ends.
 - `task_assigned` is emitted with `actor: null` — new work shouldn't be echo-suppressed, otherwise a self-assigned task in the agent's own session never wakes. Creator info is in the payload.
 - `reconcile()` (called via `TaskStore.setOnChange`) covers the few mutations that don't emit events (e.g. a bare `start_at` patch with no status change) — re-arms crons only, no wakes.
-- Per-agent serialization via `chains` map; `pendingSessions` set dedups concurrent wakes.
 
 ### Mid-turn event injection
 
@@ -363,25 +356,14 @@ Lives at `packages/server/test/task-scheduler.test.ts` (real DB + temp filesyste
 - **Comments**: keep short or don't write them. See the **Comments** section below — this is enforced.
 - **No backwards-compat shims** for unreleased / unpublished surfaces — change the code.
 - **Trunk-based, no PRs.** Work commits directly to `main`. Don't open pull requests, don't create feature branches, don't reference a "PR-N" sequence in plans or commit messages — phrase staged work as "commit 1, commit 2…" instead. Each commit should pass type-check + lint on its own.
-
----
-
-## Comments
-
-**Short, or nothing.** One line target, two cap. No multi-line blocks. Long comments are usually not useful — they're skimmed past and rot fastest.
-
-**Don't be too specific.** Naming exact functions, callers, line numbers, file paths, or "this used by X / added for Y" pins the comment to a snapshot of the code. The code moves; the comment lies. Describe the *why* at the level of the invariant, not the surrounding scaffolding.
-
-Write one only when the *why* is genuinely non-obvious from the code. A clear name plus a tight signature usually says enough.
-
-Comments rot. Every reader has to decide whether they're still true, and the cost compounds across the codebase. Long *why* belongs in the commit message. On review, the default action against a stray multi-line or over-specific comment is to delete or compress it.
+- **Comments**: only when the *why* is non-obvious. One-line target, two cap, no multi-line blocks. Don't name exact callers/files/lines — that rots; describe the invariant. Long *why* goes in the commit message.
 
 ---
 
 ## Non-obvious gotchas
 
 - **Session id pinning via transient data part** — server emits `data-session` (transient) inside `createUIMessageStream` BEFORE merging `result.toUIMessageStream()`. useChat's `onData` reads it and pins `activeSessionId` for subsequent sends. The session row is created up-front in the route so the FK in the message persist on `onFinish` doesn't fail. Don't move the row creation; don't drop the transient `data-session`.
-- **Reactive 413 retry is currently disabled.** The pre-migration shape had a two-attempt loop that compressed-and-retried on context-overflow. With `createUIMessageStream` that requires aborting a partly-merged writer; we deferred it. 413s surface as stream errors today. Re-add as a follow-up.
+- **Reactive 413 retry is currently disabled** — aborting a partly-merged `createUIMessageStream` writer was non-trivial. 413s surface as stream errors today.
 - **System-prompt cache invalidation is manual.** Changing an agent's tools / skills mid-process won't take effect until you call `invalidateSystemPromptCache()` or restart. AgentManager evicts the cached `Agent` on agent-definition mutation.
 - **Attachment URLs round-trip to disk paths** — `/api/attachments/<sessionId>/<attId>/<filename>` serves directly from `<dataDir>/attachments/<sessionId>/<attId>/<filename>`. No DB sidecar lookup. Pre-chat uploads land under `__pending__/<pendingId>/...` and `commit()` (in `routes/uploads.ts`) moves them under the real session at `/api/chat` time.
 - **`inlineFileAttachments` is required at chat time.** Providers can't fetch our local URLs; the agent reads the bytes off disk and rewrites to a `data:` URL before `convertToModelMessages`. If you add a new local-URL scheme, extend `parseAttachmentUrl` in `messages.ts`.
@@ -450,7 +432,7 @@ pnpm agent status  --data-dir ~/.openacme-test --no-service
 
 This serves the bundled UI if you've run `pnpm build` first (Hono falls back to `apps/web/out/` when `OPENACME_DEV_PROXY_TARGET` is unset). `--no-service` keeps it as a detached process; always `restart` rather than spawning a second daemon on the same slot.
 
-**Driving the browser for UI tests.** Playwright CLI is available globally; install Chromium once in a scratch dir (`mkdir -p /tmp/pwt && cd /tmp/pwt && npm i @playwright/test && npx playwright install chromium`) and drive the UI from a one-shot `.mjs` calling `chromium.launch()`. Take screenshots, open them via the Read tool, and verify visually — don't trust the agent's narrative without looking at the actual render.
+**Driving the browser for UI tests.** Playwright is global. One-time: `mkdir -p /tmp/pwt && cd /tmp/pwt && npm i @playwright/test && npx playwright install chromium`. Drive from one-shot `.mjs` via `chromium.launch()`, screenshot, open via Read, verify visually — don't trust narrative without looking at the render.
 
 ---
 
