@@ -166,6 +166,7 @@ export class AgentManager {
     this.taskStore = new TaskStore(path.join(config.dataDir, "tasks"), {
       commentStore: this.commentStore,
       eventStore: this.eventStore,
+      validateSession: (id) => this.sessionStore.get(id) !== null,
     });
     bindTaskStore({ store: this.taskStore });
     this.taskScheduler = new TaskScheduler({

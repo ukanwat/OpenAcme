@@ -190,6 +190,10 @@ describe("TaskScheduler — failure attribution", () => {
       .filter((c) => c.author === "system:scheduler");
     expect(sysComments.length).toBeGreaterThan(0);
     expect(sysComments.some((c) => /timeout/i.test(c.body))).toBe(true);
+    // Back-off invariant: parked task carries a future start_at.
+    const startAt = final?.start_at ? Date.parse(final.start_at) : NaN;
+    expect(Number.isFinite(startAt)).toBe(true);
+    expect(startAt - Date.now()).toBeGreaterThan(60_000);
   }, 15000);
 
   it("on generic error, parks the in_progress task with an [error] comment", async () => {
@@ -369,6 +373,200 @@ describe("TaskScheduler — recurring tasks", () => {
     // The new start_at is in the future (we just fired ms ago).
     const start = Date.parse(closed.start_at!);
     expect(start).toBeGreaterThan(Date.now());
+  });
+});
+
+describe("TaskScheduler — dep_unblocked cross-session", () => {
+  it("wakes a different session when a same-agent dep closes", async () => {
+    const agent = makeAgent("alpha");
+    // Both tasks live under the same agent. We claim each in its own
+    // session and observe whether closing T1 in S1 wakes S2 for T2.
+    const t1 = await taskStore.create({
+      title: "blocker",
+      assignee: "alpha",
+      created_by: "alpha",
+    });
+    const t2 = await taskStore.create({
+      title: "dependent",
+      assignee: "alpha",
+      created_by: "alpha",
+      depends_on: [t1.id],
+    });
+    expect(t2.status).toBe("blocked");
+
+    // Allocate S1 + S2 manually so we can pin both before start().
+    const s1 = sessionStore.create("alpha", { title: "s1" });
+    const s2 = sessionStore.create("alpha", { title: "s2" });
+    await taskStore.update(t1.id, { session_id: s1.id });
+    await taskStore.update(t2.id, { session_id: s2.id });
+    await taskStore.update(t1.id, { status: "in_progress" });
+
+    await scheduler.start();
+    // Drain any startup wakes (S2 has blocked T2 only — no eligible work).
+    await waitFor(() => agent.runAutonomous.mock.calls.length > 0);
+    await new Promise((r) => setTimeout(r, 100));
+    const baseline = agent.runAutonomous.mock.calls.length;
+
+    // alpha closes T1 in S1 → emits dep_unblocked for T2 (in S2). Before
+    // the fix this was echo-suppressed because actor=closer=alpha matched
+    // S2.agentId. After the fix dep_unblocked emits with actor=null.
+    await taskStore.update(t1.id, { status: "done" }, { actor: "alpha" });
+
+    // 7s debounce + up to 10s rate-limit (startup wake bumped s2's
+    // lastWakeAt). Pick a generous bound rather than racing it.
+    await waitFor(
+      () =>
+        agent.runAutonomous.mock.calls
+          .slice(baseline)
+          .some(
+            (c) =>
+              (c[0] as { sessionId: string }).sessionId === s2.id
+          ),
+      14000
+    );
+  }, 18000);
+});
+
+describe("TaskScheduler — stuck-task watchdog", () => {
+  it("parks the head-of-queue after 3 consecutive no-claim turns", async () => {
+    const agent = makeAgent("nada");
+    // Agent never claims anything — just returns.
+    agent.runAutonomous.mockImplementation(async () => {});
+
+    const t = await taskStore.create({
+      title: "untouched",
+      assignee: "nada",
+      created_by: "nada",
+    });
+    await scheduler.start();
+    // First turn from startup wake.
+    await waitFor(() => agent.runAutonomous.mock.calls.length >= 1);
+
+    // Drive 2 more wakes via fresh foreign events (rate-limit + debounce
+    // means each takes ~10s in real time).
+    for (let i = 0; i < 3; i++) {
+      const callsBefore = agent.runAutonomous.mock.calls.length;
+      await taskStore.addComment({
+        taskId: t.id,
+        author: `outsider-${i}`,
+        body: `nudge ${i}`,
+      });
+      await waitFor(
+        () => agent.runAutonomous.mock.calls.length > callsBefore,
+        14000
+      );
+    }
+    // After at least 3 no-claim turns the watchdog should have parked.
+    await waitFor(() => taskStore.get(t.id)?.status === "blocked", 2000);
+
+    const sys = taskStore
+      .listComments(t.id, { kinds: ["system"] })
+      .filter((c) => /watchdog/i.test(c.body));
+    expect(sys.length).toBeGreaterThan(0);
+  }, 60000);
+
+  it("resets the streak when the agent claims a task", async () => {
+    const agent = makeAgent("ok");
+    let i = 0;
+    agent.runAutonomous.mockImplementation(async () => {
+      i++;
+      // Claim on the 2nd call.
+      if (i === 2) {
+        const mine = taskStore.list({ assignee: "ok" });
+        if (mine[0]) await taskStore.update(mine[0].id, { status: "in_progress" });
+      }
+    });
+
+    const t = await taskStore.create({
+      title: "touched",
+      assignee: "ok",
+      created_by: "ok",
+    });
+    await scheduler.start();
+    await waitFor(() => agent.runAutonomous.mock.calls.length >= 1);
+    // Drive 2 wakes so the agent gets to call 2 (claim happens) then call 3+.
+    for (let n = 0; n < 3; n++) {
+      const callsBefore = agent.runAutonomous.mock.calls.length;
+      await taskStore.addComment({
+        taskId: t.id,
+        author: `pinger-${n}`,
+        body: `n ${n}`,
+      });
+      await waitFor(
+        () => agent.runAutonomous.mock.calls.length > callsBefore,
+        14000
+      );
+    }
+    // Task should be in_progress (claimed on call 2 and not flipped back).
+    // Watchdog should NOT have parked.
+    expect(taskStore.get(t.id)?.status).toBe("in_progress");
+    const sys = taskStore
+      .listComments(t.id, { kinds: ["system"] })
+      .filter((c) => /watchdog/i.test(c.body));
+    expect(sys.length).toBe(0);
+  }, 60000);
+});
+
+describe("TaskScheduler — interactive busy guard", () => {
+  it("blocks autonomous wake while session is marked interactive-busy", async () => {
+    const agent = makeAgent("busy");
+    const t = await taskStore.create({
+      title: "x",
+      assignee: "busy",
+      created_by: "busy",
+    });
+    const s = sessionStore.create("busy", { title: "interactive" });
+    await taskStore.update(t.id, { session_id: s.id, status: "in_progress" });
+
+    await scheduler.start();
+    await waitFor(() => agent.runAutonomous.mock.calls.length > 0);
+    const baseline = agent.runAutonomous.mock.calls.length;
+
+    scheduler.markInteractiveBusy(s.id);
+    // Re-arm the rate-limit so the next wake isn't already pending.
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Drop a foreign event for this session — should NOT wake while busy.
+    await taskStore.addComment({
+      taskId: t.id,
+      author: "outsider",
+      body: "ping",
+    });
+    await new Promise((r) => setTimeout(r, 9000));
+    expect(agent.runAutonomous.mock.calls.length).toBe(baseline);
+
+    // Clear — the queued wake should now fire (within debounce + a bit).
+    scheduler.clearInteractiveBusy(s.id);
+    await waitFor(
+      () => agent.runAutonomous.mock.calls.length > baseline,
+      14000
+    );
+  }, 30000);
+});
+
+describe("TaskScheduler — orphaned session cleanup", () => {
+  it("clears dangling session_id when an event arrives for a missing session", async () => {
+    makeAgent("orph");
+    const t = await taskStore.create({
+      title: "orphaned",
+      assignee: "orph",
+      created_by: "orph",
+    });
+    // Manually bind to a session that we then yank out from under it.
+    const ghost = sessionStore.create("orph", { title: "ghost" });
+    await taskStore.update(t.id, { session_id: ghost.id });
+    sessionStore.delete(ghost.id);
+    expect(taskStore.get(t.id)?.session_id).toBe(ghost.id);
+
+    await scheduler.start();
+    // Drop a comment to push an event through onEvent.
+    await taskStore.addComment({
+      taskId: t.id,
+      author: "outsider",
+      body: "ping",
+    });
+    await waitFor(() => taskStore.get(t.id)?.session_id === null, 2000);
+    expect(taskStore.get(t.id)?.session_id).toBeNull();
   });
 });
 

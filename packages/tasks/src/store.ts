@@ -15,6 +15,28 @@
  *   - at most one `in_progress` per `session_id`.
  *   - inputs validated against the frontmatter schema at the write
  *     boundary so a bad input can't land malformed YAML on disk.
+ *
+ * Status state machine (legal transitions only — anything else is a bug):
+ *
+ *   open ─────► in_progress    (assignee claims via update; requires deps satisfied)
+ *   open ─────► blocked        (auto, when deps regress)
+ *   open ─────► done/canceled  (terminal)
+ *
+ *   in_progress ──► blocked      (via TaskStore.park, by scheduler on
+ *                                 timeout/error or watchdog)
+ *   in_progress ──► done/canceled (terminal; assignee or human)
+ *
+ *   blocked ──► open             (auto, when deps satisfy via unblockDependents)
+ *   blocked ──► done/canceled    (terminal; bypasses in_progress)
+ *
+ *   done ────► open              (ONLY for recurring tasks — self-reset
+ *                                 to next fire. Non-recurring done is
+ *                                 terminal.)
+ *   canceled ──► (nothing)       (kill switch; never resets, even for recurring)
+ *
+ * Adding a new status: extend `TASK_STATUSES`, then audit `computeAutoStatus`,
+ * the closing branches in `update()`, the recurring self-reset, scheduler's
+ * `park` / `watchdogPark`, `hasAnyActive`, and prompt rendering.
  */
 
 import { randomBytes, randomUUID } from "node:crypto";
@@ -24,6 +46,7 @@ import * as path from "node:path";
 import matter from "gray-matter";
 import { z } from "zod";
 import {
+  NullableIso,
   RecurrenceSchema,
   TaskFrontmatterSchema,
   type Recurrence,
@@ -34,11 +57,11 @@ import {
   type TaskStatus,
   type TaskUpdate,
 } from "./types.js";
+import { computeNextFire, validateRecurrence } from "./recurrence.js";
 import {
-  computeNextFire,
-  describeRecurrence,
-  validateRecurrence,
-} from "./recurrence.js";
+  renderForPrompt as renderForPromptPure,
+  renderRecentActivity as renderRecentActivityPure,
+} from "./prompt-render.js";
 import type {
   Comment,
   CommentInput,
@@ -51,7 +74,6 @@ import type {
 
 // Reject malformed inputs at the write boundary so a bad PATCH can't
 // land garbage on disk that the next `list()` then silently drops.
-const NullableIso = z.string().datetime({ offset: true }).nullable();
 const TaskCreateInputSchema = z.object({
   title: z.string().min(1).max(500),
   assignee: z.string().min(1),
@@ -101,18 +123,19 @@ export interface TaskStoreOptions {
   commentStore?: CommentStorePort;
   /** Optional: event log store. If absent, no events emitted. */
   eventStore?: EventStorePort;
+  /** Optional: session existence check. When provided, create/update
+   *  reject task bindings to a session id the check returns false for —
+   *  prevents agents from hallucinating session uuids that would become
+   *  scheduler zombies. */
+  validateSession?: (id: string) => boolean;
 }
-
-const SYSTEM_AUTHOR_PREFIX = "system:";
 
 function isoNow(): string {
   return new Date().toISOString();
 }
 
-// Track which files we've already warned about. `list()` runs on every
-// poke / render, so without this a single broken file spams the log
-// indefinitely. Cleared the moment a file parses successfully so the
-// next failure (after edits) re-warns.
+// Per-file dedup so a single broken task doesn't spam the log every
+// time `list()` runs. Cleared on a successful re-parse.
 const warnedMalformed = new Set<string>();
 
 function parseTaskFile(filePath: string): Task | null {
@@ -154,10 +177,12 @@ export class TaskStore {
   private onChange: OnChangeFn | null = null;
   private readonly commentStore: CommentStorePort | null;
   private readonly eventStore: EventStorePort | null;
+  private readonly validateSession: ((id: string) => boolean) | null;
 
   constructor(readonly tasksDir: string, options: TaskStoreOptions = {}) {
     this.commentStore = options.commentStore ?? null;
     this.eventStore = options.eventStore ?? null;
+    this.validateSession = options.validateSession ?? null;
   }
 
   setOnChange(fn: OnChangeFn | null): void {
@@ -261,6 +286,17 @@ export class TaskStore {
         throw new TaskStoreError(
           "unknown_parent",
           `parent_id ${JSON.stringify(input.parent_id)} not found`
+        );
+      }
+
+      if (
+        input.session_id &&
+        this.validateSession &&
+        !this.validateSession(input.session_id)
+      ) {
+        throw new TaskStoreError(
+          "unknown_session",
+          `session_id ${JSON.stringify(input.session_id)} does not exist`
         );
       }
 
@@ -387,6 +423,22 @@ export class TaskStore {
         nextSessionId = patch.session_id ?? null;
       } else if (reassigning) {
         nextSessionId = null;
+      }
+
+      // Reject explicit binding to an unknown session id. Internal
+      // scheduler/test paths that rebind to a freshly-created session
+      // pre-existing-validate via the same hook.
+      if (
+        explicitSession &&
+        nextSessionId &&
+        nextSessionId !== existing.session_id &&
+        this.validateSession &&
+        !this.validateSession(nextSessionId)
+      ) {
+        throw new TaskStoreError(
+          "unknown_session",
+          `session_id ${JSON.stringify(nextSessionId)} does not exist`
+        );
       }
 
       const nextDeps = patch.depends_on ?? existing.depends_on;
@@ -528,6 +580,23 @@ export class TaskStore {
 
       await this.writeFile(next);
 
+      // Recurring-completion signal lives in its own event kind so the
+      // subsequent status_changed correctly reads in_progress → open (the
+      // reset state) without burying the completion in a misleading payload.
+      if (didReset) {
+        this.emitEvent({
+          taskId: next.id,
+          agentId: next.assignee,
+          actor: opts?.actor ?? null,
+          kind: "task_completed_run",
+          payload: {
+            runs: next.runs,
+            last_run_at: next.last_run_at,
+            next_fire: next.start_at,
+          },
+        });
+      }
+
       const statusActuallyChanged = next.status !== existing.status;
       if (statusActuallyChanged) {
         this.emitEvent({
@@ -541,11 +610,9 @@ export class TaskStore {
 
       // Dependents only unblock on a real terminal "done". A recurring
       // task that self-reset isn't actually done — it's pending its
-      // next fire — so dependents must keep waiting. The closer's
-      // actor propagates to dep_unblocked events so the assigner of a
-      // dependent isn't echo-suppressed by a different agent's done.
+      // next fire — so dependents must keep waiting.
       if (isClosing && nextStatus === "done" && !didReset) {
-        await this.unblockDependents(next.id, byId, opts?.actor ?? null);
+        await this.unblockDependents(next.id);
       }
 
       this.fireOnChange();
@@ -619,6 +686,32 @@ export class TaskStore {
    * than the staleness threshold is reset to `open`. Returns the ids
    * that were reset.
    */
+  /**
+   * Park a task: flip to `blocked` with a future `start_at` and append
+   * a `system:scheduler` comment explaining why. The scheduler uses this
+   * for both failure attribution (`parkInProgress`) and watchdog stalls
+   * (`watchdogPark`). Single helper means the "blocked + back-off +
+   * system note" pattern lives in one place.
+   */
+  async park(input: {
+    id: string;
+    retryAt: Date;
+    reason: string;
+  }): Promise<void> {
+    const retryAtIso = input.retryAt.toISOString();
+    await this.update(
+      input.id,
+      { status: "blocked", start_at: retryAtIso },
+      { actor: "system:scheduler" }
+    );
+    await this.addComment({
+      taskId: input.id,
+      author: "system:scheduler",
+      kind: "system",
+      body: `${input.reason} — retry not before ${retryAtIso}`,
+    });
+  }
+
   async sweepStale(now: Date = new Date()): Promise<string[]> {
     const stale = this.list({ status: "in_progress" }).filter((t) => {
       const updated = Date.parse(t.updated_at);
@@ -648,138 +741,19 @@ export class TaskStore {
     sessionExistsFn: (sid: string) => boolean,
     now: Date = new Date()
   ): string {
-    const all = this.list();
-    const byId = new Map(all.map((t) => [t.id, t]));
-    const mine = all.filter((t) => t.assignee === agentId);
-    const createdByMe = all.filter(
-      (t) =>
-        t.created_by === agentId &&
-        t.assignee !== agentId &&
-        t.status !== "done" &&
-        t.status !== "canceled"
+    return renderForPromptPure(
+      {
+        list: () => this.list(),
+        commentCounts: (ids) => this.commentCounts(ids),
+        latestNonSystemComment: (id) => this.latestNonSystemComment(id),
+      },
+      agentId,
+      currentSessionId,
+      sessionExistsFn,
+      now
     );
-
-    const inThisSession = mine.filter(
-      (t) => t.session_id === currentSessionId
-    );
-
-    const active = inThisSession.filter((t) => t.status === "in_progress");
-    const queuedHere = inThisSession
-      .filter(
-        (t) =>
-          t.status === "open" &&
-          depsSatisfied(t.depends_on, byId) &&
-          !isFutureStart(t.start_at, now)
-      )
-      .sort((a, b) => a.created_at.localeCompare(b.created_at));
-    const scheduledLater = inThisSession
-      .filter((t) => t.status === "open" && isFutureStart(t.start_at, now))
-      .sort((a, b) =>
-        (a.start_at ?? "").localeCompare(b.start_at ?? "")
-      );
-    const blocked = inThisSession.filter((t) => t.status === "blocked");
-
-    const otherSessions = mine.filter((t) => {
-      if (t.session_id === currentSessionId) return false;
-      if (t.status === "done" || t.status === "canceled") return false;
-      if (!t.session_id) return false;
-      return sessionExistsFn(t.session_id);
-    });
-
-    // Comment counts for everything we'll render — one bulk lookup keeps
-    // the prompt build cheap even if the agent has hundreds of tasks.
-    const visibleIds = new Set<string>();
-    for (const t of [
-      ...active,
-      ...queuedHere,
-      ...scheduledLater,
-      ...blocked,
-      ...otherSessions,
-      ...createdByMe,
-    ]) {
-      visibleIds.add(t.id);
-    }
-    const counts = this.commentCounts(Array.from(visibleIds));
-    const tag = (t: Task): string => {
-      const n = counts.get(t.id) ?? 0;
-      return n > 0 ? ` (${n} comment${n === 1 ? "" : "s"})` : "";
-    };
-
-    const sections: string[] = [];
-
-    if (active.length > 0) {
-      sections.push(
-        renderSection("Active in this session (currently working)", active, (t) => {
-          const due = t.due_at ? ` (due ${t.due_at})` : "";
-          return `- [${t.id}]${due} ${t.title}${recurrenceTag(t)}${tag(t)}`;
-        })
-      );
-    }
-    if (queuedHere.length > 0) {
-      sections.push(
-        renderSection(
-          "Queued in this session (next up, in order)",
-          queuedHere,
-          (t) => `- [${t.id}] ${t.title}${recurrenceTag(t)}${tag(t)}`
-        )
-      );
-    }
-    if (scheduledLater.length > 0) {
-      sections.push(
-        renderSection(
-          "Scheduled later (in this session, starts at T)",
-          scheduledLater,
-          (t) =>
-            `- [${t.id}] starts ${t.start_at} — ${t.title}${recurrenceTag(t)}${tag(t)}`
-        )
-      );
-    }
-    if (blocked.length > 0) {
-      sections.push(
-        renderSection("Blocked on dependencies", blocked, (t) => {
-          const unmet = t.depends_on.filter((d) => {
-            const dep = byId.get(d);
-            return !dep || dep.status !== "done";
-          });
-          return `- [${t.id}] ${t.title}${recurrenceTag(t)}${tag(t)} — waiting on [${unmet.join(", ")}]`;
-        })
-      );
-    }
-    if (otherSessions.length > 0) {
-      sections.push(
-        renderSection(
-          "In another session (read-only awareness — don't re-handle)",
-          otherSessions,
-          (t) =>
-            `- [${t.id}] ${t.title}${recurrenceTag(t)}${tag(t)} — bound to session ${t.session_id}`
-        )
-      );
-    }
-    if (createdByMe.length > 0) {
-      // Surface a recent-activity hint for tasks I delegated. Without
-      // messaging, this is the only signal that pulls assigners back to
-      // tasks the assignee touched. Show author + relative time + kind,
-      // not the comment body — content lives in `task_comments`.
-      sections.push(
-        renderSection(
-          "Created by me, assigned to others",
-          createdByMe,
-          (t) => {
-            const recent = this.latestNonSystemComment(t.id);
-            const hint = recent
-              ? ` — last comment by ${recent.author} ${formatRelativeFrom(recent.createdAt, now)}${recent.kind ? ` (${recent.kind})` : ""}`
-              : "";
-            return `- [${t.id}] ${t.title}${recurrenceTag(t)}${tag(t)} — assignee ${t.assignee}, status ${t.status}${hint}`;
-          }
-        )
-      );
-    }
-
-    if (sections.length === 0) return "";
-    return `${sections.join("\n\n")}\n\nNOTE: snapshot from session start. Call task_list for fresh state.`;
   }
 
-  /** Most recent non-system comment for the prompt's "Created by me" hint. */
   private latestNonSystemComment(taskId: string): Comment | null {
     if (!this.commentStore) return null;
     const all = this.commentStore.list(taskId);
@@ -842,18 +816,12 @@ export class TaskStore {
     return depsSatisfied(deps, byId) ? "open" : "blocked";
   }
 
-  private async unblockDependents(
-    doneId: string,
-    byIdSnapshot: Map<string, Task>,
-    closerActor: string | null
-  ): Promise<void> {
-    // Use a fresh read — `byIdSnapshot` predates this update.
+  private async unblockDependents(doneId: string): Promise<void> {
     const fresh = this.list();
     const byId = new Map(fresh.map((t) => [t.id, t]));
     // Make sure the now-done task is reflected so depsSatisfied sees it.
     const closedNow = byId.get(doneId);
     if (closedNow) byId.set(doneId, { ...closedNow, status: "done" });
-    void byIdSnapshot;
 
     for (const dep of fresh) {
       if (!dep.depends_on.includes(doneId)) continue;
@@ -879,14 +847,14 @@ export class TaskStore {
           assignee = next.assignee;
         });
         if (didUnblock) {
-          // actor = the agent whose `done` triggered this unblock. Lets
-          // the dep's assignee wake (echo doesn't fire unless the
-          // assignee was also the closer, which would be a self-dep —
-          // already a cycle and rejected upstream).
+          // actor=null: the dep's wake target is a different session than
+          // the closer's (same-session deps would be a cycle, rejected
+          // upstream). Propagating the closer here would echo-suppress
+          // every same-agent cross-session unblock.
           this.emitEvent({
             taskId: dep.id,
             agentId: assignee,
-            actor: closerActor,
+            actor: null,
             kind: "dep_unblocked",
             payload: { blocked_by_task_id: doneId },
           });
@@ -985,12 +953,17 @@ export class TaskStore {
     }
     const comment = this.commentStore.add(input);
     const isSystemAuthor = input.author.startsWith("system:");
+    const excerpt = input.body.replace(/\s+/g, " ").trim().slice(0, 80);
     this.emitEvent({
       taskId: input.taskId,
       agentId: input.author,
       actor: isSystemAuthor ? null : input.author,
       kind: "comment_added",
-      payload: { comment_id: comment.id, kind: comment.kind ?? null },
+      payload: {
+        comment_id: comment.id,
+        kind: comment.kind ?? null,
+        excerpt,
+      },
     });
     this.fireOnChange();
     return comment;
@@ -1055,17 +1028,24 @@ export class TaskStore {
   /**
    * Fetch recent events for the given session's involvement set, since
    * `sinceTs` (unix seconds). Empty array if no event store wired.
+   * `excludeActor` filters out events caused by that actor — used by
+   * the mid-turn injection path so the cursor and the rendered set
+   * always match (otherwise self-events get re-shown on every step).
    */
   recentEventsForSession(
     sessionId: string,
     agentId: string,
     sinceTs: number,
-    limit = 20
+    opts?: { limit?: number; excludeActor?: string }
   ): TaskEvent[] {
     if (!this.eventStore) return [];
     const ids = this.involvedTaskIds(sessionId, agentId);
     if (ids.length === 0) return [];
-    return this.eventStore.recentForTasks(ids, sinceTs, limit);
+    const limit = opts?.limit ?? 20;
+    const rows = this.eventStore.recentForTasks(ids, sinceTs, limit);
+    if (!opts?.excludeActor) return rows;
+    const excl = opts.excludeActor;
+    return rows.filter((e) => e.actor !== excl);
   }
 
   /**
@@ -1077,19 +1057,15 @@ export class TaskStore {
     agentId: string,
     sinceTs: number,
     now: Date = new Date(),
-    limit = 20
+    opts?: { limit?: number; excludeActor?: string }
   ): string {
-    const events = this.recentEventsForSession(sessionId, agentId, sinceTs, limit);
+    const events = this.recentEventsForSession(sessionId, agentId, sinceTs, {
+      limit: opts?.limit ?? 20,
+      excludeActor: opts?.excludeActor,
+    });
     if (events.length === 0) return "";
     const titlesById = new Map(this.list().map((t) => [t.id, t.title]));
-    const lines = events.map((e) => {
-      const when = formatRelativeFrom(e.createdAt, now);
-      const title = titlesById.get(e.taskId) ?? "(unknown task)";
-      const summary = summarizeEventPayload(e);
-      const tail = summary ? ` — ${summary}` : "";
-      return `- ${when} · ${e.kind} on [${e.taskId}] ${title}${tail}`;
-    });
-    return lines.join("\n");
+    return renderRecentActivityPure(events, titlesById, now);
   }
 }
 
@@ -1144,57 +1120,3 @@ function matchesFilter(task: Task, filter?: TaskListFilter): boolean {
   return true;
 }
 
-function renderSection<T>(
-  title: string,
-  items: T[],
-  fmt: (t: T) => string
-): string {
-  return `${title}:\n${items.map(fmt).join("\n")}`;
-}
-
-function recurrenceTag(t: Task): string {
-  if (!t.recurrence) return "";
-  return ` (${describeRecurrence(t.recurrence)}, ran ${t.runs}×)`;
-}
-
-function formatRelativeFrom(unixSeconds: number, now: Date): string {
-  const diffSec = Math.max(0, Math.floor(now.getTime() / 1000 - unixSeconds));
-  if (diffSec < 60) return `${diffSec}s ago`;
-  const m = Math.floor(diffSec / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  const d = Math.floor(h / 24);
-  return `${d}d ago`;
-}
-
-function summarizeEventPayload(e: TaskEvent): string {
-  if (!e.payload) return `actor ${e.agentId}`;
-  let p: Record<string, unknown> = {};
-  try {
-    p = JSON.parse(e.payload) as Record<string, unknown>;
-  } catch {
-    return `actor ${e.agentId}`;
-  }
-  switch (e.kind) {
-    case "comment_added":
-      return p.kind
-        ? `${String(p.kind)} comment by ${e.agentId}`
-        : `comment by ${e.agentId}`;
-    case "status_changed":
-      return `${String(p.from ?? "?")} → ${String(p.to ?? "?")}`;
-    case "dep_unblocked":
-      return `dep ${String(p.blocked_by_task_id ?? "?")} done — now runnable`;
-    case "task_assigned":
-      return `assigned to ${String(p.assignee ?? "?")} by ${String(p.created_by ?? "?")}`;
-    case "task_deleted":
-      return p.forced ? `deleted (cascaded)` : `deleted`;
-    case "scheduler_action": {
-      const action = String(p.action ?? "?");
-      const message = String(p.message ?? "");
-      return message ? `[${action}] ${message}` : `[${action}]`;
-    }
-    default:
-      return `actor ${e.agentId}`;
-  }
-}

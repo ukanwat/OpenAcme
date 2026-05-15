@@ -209,10 +209,27 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
     return c.json(messages);
   });
 
-  app.delete("/api/sessions/:id", (c) => {
+  app.delete("/api/sessions/:id", async (c) => {
     const id = c.req.param("id");
     const session = manager.sessionStore.get(id);
     if (!session) return c.json({ error: "Session not found" }, 404);
+    // Tasks bound to this session would otherwise become zombies — the
+    // scheduler can't allocate a fresh session for an already-bound task
+    // and silently drops events for the missing session. Null out
+    // bindings; reset in_progress tasks to open so they can be re-picked.
+    const orphaned = manager.taskStore.list({ session_id: id });
+    for (const t of orphaned) {
+      if (t.status === "done" || t.status === "canceled") continue;
+      const patch: { session_id: null; status?: "open" } = { session_id: null };
+      if (t.status === "in_progress") patch.status = "open";
+      try {
+        await manager.taskStore.update(t.id, patch, { actor: "system:user" });
+      } catch (e) {
+        console.warn(
+          `Failed to clear task ${t.id} binding on session ${id} delete: ${e instanceof Error ? e.message : String(e)}`
+        );
+      }
+    }
     // messages cascade-delete via FK; FTS triggers keep the index in sync
     manager.sessionStore.delete(id);
     // Reap the per-session bash subprocess if one was running.
@@ -363,39 +380,51 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
           data: { sessionId: effectiveSessionId },
           transient: true,
         });
-        const agent = manager.getAgent(agentId);
+        // Block autonomous wakes for the duration of this interactive
+        // turn. Cleared in the finally below; onFinish clears too
+        // (idempotent) for the writer.merge success path.
+        manager.taskScheduler.markInteractiveBusy(effectiveSessionId);
+        try {
+          const agent = manager.getAgent(agentId);
 
-        const recall = await agent.applyMemoryRecall({
-          history: committed,
-          signal,
-        });
-        // Attach to the new user msg before runStream: the model sees
-        // it via uiToModelMessages this turn; persisted in onFinish so
-        // future loads replay identical bytes (prefix cache).
-        const recallPart = agent.buildRelevantMemoryPart(
-          recall.entries,
-          recall.modelContent
-        );
-        if (recallPart) {
-          const lastUser = committed[committed.length - 1];
-          if (lastUser?.role === "user") {
-            lastUser.parts = [
-              ...(lastUser.parts as UIMessage["parts"]),
-              recallPart as unknown as UIMessage["parts"][number],
-            ];
+          const recall = await agent.applyMemoryRecall({
+            history: committed,
+            signal,
+          });
+          // Attach to the new user msg before runStream: the model sees
+          // it via uiToModelMessages this turn; persisted in onFinish so
+          // future loads replay identical bytes (prefix cache).
+          const recallPart = agent.buildRelevantMemoryPart(
+            recall.entries,
+            recall.modelContent
+          );
+          if (recallPart) {
+            const lastUser = committed[committed.length - 1];
+            if (lastUser?.role === "user") {
+              lastUser.parts = [
+                ...(lastUser.parts as UIMessage["parts"]),
+                recallPart as unknown as UIMessage["parts"][number],
+              ];
+            }
           }
-        }
 
-        const result = await agent.runStream({
-          sessionId: effectiveSessionId,
-          history: committed,
-          signal,
-        });
-        writer.merge(result.toUIMessageStream({ sendStart: false }));
+          const result = await agent.runStream({
+            sessionId: effectiveSessionId,
+            history: committed,
+            signal,
+          });
+          writer.merge(result.toUIMessageStream({ sendStart: false }));
+        } catch (e) {
+          manager.taskScheduler.clearInteractiveBusy(effectiveSessionId);
+          throw e;
+        }
       },
       originalMessages: committed as unknown as OpenAcmeUIMessage[],
       generateId: () => randomUUID(),
       onFinish: ({ responseMessage }) => {
+        // Lift the interactive-busy gate before persistence so any wakes
+        // queued during the turn fire promptly. Idempotent.
+        manager.taskScheduler.clearInteractiveBusy(effectiveSessionId);
         // Persist the new user message (last item in committed) + the
         // assembled assistant response. Prior history was already in
         // the DB and was just sent back to us by useChat.

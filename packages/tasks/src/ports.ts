@@ -65,6 +65,7 @@ export const EVENT_KINDS = [
   "comment_added",
   "task_deleted",
   "scheduler_action",
+  "task_completed_run",
 ] as const;
 export type EventKind = (typeof EVENT_KINDS)[number];
 
@@ -73,10 +74,24 @@ export interface EventInput {
   /** Semantic owner of the event (usually the assignee). Used for the
    *  prompt's "actor X" rendering when no explicit actor is recorded. */
   agentId: string;
-  /** Optional: the agent that *caused* this event. When set, the
-   *  scheduler suppresses wake for that agent's own session (echo).
-   *  When unset, no echo suppression applies — events from anonymous
-   *  / system / unknown actors always wake. */
+  /**
+   * Echo-suppression key, NOT a causation field. The scheduler suppresses
+   * wake when `event.actor === sessionTarget.agentId` — i.e. "this agent's
+   * own session should not wake from this event."
+   *
+   * When emitting a new event, pick the value by asking: would waking
+   * the actor's own session here cause a runaway loop (agent acts → wakes
+   * → acts again)? If yes, set `actor` to the actor's agent id. If no,
+   * use `null` — every involved session, including the actor's own,
+   * should wake.
+   *
+   * Causation and echo-target USUALLY coincide (status_changed,
+   * comment_added — the agent did the thing in their session, no need
+   * to wake themselves again). They DIVERGE for cross-session fan-out
+   * events like `dep_unblocked`: the closer caused it, but the wake
+   * target is a different session, so `actor: null` is correct
+   * (otherwise same-agent cross-session deps never wake).
+   */
   actor?: string | null;
   kind: EventKind;
   payload?: unknown;
