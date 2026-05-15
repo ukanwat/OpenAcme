@@ -39,7 +39,9 @@ packages/
   auth/         # OAuth (ChatGPT subscription, Claude Pro), token store, body/response
                 #   transforms, refresh
   skills/       # SKILL.md discovery, progressive disclosure + multi-source hub
-                #   (GitHub, marketplaces, URL, well-known, local) under hub/
+                #   (GitHub, marketplaces, URL, well-known, local, builtin) under hub/;
+                #   bundled skills live at packages/skills/builtin/<name>/
+  agent-catalog/# Bundled agent templates (Coder, …) — Importable via web or CLI
   ui/           # Shared React components (minimal)
   eslint-config, typescript-config   # @repo/* internal
 ```
@@ -235,11 +237,50 @@ Per-agent `skills` array filters which skills are exposed; empty/missing means a
 
 ### Skills Hub
 
-`packages/skills/src/hub/` — multi-source installer that writes into the same `<dataDir>/skills/<name>/` directory the registry reads from. Sources today: GitHub repos, generic Git URLs, raw URL / archive, Claude marketplace (`.claude-plugin/marketplace.json`), `.well-known/skills.json`, LobeHub, Skills.sh, ClawHub, and local directories. `SkillHub` (`hub.ts`) owns search/inspect/install/update/uninstall; bytes are staged under `<skillsDir>/_hub/staging/`, validated (`MAX_TOTAL_BYTES = 10MB`, `MAX_FILES = 200`, name + path traversal checks), then atomically swapped into `<skillsDir>/<name>/`.
+`packages/skills/src/hub/` — multi-source installer that writes into the same `<dataDir>/skills/<name>/` directory the registry reads from. Sources today: GitHub repos, generic Git URLs, raw URL / archive, Claude marketplace (`.claude-plugin/marketplace.json`), `.well-known/skills.json`, LobeHub, Skills.sh, ClawHub, local directories, and `builtin` (skills shipped with the platform under `packages/skills/builtin/<name>/`). `SkillHub` (`hub.ts`) owns search/inspect/install/update/uninstall; bytes are staged under `<skillsDir>/_hub/staging/`, validated (`MAX_TOTAL_BYTES = 10MB`, `MAX_FILES = 200`, name + path traversal checks), then atomically swapped into `<skillsDir>/<name>/`.
+
+The `builtin` source resolves identifiers (bare skill names) against `packages/skills/builtin/<identifier>/`. Adding a bundled skill: create the folder with a `SKILL.md` and update `packages/skills/package.json`'s `files` array if it isn't already covered by `"builtin"`. Bundled skills still go through the hub install path, so the lockfile + audit log track them like any other source — they just don't fetch over the network.
 
 State: `lockfile.ts` (per-skill source + content hash + trust level), `audit.ts` (append-only install/update/uninstall log), `taps.ts` (user-added GitHub repos that act as extra "search this too" feeds), `index-cache.ts`. HTTP routes at `/api/skills/hub/*` in `routes/skills-hub.ts`; CLI at `apps/cli/src/commands/skills-hub.ts`; web UI in `apps/web/app/skills/`.
 
 Two install-time invariants worth remembering: (1) **refuse to clobber a locally-authored skill** — if `<skillsDir>/<name>/` has no lockfile entry, install fails with a conflict the user has to resolve; (2) name validation rejects collisions with reserved paths (`_hub`, `..`) so the hub can never overwrite its own state.
+
+---
+
+## Agent catalog
+
+`packages/agent-catalog/` — bespoke, in-tree list of platform-authored agent templates the user can import into their workforce. **Not a registry.** No remote sources, no lockfile, no provenance tracking on the imported agent. Each template directory mirrors the on-disk shape of a live agent folder (`AGENT.md` + `resources/`), so an import is essentially a copy under `<dataDir>/agents/<id>/` plus auto-installing the template's recommended skills + MCP servers.
+
+Layout: `packages/agent-catalog/templates/<id>/{AGENT.md, resources/}`. AGENT.md adds five template-only frontmatter keys parsed by a separate `AgentTemplateMetaFrontmatterSchema` and stripped before the rest validates against `AgentDefinitionSchema`:
+
+- `template_id`, `template_name`, `template_description`, `template_tags`
+- `default_id_hint` — base used for auto-incremented ids on multi-instance import
+- `recommended_skills: [{ name, source, identifier }]` — installed via SkillHub on import
+- `recommended_mcp_servers: [{ name, config }]` — added to global `<dataDir>/mcp.json` on import (skipped silently if name already exists)
+
+`AgentCatalog` is a read-once in-memory snapshot at module init (same idiom as `model-registry.json`). `buildAgentFromTemplate(template, opts, existingIds)` is pure — resolves the id (collision auto-increment off `default_id_hint`), merges template fields ⊕ caller overrides, validates. The side-effectful pipeline lives in `AgentManager.importAgentFromTemplate`:
+
+1. Install recommended skills via `SkillHub.install` (skip already-installed; failures go into the manifest, never block).
+2. Add recommended MCP servers to `mcp.json` via `saveGlobalMcpServers` (skip name collisions silently); `initMCP` if anything changed.
+3. `buildAgentFromTemplate` → `createAgent(def)` (existing path, gets MCP reinit + cache eviction for free).
+4. Copy `<templateDir>/resources/*` → `<agentDir>/resources/*`. Evict the cached Agent so the next chat picks up the resource listing in its prompt.
+
+Returns `ImportManifest` with a two-bucket shape — `agent.{id, resourceFiles}` vs `workforce.{skills, mcpServers}` — that the web preview UI renders verbatim.
+
+HTTP routes in `packages/server/src/routes/agent-catalog.ts`:
+
+- `GET /api/agents/catalog` — list templates with summary counts (no persona body)
+- `GET /api/agents/catalog/:templateId` — full template incl. recommended_*
+- `GET /api/agents/catalog/:templateId/preview` — diff vs current state (`new` vs `kept`) for the UI's "Will install" block
+- `POST /api/agents/catalog/:templateId/import` — body `{ idOverride?, nameOverride?, overrides? }`, returns `{ agent, manifest }`
+
+Mounted **before** the generic `/api/agents/:id` routes in `app.ts` so the literal `catalog` segment wins. CLI: `apps/cli/src/commands/agents.ts` exposes `agents catalog` (list) + `agents import <templateId>` (one-shot) in-process via AgentManager.
+
+### Adding a template
+
+1. Create `packages/agent-catalog/templates/<id>/AGENT.md` with the template_* frontmatter.
+2. Optional: drop reference files into `templates/<id>/resources/` (no frontmatter listing — walked at load).
+3. If the template depends on a platform-bundled skill, ship the skill under `packages/skills/builtin/<name>/SKILL.md` and reference it via `{ source: "builtin", identifier: "<name>" }`. For network sources (GitHub, marketplaces), use the corresponding `source` id — same shape SkillHub.install takes.
 
 ---
 
@@ -439,6 +480,8 @@ Manual via Changesets — see `CONTRIBUTING.md`. Workflow `.github/workflows/rel
 | Change autonomous wake / scheduling | `packages/server/src/task-scheduler.ts` (+ `Agent.runAutonomous` in `packages/agent-core/src/agent.ts`) |
 | Add a task tool | `packages/tools/src/builtins/tasks.ts` — register, add to `SYSTEM_TOOLS` in `packages/tools/src/system.ts` |
 | Add a browser tool | `packages/tools/src/builtins/browser/` + `BrowserManager` in `packages/browser/src/manager.ts` |
-| Add a Skills Hub source | `packages/skills/src/hub/sources/<name>.ts` + register in `packages/skills/src/hub/hub.ts` |
+| Add a Skills Hub source | `packages/skills/src/hub/sources/<name>.ts` + register in `packages/skills/src/hub/hub.ts` (also extend `SkillSourceId` union + `schemas.ts`) |
+| Add an agent template | `packages/agent-catalog/templates/<id>/{AGENT.md, resources/}` — frontmatter keys per the Agent catalog section |
+| Ship a bundled skill | `packages/skills/builtin/<name>/SKILL.md` — installable via `{ source: "builtin", identifier: "<name>" }` |
 | Edit shared workforce context | `<dataDir>/AGENTS.md` (web: Settings → Context) — restart-free; AgentManager evicts cached Agents on save |
 | Add an always-on system tool | register handler in `packages/tools/src/builtins/`, add name to `SYSTEM_TOOLS` in `packages/tools/src/system.ts` |

@@ -36,7 +36,8 @@ You write the briefs. They do the work. You read the summary when you check in.
 - Shared workforce context — `~/.openacme/AGENTS.md` is merged into every agent's prompt (editable in Settings → Context).
 - Per-agent persistent memory — Anthropic memory_20250818 substrate, Claude Code MEMORY.md + per-topic-file convention.
 - Managed Chrome (`@openacme/browser`) — one Chrome process per install, shared user-data-dir (so a human-side login is inherited by every agent), per-agent tab ownership.
-- Skills Hub — install + track skills from GitHub, marketplaces, well-known sources, raw URLs, and local directories with lockfile + audit log + atomic swap.
+- Skills Hub — install + track skills from GitHub, marketplaces, well-known sources, raw URLs, and local directories with lockfile + audit log + atomic swap. Bundled skills ship via a `builtin` source.
+- Agent catalog — opinionated platform-authored agent templates (Coder today). Import via the web (`New agent → Import from catalog`) or CLI (`openacme agents import coder`). The same template can be imported repeatedly — ids auto-increment and each instance keeps its own folder, memory, and task queue. Recommended skills + MCP servers are auto-installed alongside.
 - Daemon (launchd / systemd-user) with auto-start and auto-restart.
 - Remote founder access via `--expose` + secret cookie.
 - Autonomous wake-ups — the task scheduler runs `start_at` and recurring tasks (cron + interval) without a user in the loop.
@@ -290,6 +291,7 @@ Turborepo + pnpm 9. `apps/*` for binaries and UIs, `packages/*` for libraries.
 | `@openacme/config` | Zod schema + YAML/JSON loader + secret helpers |
 | `@openacme/auth` | OAuth (ChatGPT, Claude), token store, body/response transforms |
 | `@openacme/skills` | `SKILL.md` discovery + progressive disclosure + multi-source Skills Hub |
+| `@openacme/agent-catalog` | Bundled agent templates (Coder, …) + importer that materializes a fresh agent folder |
 | `@repo/*` | Internal tooling (ui, eslint-config, typescript-config) |
 
 ---
