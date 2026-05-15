@@ -10,6 +10,7 @@ const SkillSourceIdSchema = z.enum([
   "lobehub",
   "skills-sh",
   "clawhub",
+  "builtin",
 ]);
 const TrustLevelSchema = z.enum(["trusted", "community"]);
 

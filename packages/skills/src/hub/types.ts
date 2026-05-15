@@ -15,7 +15,8 @@ export type SkillSourceId =
   | "git-url"
   | "lobehub"
   | "skills-sh"
-  | "clawhub";
+  | "clawhub"
+  | "builtin";
 
 export type TrustLevel = "trusted" | "community";
 
