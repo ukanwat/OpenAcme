@@ -652,7 +652,15 @@ function ChatPageInner() {
       <main className="paper-surface relative min-h-screen overflow-y-auto bg-paper">
         <ChatSetupPanel
           providers={modelCatalog.providers}
-          onSetup={() => void reloadKeys()}
+          onSetup={async () => {
+            // Setup wrote `model` to config.yaml and the server evicted
+            // its cached Agents; the bundled platform agent (Acme) now
+            // resolves to the freshly-picked provider's default. Refresh
+            // BOTH /api/keys (gates the panel itself) AND /api/agents
+            // (so the chat header / persona shows the new resolved
+            // model without a page reload).
+            await Promise.all([reloadKeys(), loadAgents().then((list) => list && setAgents(list))]);
+          }}
         />
       </main>
     );
@@ -660,14 +668,16 @@ function ChatPageInner() {
 
   // Layout: Sidebar (icons) | HomeView (compact when a session is
   // selected, full otherwise) | Chat panel (only when a session is
-  // selected). Single mount across home ↔ chat transitions → no
-  // flicker. The agent + session pickers that used to live as Sidebar
-  // children are gone — home owns that surface now.
+  // selected, or when the URL explicitly opens a new chat with an
+  // agent via `?agent=<id>`). Driven off URL not state so navigating
+  // back to `/` always returns to Home regardless of auto-picked
+  // activeAgentId.
+  const chatOpen = !!activeSessionId || !!agentFromUrl;
   return (
     <div className="flex h-screen w-screen overflow-hidden">
       <Sidebar />
-      <HomeView compact={!!activeSessionId} />
-      {activeSessionId && (
+      <HomeView compact={chatOpen} />
+      {chatOpen && (
       <main className="flex flex-1 flex-col overflow-hidden bg-paper">
         <header className="flex h-12 shrink-0 items-center justify-between border-b border-paper-rule px-6">
           <div className="flex items-center gap-4">
