@@ -103,6 +103,10 @@ export interface AgentConfig {
   /** `<dataDir>/AGENTS.md` contents — shared background context every
    *  agent reads. Injected into the system prompt below the persona. */
   agentsMd?: string;
+  /** Default cwd for the agent's filesystem and shell tools. Resolves
+   *  to `<dataDir>/agents/<id>/workspace`. AgentManager ensures it
+   *  exists before constructing the Agent. */
+  workspaceDir: string;
 }
 
 export interface CompressionConfig {

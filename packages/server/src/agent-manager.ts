@@ -28,6 +28,7 @@ import {
   bindTaskStore,
   bindBrowser,
   bindAgentTool,
+  closeAllShellSessions,
   SYSTEM_TOOLS,
 } from "@openacme/tools";
 import * as fs from "node:fs";
@@ -558,6 +559,10 @@ export class AgentManager {
     }
 
     const b = this.config.behavior;
+    // Per-agent workspace dir — default cwd for filesystem/shell tools.
+    // Idempotent recursive mkdir migrates pre-existing agents on first load.
+    const workspaceDir = path.join(this.agentsDir, def.id, "workspace");
+    fs.mkdirSync(workspaceDir, { recursive: true });
     // Resolve the agent's effective model against the root config
     // before building. Per-agent `model` overrides; absent → root.
     const effectiveModel = this.resolveModel(def);
@@ -591,6 +596,7 @@ export class AgentManager {
         summarizerModel: b.compressionSummarizerModel,
       },
       agentsMd: this.agentsMd,
+      workspaceDir,
     };
 
     return new Agent(agentConfig, {
@@ -676,6 +682,7 @@ export class AgentManager {
     for (const [_, mcpClient] of this.mcpClients) {
       await mcpClient.disconnect();
     }
+    closeAllShellSessions();
     await this.browserManager.close();
     this.db.close();
   }

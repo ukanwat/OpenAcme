@@ -214,10 +214,11 @@ export class Agent {
       new Set(effectiveToolNames)
     );
 
-    // ALS: tool handlers read sessionId/agentId without arg-threading.
+    // ALS: tool handlers read sessionId/agentId/workspaceDir without arg-threading.
     toolCallContext.enterWith({
       sessionId: opts.sessionId,
       agentId: this.config.id,
+      workspaceDir: this.config.workspaceDir,
     });
 
     const messages = await uiToModelMessages(opts.history, {
@@ -736,6 +737,7 @@ export class Agent {
       toolCallContext.enterWith({
         sessionId,
         agentId: this.config.id,
+        workspaceDir: this.config.workspaceDir,
       });
       const flushMessages: import("ai").ModelMessage[] = [
         ...messages,
@@ -828,6 +830,7 @@ export class Agent {
       tasksContext,
       memorySnapshot,
       agentsMd: this.config.agentsMd,
+      workspaceDir: this.config.workspaceDir,
     });
     this.cachedSystemPrompts.set(sessionId, prompt);
 

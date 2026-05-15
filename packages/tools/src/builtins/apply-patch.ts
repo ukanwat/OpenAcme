@@ -3,6 +3,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { registry } from "../registry.js";
 import { lock } from "../internal/lock.js";
+import { getCurrentWorkspaceDir } from "../session-context.js";
 import {
   parsePatch,
   deriveNewContentsFromString,
@@ -145,13 +146,16 @@ registry.register({
     cwd: z
       .string()
       .optional()
-      .describe("Base directory for relative paths (default: process.cwd())"),
+      .describe(
+        "Base directory for relative paths (default: your agent's workspace dir)"
+      ),
   }),
   emoji: "🩹",
   parallelSafe: false,
   handler: async (args) => {
     const { patchText, cwd } = args as { patchText: string; cwd?: string };
-    const baseDir = cwd ? path.resolve(cwd) : process.cwd();
+    const baseCwd = getCurrentWorkspaceDir() ?? process.cwd();
+    const baseDir = cwd ? path.resolve(cwd) : baseCwd;
 
     let hunks: Hunk[];
     try {

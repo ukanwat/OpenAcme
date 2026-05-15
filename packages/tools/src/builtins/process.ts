@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { registry } from "../registry.js";
+import { getCurrentWorkspaceDir } from "../session-context.js";
 
 /**
  * Background process management. One tool with an action enum, mirroring
@@ -146,8 +147,10 @@ function startProc(args: {
     );
   }
   const id = `proc_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+  const baseCwd = getCurrentWorkspaceDir() ?? process.cwd();
+  const effectiveCwd = args.cwd ?? baseCwd;
   const child = spawn(args.command, {
-    cwd: args.cwd,
+    cwd: effectiveCwd,
     shell: process.platform === "win32" ? true : "/bin/bash",
     detached: process.platform !== "win32", // for process-group kill
     stdio: ["pipe", "pipe", "pipe"],
@@ -156,7 +159,7 @@ function startProc(args: {
   const e: ProcEntry = {
     id,
     command: args.command,
-    cwd: args.cwd ?? process.cwd(),
+    cwd: effectiveCwd,
     pid: child.pid,
     child,
     status: "running",

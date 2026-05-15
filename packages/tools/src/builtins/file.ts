@@ -2,6 +2,7 @@ import { z } from 'zod';
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { registry } from "../registry.js";
+import { getCurrentWorkspaceDir } from "../session-context.js";
 
 /**
  * File tools — read, write, list, search files.
@@ -12,11 +13,21 @@ const MAX_LINES_LIMIT = 10000;
 const MAX_DEPTH_LIMIT = 10;
 const MAX_SEARCH_RESULTS = 500;
 
+/** Relative paths resolve against the agent's workspace dir (when an
+ *  agent context is active) or `process.cwd()` (for unit tests / other
+ *  no-context callers). */
+function resolveAgainstWorkspace(p: string): string {
+  const base = getCurrentWorkspaceDir() ?? process.cwd();
+  return path.resolve(base, p);
+}
+
 // ── read_file ──
 registry.register({
   name: "read_file",
   toolset: "filesystem",
-  description: "Read the contents of a file at the given path.",
+  description:
+    "Read the contents of a file at the given path. Relative paths resolve " +
+    "against your agent's workspace dir.",
   parameters: z.object({
     path: z.string().describe("Absolute or relative path to the file"),
     maxLines: z.number().min(1).max(MAX_LINES_LIMIT).optional().describe("Maximum number of lines to read (max 10000)"),
@@ -29,7 +40,7 @@ registry.register({
       maxLines?: number;
     };
     try {
-      const resolved = path.resolve(filePath);
+      const resolved = resolveAgainstWorkspace(filePath);
       const content = fs.readFileSync(resolved, "utf-8");
       if (maxLines) {
         const lines = content.split("\n").slice(0, maxLines).join("\n");
@@ -55,7 +66,9 @@ registry.register({
   name: "write_file",
   toolset: "filesystem",
   description:
-    "Write content to a file. Creates the file and any parent directories if they don't exist.",
+    "Write content to a file. Creates the file and any parent directories " +
+    "if they don't exist. Relative paths resolve against your agent's " +
+    "workspace dir.",
   parameters: z.object({
     path: z.string().describe("Absolute or relative path for the file"),
     content: z.string().describe("Content to write to the file"),
@@ -68,7 +81,7 @@ registry.register({
       content: string;
     };
     try {
-      const resolved = path.resolve(filePath);
+      const resolved = resolveAgainstWorkspace(filePath);
       const dir = path.dirname(resolved);
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
@@ -90,13 +103,14 @@ registry.register({
   name: "list_files",
   toolset: "filesystem",
   description:
-    "List files and directories at the given path. Returns names, types, and sizes.",
+    "List files and directories at the given path. Returns names, types, " +
+    "and sizes. Relative paths resolve against your agent's workspace dir.",
   parameters: z.object({
     path: z
       .string()
       .optional()
       .default(".")
-      .describe("Directory path to list (default: current directory)"),
+      .describe("Directory path to list (default: workspace root)"),
     recursive: z
       .boolean()
       .optional()
@@ -156,7 +170,7 @@ registry.register({
       return entries;
     }
 
-    const resolved = path.resolve(dirPath);
+    const resolved = resolveAgainstWorkspace(dirPath);
     const entries = listDir(resolved, 0);
     return JSON.stringify({
       success: true,
@@ -172,14 +186,16 @@ registry.register({
   name: "search_files",
   toolset: "filesystem",
   description:
-    "Search for a text pattern across files using grep. Returns matching lines with file paths and line numbers.",
+    "Search for a text pattern across files using grep. Returns matching " +
+    "lines with file paths and line numbers. Relative paths resolve " +
+    "against your agent's workspace dir.",
   parameters: z.object({
     pattern: z.string().describe("Text pattern or regex to search for"),
     path: z
       .string()
       .optional()
       .default(".")
-      .describe("Directory to search in (default: current directory)"),
+      .describe("Directory to search in (default: workspace root)"),
     fileGlob: z
       .string()
       .optional()
@@ -198,7 +214,7 @@ registry.register({
 
     try {
       const { execSync } = await import("node:child_process");
-      const resolved = path.resolve(searchPath);
+      const resolved = resolveAgainstWorkspace(searchPath);
 
       // Escape shell special characters in user input
       const escapeShellArg = (arg: string): string =>

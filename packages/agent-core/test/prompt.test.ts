@@ -289,3 +289,36 @@ describe("AGENTS.md (shared background) injection", () => {
     expect(prompt).not.toMatch(/^## Context$/m);
   });
 });
+
+describe("Workspace section (per-agent default cwd)", () => {
+  it("emits a ## Workspace block when workspaceDir is set", () => {
+    const prompt = buildSystemPrompt({
+      persona: PERSONA,
+      toolNames: ["shell"],
+      workspaceDir: "/data/agents/alice/workspace",
+    });
+    expect(prompt).toContain("## Workspace");
+    expect(prompt).toContain("/data/agents/alice/workspace");
+    expect(prompt).toContain("persist");
+  });
+
+  it("omits the section when workspaceDir is empty / undefined", () => {
+    const undef = buildSystemPrompt({ persona: PERSONA, toolNames: ["shell"] });
+    const empty = buildSystemPrompt({
+      persona: PERSONA,
+      toolNames: ["shell"],
+      workspaceDir: "",
+    });
+    expect(undef).not.toContain("## Workspace");
+    expect(empty).not.toContain("## Workspace");
+  });
+
+  it("calls out that the workspace is a default, not a sandbox", () => {
+    const prompt = buildSystemPrompt({
+      persona: PERSONA,
+      toolNames: ["shell"],
+      workspaceDir: "/tmp/ws",
+    });
+    expect(prompt).toMatch(/not a sandbox/i);
+  });
+});
