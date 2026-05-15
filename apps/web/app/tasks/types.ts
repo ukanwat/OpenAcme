@@ -69,13 +69,15 @@ export const STATUS_VARIANT: Record<
   | "outline"
   | "destructive"
   | "signal"
+  | "working"
   | "attention"
   | "elsewhere"
   | "healthy"
 > = {
-  in_progress: "signal",
+  // WORKING role — saturated blue chip; agent is doing the thing.
+  in_progress: "working",
   open: "default",
-  // WAIT role — distinct from canceled (which is terminal, outline).
+  // WAIT role — amber chip. Distinct from canceled (terminal, outline).
   blocked: "attention",
   done: "secondary",
   canceled: "outline",
