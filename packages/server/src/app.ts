@@ -20,6 +20,7 @@ import { registerTaskRoutes } from "./routes/tasks.js";
 import { registerSetupRoutes } from "./routes/setup.js";
 import { registerSkillsHubRoutes } from "./routes/skills-hub.js";
 import { registerAgentResourceRoutes } from "./routes/agent-resources.js";
+import { registerAgentCatalogRoutes } from "./routes/agent-catalog.js";
 import { SkillHub, HubError } from "@openacme/skills";
 import {
   AgentDefinitionSchema,
@@ -99,6 +100,10 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
   // before the generic /api/agents/:id routes since the path-collisions
   // (`:id/resources` vs `:id`) are disambiguated by the segment.
   registerAgentResourceRoutes(app, manager);
+
+  // Bundled agent catalog — browse + import templates. Mount before the
+  // generic /api/agents/:id so /api/agents/catalog/* takes the specific path.
+  registerAgentCatalogRoutes(app, manager, config);
 
   // Health check
   app.get("/api/health", (c) =>

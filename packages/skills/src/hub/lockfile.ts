@@ -7,7 +7,9 @@ import type { HubLockEntry } from "./types.js";
 
 type HubLockFileShape = z.infer<typeof HubLockFileSchema>;
 
-const EMPTY: HubLockFileShape = { version: 1, installed: {} };
+function empty(): HubLockFileShape {
+  return { version: 1, installed: {} };
+}
 
 export class HubLockFile {
   constructor(private readonly skillsDir: string) {}
@@ -21,10 +23,15 @@ export class HubLockFile {
    * instances (daemon route + CLI subcommand + legacy DELETE fallback)
    * all touch the same lock.json, and a cache would let them diverge.
    * The file is tiny, atomic temp+rename keeps reads consistent.
+   *
+   * The "missing file" path returns a fresh literal each call. Returning
+   * `{ ...SHARED }` would shallow-copy and share `installed: {}` — a
+   * later `record()` would mutate the shared map, poisoning every other
+   * HubLockFile instance pointing at a missing file (e.g. test fixtures).
    */
   load(): HubLockFileShape {
     const fp = this.filePath();
-    if (!fs.existsSync(fp)) return { ...EMPTY };
+    if (!fs.existsSync(fp)) return empty();
     let raw: unknown;
     try {
       raw = JSON.parse(fs.readFileSync(fp, "utf-8"));
