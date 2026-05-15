@@ -123,17 +123,27 @@ export class LobeHubSource implements SkillSource {
   private toMeta(agent: LobeAgent): SkillMeta | null {
     const id = this.agentId(agent);
     if (!id) return null;
+    const safe = safeName(id);
+    if (!safe) return null;
     const tags = Array.isArray(agent.meta?.tags)
       ? agent.meta!.tags!.filter((x): x is string => typeof x === "string")
       : [];
+    const title = agent.meta?.title?.trim();
+    // `name` is the canonical kebab-case form fetch() will install under
+    // — keep it aligned so the install button's already-installed check
+    // matches what lands in the lockfile. Title goes in description so
+    // cards still read well.
+    const description = title && title !== safe
+      ? `${title}${agent.meta?.description ? ` — ${agent.meta.description}` : ""}`
+      : agent.meta?.description ?? "";
     return {
-      name: agent.meta?.title ?? id,
-      description: agent.meta?.description ?? "",
+      name: safe,
+      description,
       source: "lobehub",
       identifier: `lobehub/${id}`,
       trustLevel: "community",
       tags,
-      extra: {},
+      extra: title ? { title } : {},
     };
   }
 

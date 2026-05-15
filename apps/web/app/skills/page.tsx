@@ -1,8 +1,8 @@
 "use client";
 
-import { Suspense, useState, useEffect, useMemo, useRef } from "react";
+import { Suspense, useState, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Plus, Search, Trash2, Upload, BookOpen, Compass, Pipette } from "lucide-react";
+import { Plus, Search, Trash2, BookOpen, Compass, Pipette } from "lucide-react";
 import { LoadingHairline } from "@/app/components/ui/loading-hairline";
 import { ActiveMarker } from "@/app/components/ui/active-marker";
 import { toast } from "sonner";
@@ -84,9 +84,7 @@ function SkillsPageInner() {
     body: "",
   });
   const [saving, setSaving] = useState(false);
-  const [importing, setImporting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
-  const folderInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const ctrl = new AbortController();
@@ -176,51 +174,6 @@ function SkillsPageInner() {
     }
   };
 
-  const importFolder = async (files: FileList) => {
-    if (files.length === 0) return;
-
-    // Each File carries `webkitRelativePath` ("my-skill/SKILL.md", etc.).
-    // Send as multipart with the relative path as the field name so the
-    // server can reconstruct the directory structure.
-    const form = new FormData();
-    let hasSkillMd = false;
-    for (const file of Array.from(files)) {
-      const rel = file.webkitRelativePath || file.name;
-      form.append(rel, file);
-      const parts = rel.split("/");
-      if (parts.at(-1) === "SKILL.md") hasSkillMd = true;
-    }
-
-    if (!hasSkillMd) {
-      toast.error("Folder must contain a SKILL.md file");
-      return;
-    }
-
-    setImporting(true);
-    try {
-      const res = await fetch(`${API_BASE}/api/skills/import`, {
-        method: "POST",
-        body: form,
-      });
-      if (res.ok) {
-        const data = await res.json();
-        toast.success(`Imported skill '${data.name}'`);
-        loadSkills();
-        if (data.name) router.push(`/skills?name=${encodeURIComponent(data.name)}`);
-      } else {
-        const data = await res.json().catch(() => ({}));
-        toast.error("Import failed", { description: data.error });
-      }
-    } catch (e) {
-      toast.error("Import failed", {
-        description: e instanceof Error ? e.message : String(e),
-      });
-    } finally {
-      setImporting(false);
-      if (folderInputRef.current) folderInputRef.current.value = "";
-    }
-  };
-
   const deleteSkill = async (name: string) => {
     setConfirmDelete(null);
     try {
@@ -278,32 +231,6 @@ function SkillsPageInner() {
           </div>
           {activeTab === "skills" && (
             <div className="flex items-center gap-2">
-              <input
-                ref={folderInputRef}
-                type="file"
-                hidden
-                // @ts-expect-error -- webkitdirectory + directory are non-standard
-                // attributes used to pick a folder in Chromium-based browsers.
-                webkitdirectory=""
-                directory=""
-                multiple
-                onChange={(e) => {
-                  if (e.target.files) void importFolder(e.target.files);
-                }}
-              />
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={importing}
-                onClick={() => folderInputRef.current?.click()}
-              >
-                {importing ? (
-                  <LoadingHairline inline />
-                ) : (
-                  <Upload className="size-4" />
-                )}
-                Import folder
-              </Button>
               <Button size="sm" onClick={() => router.push("/skills?create=1")}>
                 <Plus className="size-4" />
                 New skill

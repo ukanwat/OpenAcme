@@ -17,7 +17,19 @@ interface ClawSkillEntry {
   summary?: string;
   description?: string;
   tags?: string[] | Record<string, unknown>;
-  latestVersion?: string;
+  /** Listing returns this as an object; detail wraps it under sibling key. */
+  latestVersion?: string | { version?: string };
+}
+
+interface ClawDetailEnvelope {
+  skill?: ClawSkillEntry;
+  latestVersion?: { version?: string } | string;
+}
+
+function versionString(v: ClawSkillEntry["latestVersion"]): string {
+  if (!v) return "";
+  if (typeof v === "string") return v;
+  return v.version ?? "";
 }
 
 /**
@@ -76,9 +88,15 @@ export class ClawHubSource implements SkillSource {
     const url = `${API_BASE}/skills/${encodeURIComponent(slug)}`;
     const res = await this.requestWithRetry(url, { signal: opts.signal });
     if (!res || !res.ok) return null;
-    const body = (await res.json()) as { skill?: ClawSkillEntry } | ClawSkillEntry;
-    const entry = "skill" in body && body.skill ? body.skill : (body as ClawSkillEntry);
-    return this.toMeta({ ...entry, slug });
+    const body = (await res.json()) as ClawDetailEnvelope;
+    const entry = body.skill ?? null;
+    if (!entry) return null;
+    // Carry latestVersion through so toMeta's extra field stays meaningful.
+    return this.toMeta({
+      ...entry,
+      slug: entry.slug ?? slug,
+      latestVersion: entry.latestVersion ?? body.latestVersion,
+    });
   }
 
   async fetch(
@@ -123,15 +141,22 @@ export class ClawHubSource implements SkillSource {
   private toMeta(entry: ClawSkillEntry): SkillMeta | null {
     const slug = entry.slug ?? "";
     if (!slug) return null;
-    const name = entry.displayName ?? entry.name ?? slug;
+    const title = entry.displayName ?? entry.name ?? slug;
+    const version = versionString(entry.latestVersion);
+    // `name` is the slug — that's what fetch() installs under, and what
+    // the install-button check matches against. Surface the title in the
+    // description so cards still read well.
+    const description = title && title !== slug
+      ? `${title}${entry.summary ?? entry.description ? ` — ${entry.summary ?? entry.description}` : ""}`
+      : entry.summary ?? entry.description ?? "";
     return {
-      name,
-      description: entry.summary ?? entry.description ?? "",
+      name: slug,
+      description,
       source: "clawhub",
       identifier: slug,
       trustLevel: "community",
       tags: this.normalizeTags(entry.tags),
-      extra: entry.latestVersion ? { latestVersion: entry.latestVersion } : {},
+      extra: { ...(version ? { latestVersion: version } : {}), ...(title !== slug ? { title } : {}) },
     };
   }
 
@@ -168,8 +193,8 @@ export class ClawHubSource implements SkillSource {
     const url = `${API_BASE}/skills/${encodeURIComponent(slug)}`;
     const res = await this.requestWithRetry(url, { signal });
     if (!res || !res.ok) return "";
-    const body = (await res.json()) as { latestVersion?: string; skill?: ClawSkillEntry };
-    return body.latestVersion ?? body.skill?.latestVersion ?? "";
+    const body = (await res.json()) as ClawDetailEnvelope;
+    return versionString(body.latestVersion ?? body.skill?.latestVersion);
   }
 
   /**

@@ -48,7 +48,10 @@ export class LocalSource implements SkillSource {
         if (!root) continue;
         for (const dir of this.findSkillDirs(root)) {
           if (out.length >= limit) return out;
-          const meta = this.readMeta(root, dir);
+          // Identifier uses tap.repo (the configured value) so it round-trips
+          // back to the same tap for resolve(); the realpath root is only
+          // used for fs reads.
+          const meta = this.readMeta(root, dir, tap.repo);
           if (!meta) continue;
           if (
             q &&
@@ -73,7 +76,7 @@ export class LocalSource implements SkillSource {
   ): Promise<SkillMeta | null> {
     const resolved = this.resolve(identifier);
     if (!resolved) return null;
-    return this.readMeta(resolved.root, resolved.rel);
+    return this.readMeta(resolved.root, resolved.rel, resolved.idRoot);
   }
 
   async fetch(
@@ -86,7 +89,7 @@ export class LocalSource implements SkillSource {
     if (!fs.existsSync(path.join(skillRoot, "SKILL.md"))) return null;
     const files = this.collectFiles(skillRoot);
     if (files.length === 0) return null;
-    const meta = this.readMeta(resolved.root, resolved.rel);
+    const meta = this.readMeta(resolved.root, resolved.rel, resolved.idRoot);
     return {
       name: meta?.name ?? path.basename(skillRoot),
       files,
@@ -99,18 +102,21 @@ export class LocalSource implements SkillSource {
 
   // -------------------------------------------------------------------------
 
-  /** Resolve an identifier to `{ root, rel }` where root+rel = skill dir. */
-  private resolve(identifier: string): { root: string; rel: string } | null {
+  /**
+   * Resolve an identifier to `{ root, rel, idRoot }`. `root` is the
+   * realpath'd directory used for fs reads; `idRoot` is the path form to
+   * carry back into meta.identifier (preserves the user's tap.repo
+   * spelling so `/tmp/...` round-trips even on macOS where /tmp is a
+   * symlink to /private/tmp).
+   */
+  private resolve(
+    identifier: string
+  ): { root: string; rel: string; idRoot: string } | null {
     if (!identifier) return null;
-    // Absolute-path form: identifier IS the skill directory.
-    if (path.isAbsolute(identifier)) {
-      if (!fs.existsSync(identifier)) return null;
-      const real = fs.realpathSync(identifier);
-      const root = path.dirname(real);
-      const rel = path.basename(real);
-      return { root, rel };
-    }
-    // Tap-relative form: "<tapPath>:<relSkillDir>"
+    // Tap-relative form first: "<absoluteTapPath>:<relSkillDir>". POSIX
+    // filenames CAN legally contain colons, but the disambiguator here is
+    // strict — we only honor the tap form when the left side matches a
+    // registered local tap. Otherwise fall through to absolute-path mode.
     const sep = identifier.lastIndexOf(":");
     if (sep > 0) {
       const tapPath = identifier.slice(0, sep);
@@ -119,11 +125,19 @@ export class LocalSource implements SkillSource {
         const tap = this.taps().find(
           (t) => t.source === "local" && t.repo === tapPath
         );
-        if (!tap) return null;
-        const root = this.tapRoot(tap);
-        if (!root) return null;
-        return { root, rel };
+        if (tap) {
+          const root = this.tapRoot(tap);
+          if (root) return { root, rel, idRoot: tap.repo };
+        }
       }
+    }
+    // Absolute-path form: identifier IS the skill directory.
+    if (path.isAbsolute(identifier)) {
+      if (!fs.existsSync(identifier)) return null;
+      const real = fs.realpathSync(identifier);
+      const root = path.dirname(real);
+      const rel = path.basename(real);
+      return { root, rel, idRoot: root };
     }
     return null;
   }
@@ -159,7 +173,11 @@ export class LocalSource implements SkillSource {
     return out;
   }
 
-  private readMeta(root: string, rel: string): SkillMeta | null {
+  private readMeta(
+    root: string,
+    rel: string,
+    idRoot: string
+  ): SkillMeta | null {
     const skillMdPath = path.join(root, rel, "SKILL.md");
     if (!fs.existsSync(skillMdPath)) return null;
     let text: string;
@@ -178,7 +196,7 @@ export class LocalSource implements SkillSource {
       name,
       description: typeof fm["description"] === "string" ? fm["description"] : "",
       source: "local",
-      identifier: `${root}:${rel}`,
+      identifier: `${idRoot}:${rel}`,
       trustLevel: "community",
       path: rel,
       tags: Array.isArray(fm["tags"])
