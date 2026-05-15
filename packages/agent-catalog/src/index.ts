@@ -6,14 +6,14 @@ export {
 } from "./import.js";
 export {
   AgentTemplateMetaFrontmatterSchema,
-  RecommendedSkillSchema,
-  RecommendedMcpServerSchema,
+  BundledSkillSchema,
+  BundledMcpServerSchema,
   SKILL_SOURCE_IDS,
   type AgentTemplate,
   type AgentTemplateMeta,
   type AgentTemplateMetaFrontmatter,
-  type RecommendedSkill,
-  type RecommendedMcpServer,
+  type BundledSkill,
+  type BundledMcpServer,
   type ResourceFile,
   type SkillSourceId,
   type MCPServerConfig,

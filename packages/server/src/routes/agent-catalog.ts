@@ -39,8 +39,8 @@ export function registerAgentCatalogRoutes(
         relPath: r.relPath,
         size: r.size,
       })),
-      recommendedSkills: t.recommendedSkills,
-      recommendedMcpServers: t.recommendedMcpServers,
+      bundledSkills: t.bundledSkills,
+      bundledMcpServers: t.bundledMcpServers,
     });
   });
 
@@ -81,13 +81,13 @@ export function registerAgentCatalogRoutes(
         })),
       },
       workforce: {
-        skills: t.recommendedSkills.map((s) => ({
+        skills: t.bundledSkills.map((s) => ({
           name: s.name,
           source: s.source,
           identifier: s.identifier,
           status: installedSkillNames.has(s.name) ? "kept" : "new",
         })),
-        mcpServers: t.recommendedMcpServers.map((m) => ({
+        mcpServers: t.bundledMcpServers.map((m) => ({
           name: m.name,
           status: Object.prototype.hasOwnProperty.call(globalMcp, m.name)
             ? "kept"

@@ -553,12 +553,12 @@ export class AgentManager {
     };
 
     // Stage 1a — recommended skills
-    if (template.recommendedSkills.length > 0) {
+    if (template.bundledSkills.length > 0) {
       const skillsDir = path.isAbsolute(this.config.skills.directory)
         ? this.config.skills.directory
         : path.join(this.config.dataDir, this.config.skills.directory);
       const hub = new SkillHub(skillsDir, this.skillRegistry);
-      for (const s of template.recommendedSkills) {
+      for (const s of template.bundledSkills) {
         const already = this.skillRegistry
           .getIndex()
           .some((e) => e.name === s.name);
@@ -583,10 +583,10 @@ export class AgentManager {
     }
 
     // Stage 1b — recommended MCP servers
-    if (template.recommendedMcpServers.length > 0) {
+    if (template.bundledMcpServers.length > 0) {
       const globalMcp = loadGlobalMcpServers(this.config.dataDir);
       let changed = false;
-      for (const m of template.recommendedMcpServers) {
+      for (const m of template.bundledMcpServers) {
         if (Object.prototype.hasOwnProperty.call(globalMcp, m.name)) {
           manifest.workforce.mcpServers.push({ name: m.name, action: "kept" });
           continue;

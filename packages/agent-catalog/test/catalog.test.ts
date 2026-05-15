@@ -15,11 +15,11 @@ describe("AgentCatalog (bundled templates)", () => {
     expect(coder).toBeDefined();
     expect(coder?.name).toBe("Coder");
     expect(coder?.tags).toContain("engineering");
-    // Coder ships with one recommended skill, no MCP servers, and one
-    // resource file (style-guide.md). Hard-coded counts catch regressions
-    // if someone edits the template without updating the test.
+    // Coder ships with one bundled skill, one MCP server (filesystem),
+    // and one resource file (style-guide.md). Hard-coded counts catch
+    // regressions if someone edits the template without updating the test.
     expect(coder?.counts.skills).toBe(1);
-    expect(coder?.counts.mcpServers).toBe(0);
+    expect(coder?.counts.mcpServers).toBe(1);
     expect(coder?.counts.resources).toBe(1);
   });
 
@@ -27,11 +27,11 @@ describe("AgentCatalog (bundled templates)", () => {
     const t = catalog.get("coder");
     expect(t).toBeDefined();
     expect(t?.agentFields.name).toBe("Coder");
-    expect(t?.agentFields.skills).toContain("coding-conventions");
     expect(t?.agentFields.tools).toContain("shell");
     expect(t?.agentFields.persona.length).toBeGreaterThan(50);
-    expect(t?.recommendedSkills[0]?.name).toBe("coding-conventions");
-    expect(t?.recommendedSkills[0]?.source).toBe("builtin");
+    expect(t?.bundledSkills[0]?.name).toBe("coding-conventions");
+    expect(t?.bundledSkills[0]?.source).toBe("builtin");
+    expect(t?.bundledMcpServers[0]?.name).toBe("filesystem");
     expect(t?.resources[0]?.relPath).toBe("style-guide.md");
     expect(t?.resources[0]?.size).toBeGreaterThan(0);
   });
@@ -124,6 +124,6 @@ describe("buildAgentFromTemplate", () => {
     // surface as a Zod error or as the field being present.
     expect((def as unknown as Record<string, unknown>)["template_id"]).toBeUndefined();
     expect((def as unknown as Record<string, unknown>)["default_id_hint"]).toBeUndefined();
-    expect((def as unknown as Record<string, unknown>)["recommended_skills"]).toBeUndefined();
+    expect((def as unknown as Record<string, unknown>)["bundled_skills"]).toBeUndefined();
   });
 });
