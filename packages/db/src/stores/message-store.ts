@@ -14,6 +14,11 @@ export interface StoredUIMessage {
   role: "user" | "assistant";
   parts: unknown[];
   metadata?: unknown;
+  /** Persistence timestamp (unix seconds). Populated by `getHistory` /
+   *  `append`; the row's DB-assigned `created_at`. Surfaced so callers
+   *  that render history (web chat, CLI, audit) can show timing without
+   *  a separate query. */
+  createdAt?: number;
 }
 
 export interface SearchResult {
@@ -46,6 +51,7 @@ export function createMessageStore(db: Database.Database) {
     role: string;
     parts: string;
     metadata: string | null;
+    createdAt: number;
   }): StoredUIMessage {
     return {
       id: row.id,
@@ -55,6 +61,7 @@ export function createMessageStore(db: Database.Database) {
         row.metadata !== null && row.metadata !== ""
           ? (JSON.parse(row.metadata) as unknown)
           : undefined,
+      createdAt: row.createdAt,
     };
   }
 

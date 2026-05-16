@@ -10,6 +10,7 @@ import {
 } from "react";
 import { ArrowUp, Square, Paperclip } from "lucide-react";
 import { toast } from "sonner";
+import { formatDistanceToNow } from "date-fns";
 import type { UIMessage } from "ai";
 import type { MessageMetadata, OpenAcmeUIMessage } from "./lib/types";
 import { Sidebar } from "./components/Sidebar";
@@ -1120,11 +1121,19 @@ function MessageHeader({
   role,
   model,
   streaming,
+  createdAt,
 }: {
   role: "user" | "assistant";
   model?: string;
   streaming?: boolean;
+  createdAt?: number;
 }) {
+  const ms = createdAt !== undefined ? createdAt * 1000 : null;
+  const rel =
+    ms !== null
+      ? formatDistanceToNow(ms, { addSuffix: true, includeSeconds: true })
+      : null;
+  const abs = ms !== null ? new Date(ms).toLocaleString() : undefined;
   return (
     <div className="mb-3 flex items-center gap-3 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
       <span
@@ -1153,6 +1162,17 @@ function MessageHeader({
         <>
           <span className="text-ink-faint">·</span>
           <span className="text-plot-red">streaming</span>
+        </>
+      )}
+      {rel && (
+        <>
+          <span className="text-ink-faint">·</span>
+          <span
+            className="normal-case tracking-normal text-ink-faint"
+            title={abs}
+          >
+            {rel}
+          </span>
         </>
       )}
     </div>
@@ -1196,7 +1216,10 @@ function MessageBubble({
     );
     return (
       <section className="section-enter border-t border-paper-rule py-5 first:border-t-0 first:pt-0">
-        <MessageHeader role="user" />
+        <MessageHeader
+          role="user"
+          createdAt={(message as { createdAt?: number }).createdAt}
+        />
         {text && (
           <div className="text-sm leading-relaxed text-ink whitespace-pre-wrap break-words">
             {text}
@@ -1265,7 +1288,12 @@ function MessageBubble({
 
   return (
     <section className="section-enter border-t border-paper-rule py-5 first:border-t-0 first:pt-0">
-      <MessageHeader role="assistant" model={modelLabel} streaming={isStreaming} />
+      <MessageHeader
+        role="assistant"
+        model={modelLabel}
+        streaming={isStreaming}
+        createdAt={(message as { createdAt?: number }).createdAt}
+      />
       {parts.length === 0 && isStreaming && (
         <div className="flex items-center gap-1.5 text-ink-faint">
           <span className="status-dot bg-current pulse-live" aria-hidden />
