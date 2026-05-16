@@ -16,7 +16,12 @@ Not a single assistant. Not a fixed team of four. A *workforce* — named agents
 
 ![demo](docs/images/demo.gif)
 
-<sub>`Local-first` · `macOS · Linux` · `MIT` · `Pre-1.0`</sub>
+<a href="https://www.npmjs.com/package/@openacme/cli"><img alt="npm" src="https://img.shields.io/npm/v/@openacme/cli?logo=npm&logoColor=white&color=cb3837&label=%40openacme%2Fcli"></a>
+<a href="./LICENSE"><img alt="MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
+<img alt="Node" src="https://img.shields.io/badge/node-%E2%89%A518-339933?logo=node.js&logoColor=white">
+<img alt="macOS / Linux" src="https://img.shields.io/badge/os-macOS%20%2F%20Linux-black?logo=apple&logoColor=white">
+
+<sub>`Local-first` · `Bring-your-own-model` · `MCP-native` · `Multi-agent`</sub>
 
 </div>
 
@@ -134,12 +139,6 @@ cd OpenAcme && pnpm install && pnpm build
 pnpm agent setup
 pnpm agent
 ```
-
----
-
-## Status
-
-Pre-1.0. Breaking changes happen. The core (multi-agent runtime, tasks, autonomous scheduling, OAuth, MCP, browser, skills, memory) is solid enough to live on day-to-day; the surfaces around it are still moving.
 
 ---
 
