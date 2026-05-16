@@ -6,8 +6,13 @@ import { findChromeExecutable } from "./chrome.js";
 
 interface CamoufoxJs {
   launchOptions?: (opts: Record<string, unknown>) => Promise<Record<string, unknown>>;
-  /** Returns the cache dir Camoufox uses on the current platform. */
-  getCacheDir?: () => string;
+}
+
+interface CamoufoxPkgman {
+  /** Awaitable fetch + install of the binary. */
+  CamoufoxFetcher?: new () => { init?: () => Promise<void>; install: () => Promise<void> };
+  /** Throws FileNotFoundError when the binary isn't installed. */
+  installedVerStr?: () => string;
 }
 
 let cachedCamoufoxMod: CamoufoxJs | null = null;
@@ -21,6 +26,18 @@ async function loadCamoufoxJs(): Promise<CamoufoxJs> {
       "Camoufox not installed. The host environment is missing the `camoufox-js` package."
     );
   }
+}
+
+let cachedCamoufoxPkgman: CamoufoxPkgman | null = null;
+async function loadCamoufoxPkgman(): Promise<CamoufoxPkgman> {
+  if (cachedCamoufoxPkgman) return cachedCamoufoxPkgman;
+  // Deep import into the package. Bypasses the public surface to reach
+  // the pkgman helpers (camoufoxPath, installedVerStr) — there's no
+  // top-level fetch API.
+  cachedCamoufoxPkgman = (await import(
+    "camoufox-js/dist/pkgman.js" as string
+  )) as CamoufoxPkgman;
+  return cachedCamoufoxPkgman;
 }
 
 /**
@@ -104,9 +121,9 @@ async function resolveCamoufoxLauncher(
       "camoufox-js does not expose launchOptions(); package version is unsupported."
     );
   }
-  if (!isCamoufoxInstalled(m)) {
+  if (!(await isCamoufoxInstalledAsync())) {
     onProgress?.("Installing Camoufox (one-time, ~300MB)…");
-    await runNpx(["--no-install", "camoufox-js", "fetch"]);
+    await fetchCamoufoxBinary();
   }
   return {
     kind: "context",
@@ -119,16 +136,41 @@ async function resolveCamoufoxLauncher(
 }
 
 /**
- * True when the Camoufox binary is already fetched. Cheap (file stat).
- * Uses camoufox-js's own cache-dir resolver so the path stays correct on
- * Linux / Windows where the platform default differs. If the package
- * isn't importable yet, treat as not-installed so callers can decide
- * whether to attempt a fetch.
+ * True when the Camoufox binary is already fetched. Uses the package's
+ * own installedVerStr() to stay correct on every platform. Synchronous
+ * — safe to call from request handlers. Returns false if the pkgman
+ * module isn't loaded yet (caller can warm it with `loadCamoufoxPkgman`).
  */
-export function isCamoufoxInstalled(mod?: CamoufoxJs): boolean {
-  const m = mod ?? cachedCamoufoxMod;
-  if (!m || typeof m.getCacheDir !== "function") return false;
-  return fs.existsSync(`${m.getCacheDir()}/version.json`);
+export function isCamoufoxInstalled(): boolean {
+  const p = cachedCamoufoxPkgman;
+  if (!p || typeof p.installedVerStr !== "function") return false;
+  try {
+    p.installedVerStr();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Async variant that warms the pkgman module first. */
+async function isCamoufoxInstalledAsync(): Promise<boolean> {
+  await loadCamoufoxPkgman();
+  return isCamoufoxInstalled();
+}
+
+async function fetchCamoufoxBinary(): Promise<void> {
+  const p = await loadCamoufoxPkgman();
+  if (typeof p.CamoufoxFetcher !== "function") {
+    throw new Error(
+      "camoufox-js pkgman missing CamoufoxFetcher; package version unsupported."
+    );
+  }
+  // CamoufoxFetcher.install() is the only awaitable install path.
+  // camoufoxPath(true) fire-and-forgets the install, which makes our
+  // prefetch promise resolve before the binary is on disk.
+  const fetcher = new p.CamoufoxFetcher();
+  if (typeof fetcher.init === "function") await fetcher.init();
+  await fetcher.install();
 }
 
 let camoufoxPrefetchInFlight: Promise<void> | null = null;
@@ -140,12 +182,10 @@ let camoufoxPrefetchInFlight: Promise<void> | null = null;
  * crash the server (the binary just downloads later on first agent use).
  */
 export async function prefetchCamoufox(): Promise<void> {
-  // loadCamoufoxJs is idempotent and cached; needed so isCamoufoxInstalled
-  // can ask the package for its own cache dir.
-  await loadCamoufoxJs().catch(() => {});
+  await loadCamoufoxPkgman().catch(() => {});
   if (isCamoufoxInstalled()) return;
   if (camoufoxPrefetchInFlight) return camoufoxPrefetchInFlight;
-  camoufoxPrefetchInFlight = runNpx(["--no-install", "camoufox-js", "fetch"])
+  camoufoxPrefetchInFlight = fetchCamoufoxBinary()
     .catch(() => {
       // best-effort; agent's first browser_navigate will retry
     })
