@@ -1,4 +1,4 @@
-# @openacme/tasks
+# @openacme/browser
 
 ## 0.4.0
 

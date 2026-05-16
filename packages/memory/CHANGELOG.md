@@ -1,4 +1,4 @@
-# @openacme/tasks
+# @openacme/memory
 
 ## 0.4.0
 

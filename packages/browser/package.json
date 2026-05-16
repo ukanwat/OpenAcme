@@ -1,6 +1,6 @@
 {
   "name": "@openacme/browser",
-  "version": "0.1.0",
+  "version": "0.4.0",
   "description": "Managed Chrome via CDP for OpenAcme — shared user-data-dir, per-agent tab ownership, transparent reconnect.",
   "license": "MIT",
   "author": "Utkarsh Kanwat",

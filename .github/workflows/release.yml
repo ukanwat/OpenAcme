@@ -41,7 +41,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build
-        run: pnpm turbo run build --filter='@openacme/*'
+        run: pnpm turbo run build --filter='@openacme/*' --filter='web'
 
       - name: Create release PR or publish
         id: changesets
