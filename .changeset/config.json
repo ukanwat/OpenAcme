@@ -7,15 +7,19 @@
   "commit": false,
   "fixed": [
     [
+      "@openacme/agent-catalog",
       "@openacme/agent-core",
       "@openacme/auth",
+      "@openacme/browser",
       "@openacme/cli",
       "@openacme/config",
       "@openacme/db",
       "@openacme/llm-provider",
       "@openacme/mcp-client",
+      "@openacme/memory",
       "@openacme/server",
       "@openacme/skills",
+      "@openacme/tasks",
       "@openacme/tools"
     ]
   ],

@@ -1,8 +1,7 @@
 # @openacme/agent-catalog
 
-## 0.1.1
+## 0.4.0
 
-### Patch Changes
+### Minor Changes
 
-- Updated dependencies []:
-  - @openacme/config@0.4.0
+- Release 0.4.0. First publish — synchronized with the rest of the workforce.
