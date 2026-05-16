@@ -44,7 +44,7 @@ packages/
   eslint-config, typescript-config   # @repo/* internal
 ```
 
-Default data dir: `~/.openacme/` (`config.yaml`, `auth.json` mode 0600, `state.db`, `AGENTS.md`, `agents/<id>/{AGENT.md,workspace/,resources/,memory/,browser-profile/}`, `tasks/<id>.md`, `skills/`).
+Default data dir: `~/.openacme/` (`config.yaml`, `auth.json` mode 0600, `state.db`, `AGENTS.md`, `agents/<id>/{AGENT.md,workspace/,resources/,memory/,browser-profiles/{chromium,firefox}/}`, `tasks/<id>.md`, `skills/`).
 Default server: `127.0.0.1:3210`. Default model: `openrouter` + `anthropic/claude-sonnet-4-20250514`.
 
 ---
@@ -296,7 +296,7 @@ Three filesystem surfaces that shape what an agent sees and where it works. All 
 
 ## Browser (`@openacme/browser`)
 
-**Per-agent browser sessions via a pluggable provider.** Each agent that calls a browser tool gets its own session — a separate Chrome process under `<dataDir>/agents/<id>/browser-profile/` (local provider) or a separate remote session (cloud providers). Why per-agent: shared cookies cascade bans across the workforce, and shared fingerprints get the whole org flagged on social-media-style sites; each agent is a distinct persona, the runtime should reflect that. Lazy: nothing spawns / acquires until the first `browser_*` tool call. N inactive agents = 0 sessions held.
+**Per-agent browser sessions via a pluggable provider.** Each agent that calls a browser tool gets its own session — a separate process under `<dataDir>/agents/<id>/browser-profiles/<family>/` (local provider, namespaced by engine family: `chromium` or `firefox`) or a separate remote session (cloud providers). Why per-agent: shared cookies cascade bans across the workforce, and shared fingerprints get the whole org flagged on social-media-style sites; each agent is a distinct persona, the runtime should reflect that. Why family-namespaced: Chromium-family browsers (Chrome / Brave / Edge / CloakBrowser) share the `chromium/` profile dir so swapping among them keeps logins; Firefox-based browsers (Camoufox) use `firefox/` because the profile format is incompatible. Lazy: nothing spawns / acquires until the first `browser_*` tool call. N inactive agents = 0 sessions held.
 
 ### Provider abstraction
 
@@ -315,7 +315,7 @@ Selection: `browser.provider` in `config.yaml` (workforce-wide for now; agent-le
 
 ### Local provider details
 
-`LocalChromeProvider` (`providers/local.ts`) spawns one Chrome per agent under `<dataDir>/agents/<id>/browser-profile/`. Uses `--remote-debugging-port=0` and reads the OS-assigned port from `<userDataDir>/DevToolsActivePort` after spawn (avoids port collisions across N agents). Headed by default (`browser.headless: false`); each agent's window appears separately, so the user can log in per persona. `browser.executablePath` overrides the Chrome search and is how users opt into stealth Chromium forks (CloakBrowser, patched Brave, etc.) without us picking one.
+`LocalChromeProvider` (`providers/local.ts`) handles per-agent local sessions. For `browser.localBrowser: "chromium"` it spawns one Chrome/Brave/Edge/Chromium per agent and the manager attaches via CDP (`--remote-debugging-port=0` + reads `DevToolsActivePort` to avoid port collisions across N agents). For `browser.localBrowser: "camoufox"` it goes through `firefox.launchPersistentContext` from `camoufox-js` — bypasses CDP (Firefox doesn't speak it) and sidesteps macOS hardened-runtime traps that block bare-child-process spawns of adhoc-signed browsers. Headed by default (`browser.headless: false`); each agent's window appears separately so the user can log in per persona. `browser.executablePath` overrides the auto-detect with a user-supplied Chromium-family binary (always treated as `chromium` family for profile-dir resolution).
 
 ### Manager + tools
 
