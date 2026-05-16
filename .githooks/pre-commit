@@ -1,13 +1,9 @@
 #!/usr/bin/env sh
-# Cheap-ish guard before every commit: type-check the whole workspace.
-# Turbo caches per-package so unchanged graph nodes are near-instant.
-# Bypass with `git commit --no-verify` if you intentionally want to land
-# a WIP commit (e.g. mid-rebase fixup).
+# Mirror CI before every commit: type-check + tests. Turbo caches both
+# per-package, so unchanged graph nodes replay logs in milliseconds and
+# only touched packages actually re-run. Bypass with
+# `git commit --no-verify` for mid-rebase fixups or intentional WIP.
 
 set -e
-
-if [ -n "$OPENACME_SKIP_HOOKS" ]; then
-  exit 0
-fi
-
 pnpm check-types
+pnpm test
