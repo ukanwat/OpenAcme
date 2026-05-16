@@ -27,6 +27,7 @@ import {
   Plus,
   ChevronDown,
   Filter as FilterIcon,
+  Trash2,
 } from "lucide-react";
 import { useHomeStream } from "@/app/lib/useHomeStream";
 import { API_BASE } from "@/app/lib/api";
@@ -77,11 +78,22 @@ function formatDefer(unixSeconds: number | null): string | null {
 interface RowProps {
   s: SessionSummary;
   onClick: () => void;
+  onDelete: () => void;
   compact: boolean;
   active: boolean;
 }
 
-function SessionRow({ s, onClick, compact, active }: RowProps) {
+/** Common keyboard handler for div-as-button: Enter and Space activate. */
+function activateOnKey(handler: () => void) {
+  return (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      handler();
+    }
+  };
+}
+
+function SessionRow({ s, onClick, onDelete, compact, active }: RowProps) {
   const wakeLabel = formatDefer(s.deferUntil);
   const statusDot =
     s.status === "waiting"
@@ -102,12 +114,33 @@ function SessionRow({ s, onClick, compact, active }: RowProps) {
         ? "text-amber-600 dark:text-amber-400"
         : "text-ink-soft";
 
+  const deleteButton = (size: "compact" | "full") => (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        onDelete();
+      }}
+      aria-label="Delete session"
+      title="Delete session"
+      className={cn(
+        "shrink-0 rounded p-1 text-ink-faint opacity-0 transition-opacity hover:bg-paper-rule/60 hover:text-plot-red focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-plot-red group-hover:opacity-100",
+        size === "compact" ? "size-6" : "size-7"
+      )}
+    >
+      <Trash2 className={size === "compact" ? "size-3" : "size-3.5"} aria-hidden />
+    </button>
+  );
+
   if (compact) {
     return (
-      <button
+      <div
+        role="button"
+        tabIndex={0}
         onClick={onClick}
+        onKeyDown={activateOnKey(onClick)}
         className={cn(
-          "group relative flex w-full items-start gap-2 border-b border-paper-rule px-3 py-2 text-left transition-colors",
+          "group relative flex w-full items-start gap-2 border-b border-paper-rule px-3 py-2 text-left transition-colors cursor-pointer",
           active
             ? "bg-paper text-ink"
             : "hover:bg-sidebar-accent/40"
@@ -146,15 +179,19 @@ function SessionRow({ s, onClick, compact, active }: RowProps) {
             </div>
           )}
         </div>
-      </button>
+        {deleteButton("compact")}
+      </div>
     );
   }
 
   return (
-    <button
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onClick}
+      onKeyDown={activateOnKey(onClick)}
       className={cn(
-        "group flex w-full items-start gap-4 border-b border-paper-rule px-6 py-3 text-left transition-colors",
+        "group flex w-full items-start gap-4 border-b border-paper-rule px-6 py-3 text-left transition-colors cursor-pointer",
         "hover:bg-sidebar-accent/40"
       )}
     >
@@ -212,7 +249,8 @@ function SessionRow({ s, onClick, compact, active }: RowProps) {
           </span>
         )}
       </div>
-    </button>
+      {deleteButton("full")}
+    </div>
   );
 }
 
@@ -223,6 +261,7 @@ function Section({
   tone,
   sessions,
   onPick,
+  onDelete,
   compact,
   activeSessionId,
 }: {
@@ -232,6 +271,7 @@ function Section({
   tone: "waiting" | "running" | "idle";
   sessions: SessionSummary[];
   onPick: (sid: string) => void;
+  onDelete: (sid: string) => void;
   compact: boolean;
   activeSessionId: string | null;
 }) {
@@ -271,6 +311,7 @@ function Section({
             key={s.sessionId}
             s={s}
             onClick={() => onPick(s.sessionId)}
+            onDelete={() => onDelete(s.sessionId)}
             compact={compact}
             active={activeSessionId === s.sessionId}
           />
@@ -651,7 +692,7 @@ export function HomeView({ compact = false }: { compact?: boolean } = {}) {
   // so refresh and shared links survive. Orthogonal to ?session / ?agent
   // — picking a chip never changes which chat is open. Null = show all.
   const agentFilter = searchParams.get("agentFilter");
-  const { payload, loading, error } = useHomeStream();
+  const { payload, loading, error, refresh } = useHomeStream();
 
   // Build a lookup of sessionId → agentId so the row click can pin
   // both into the URL. Without the agent in the URL, opening a
@@ -670,6 +711,28 @@ export function HomeView({ compact = false }: { compact?: boolean } = {}) {
       ? `session=${encodeURIComponent(sid)}&agent=${encodeURIComponent(aid)}`
       : `session=${encodeURIComponent(sid)}`;
     router.push(`/?${qs}`);
+  };
+
+  const deleteSession = async (sid: string) => {
+    if (!confirm("Delete this session? Messages and attachments are removed permanently.")) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/sessions/${encodeURIComponent(sid)}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } catch (err) {
+      alert(`Failed to delete session: ${err instanceof Error ? err.message : String(err)}`);
+      return;
+    }
+    // If the deleted session is the one currently open in the chat panel,
+    // clear it from the URL so the page doesn't try to render a gone session.
+    if (sid === activeSessionId) {
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete("session");
+      const qs = params.toString();
+      router.replace(qs ? `/?${qs}` : "/");
+    }
+    void refresh({ force: true });
   };
 
   const setAgentFilter = (next: string | null) => {
@@ -825,6 +888,7 @@ export function HomeView({ compact = false }: { compact?: boolean } = {}) {
               tone="waiting"
               sessions={w}
               onPick={pick}
+              onDelete={deleteSession}
               compact={compact}
               activeSessionId={activeSessionId}
             />
@@ -835,6 +899,7 @@ export function HomeView({ compact = false }: { compact?: boolean } = {}) {
               tone="running"
               sessions={r}
               onPick={pick}
+              onDelete={deleteSession}
               compact={compact}
               activeSessionId={activeSessionId}
             />
@@ -845,6 +910,7 @@ export function HomeView({ compact = false }: { compact?: boolean } = {}) {
               tone="idle"
               sessions={i}
               onPick={pick}
+              onDelete={deleteSession}
               compact={compact}
               activeSessionId={activeSessionId}
             />

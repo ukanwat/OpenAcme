@@ -23,33 +23,49 @@ export function useHomeStream(): {
   payload: HomePayload | null;
   loading: boolean;
   error: string | null;
-  refresh: () => void;
+  refresh: (opts?: { force?: boolean }) => Promise<void>;
 } {
   const [payload, setPayload] = useState<HomePayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const refetchScheduled = useRef(false);
 
-  const refresh = useCallback(() => {
-    if (refetchScheduled.current) return;
-    refetchScheduled.current = true;
-    requestAnimationFrame(async () => {
-      refetchScheduled.current = false;
-      try {
-        const res = await fetch(`${API_BASE}/api/home`, {
-          credentials: "include",
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = (await res.json()) as HomePayload;
-        setPayload(data);
-        setError(null);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
-      } finally {
-        setLoading(false);
-      }
-    });
+  const fetchSnapshot = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/home`, {
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as HomePayload;
+      setPayload(data);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  const refresh = useCallback(
+    async (opts?: { force?: boolean }) => {
+      // Forced refresh (after a user action — delete, etc.) skips the
+      // animation-frame coalescer so the UI reflects the change next paint
+      // instead of waiting for the next SSE-driven cycle. Without `force`,
+      // an in-flight SSE refresh that started BEFORE the action returns
+      // stale data and the deleted row sticks around until the next event.
+      if (opts?.force) {
+        await fetchSnapshot();
+        return;
+      }
+      if (refetchScheduled.current) return;
+      refetchScheduled.current = true;
+      requestAnimationFrame(() => {
+        refetchScheduled.current = false;
+        void fetchSnapshot();
+      });
+    },
+    [fetchSnapshot]
+  );
 
   useEffect(() => {
     refresh();
