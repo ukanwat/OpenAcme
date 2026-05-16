@@ -369,9 +369,23 @@ export async function killChrome(running: RunningChrome): Promise<void> {
   });
 }
 
-export function resolveUserDataDir(dataDir: string, agentId: string): string {
+/** Browser engine family — profile formats are incompatible across these. */
+export type BrowserFamily = "chromium" | "firefox";
+
+/**
+ * <dataDir>/agents/<agentId>/browser-profiles/<family>/ — one profile per
+ * agent per engine family. Chromium-family browsers (Chrome / Brave / Edge
+ * / CloakBrowser / patched builds) share the "chromium" dir so a user can
+ * swap among them and keep their logins; Camoufox / Firefox-based browsers
+ * use the "firefox" dir so the profile format never mismatches the binary.
+ */
+export function resolveUserDataDir(
+  dataDir: string,
+  agentId: string,
+  family: BrowserFamily
+): string {
   if (!agentId) throw new Error("resolveUserDataDir requires an agentId");
-  return path.join(dataDir, "agents", agentId, "browser-profile");
+  return path.join(dataDir, "agents", agentId, "browser-profiles", family);
 }
 
 export function resolveExecutableOrThrow(config: BrowserConfig): string {

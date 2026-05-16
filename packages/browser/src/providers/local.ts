@@ -85,7 +85,7 @@ export class LocalChromeProvider implements BrowserProvider {
         console.log(`[browser/local] ${msg}`);
       },
     });
-    const userDataDir = resolveUserDataDir(this.dataDir, agentId);
+    const userDataDir = resolveUserDataDir(this.dataDir, agentId, resolved.family);
 
     if (resolved.kind === "context") {
       const context = await resolved.launch({ userDataDir, headless: this.cfg.headless });

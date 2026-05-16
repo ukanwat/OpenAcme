@@ -15,16 +15,28 @@ const BASE_CFG: BrowserConfig = {
 };
 
 describe("resolveUserDataDir", () => {
-  it("places each agent under its own browser-profile dir", () => {
-    const a = resolveUserDataDir("/tmp/foo", "agent-1");
-    const b = resolveUserDataDir("/tmp/foo", "agent-2");
-    expect(a).toBe(path.join("/tmp/foo", "agents", "agent-1", "browser-profile"));
-    expect(b).toBe(path.join("/tmp/foo", "agents", "agent-2", "browser-profile"));
+  it("places each agent under its own profile dir, namespaced by browser family", () => {
+    const a = resolveUserDataDir("/tmp/foo", "agent-1", "chromium");
+    const b = resolveUserDataDir("/tmp/foo", "agent-2", "chromium");
+    expect(a).toBe(
+      path.join("/tmp/foo", "agents", "agent-1", "browser-profiles", "chromium")
+    );
+    expect(b).toBe(
+      path.join("/tmp/foo", "agents", "agent-2", "browser-profiles", "chromium")
+    );
     expect(a).not.toBe(b);
   });
 
+  it("uses separate subdirs for Chromium and Firefox families", () => {
+    const c = resolveUserDataDir("/tmp/foo", "agent-1", "chromium");
+    const f = resolveUserDataDir("/tmp/foo", "agent-1", "firefox");
+    expect(c).not.toBe(f);
+    expect(c.endsWith("chromium")).toBe(true);
+    expect(f.endsWith("firefox")).toBe(true);
+  });
+
   it("rejects an empty agentId", () => {
-    expect(() => resolveUserDataDir("/tmp/foo", "")).toThrow(/agentId/i);
+    expect(() => resolveUserDataDir("/tmp/foo", "", "chromium")).toThrow(/agentId/i);
   });
 });
 

@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import { chromium } from "playwright-core";
 import type { BrowserContext } from "playwright-core";
-import { findChromeExecutable } from "./chrome.js";
+import { findChromeExecutable, type BrowserFamily } from "./chrome.js";
 
 interface CamoufoxJs {
   launchOptions?: (opts: Record<string, unknown>) => Promise<Record<string, unknown>>;
@@ -51,13 +51,17 @@ export type LocalBrowserKind = "chromium" | "camoufox";
 
 /**
  * Resolved Chromium-family binary spawnable directly via launchChrome.
- * Used for the "chromium" kind and the executablePath override.
+ * Used for the "chromium" kind and the executablePath override. Family
+ * is always "chromium" — the only case Firefox is launched bare-spawn
+ * would be a custom executablePath, which we treat as chromium-family
+ * because the safer profile format mismatch falls back to a clean dir.
  */
 export interface SpawnableBinary {
   kind: "spawn";
   exe: string;
   /** Extra CLI args required by the binary (none for stock Chromium). */
   extraArgs: string[];
+  family: BrowserFamily;
 }
 
 /**
@@ -70,6 +74,7 @@ export interface SpawnableBinary {
  */
 export interface ContextLaunchable {
   kind: "context";
+  family: BrowserFamily;
   launch(opts: { userDataDir: string; headless: boolean }): Promise<BrowserContext>;
 }
 
@@ -84,7 +89,12 @@ export async function resolveLocalBinary(opts: {
     if (!fs.existsSync(opts.executablePathOverride)) {
       throw new Error(`browser.executablePath does not exist: ${opts.executablePathOverride}`);
     }
-    return { kind: "spawn", exe: opts.executablePathOverride, extraArgs: [] };
+    return {
+      kind: "spawn",
+      exe: opts.executablePathOverride,
+      extraArgs: [],
+      family: "chromium",
+    };
   }
   if (opts.kind === "camoufox") {
     return resolveCamoufoxLauncher(opts.onProgress);
@@ -95,17 +105,18 @@ export async function resolveLocalBinary(opts: {
 async function resolveChromiumSpawnable(
   onProgress?: (msg: string) => void
 ): Promise<SpawnableBinary> {
+  const base = { kind: "spawn" as const, extraArgs: [], family: "chromium" as const };
   const systemPath = findChromeExecutable();
-  if (systemPath) return { kind: "spawn", exe: systemPath, extraArgs: [] };
+  if (systemPath) return { ...base, exe: systemPath };
 
   const pwPath = chromium.executablePath();
-  if (pwPath && fs.existsSync(pwPath)) return { kind: "spawn", exe: pwPath, extraArgs: [] };
+  if (pwPath && fs.existsSync(pwPath)) return { ...base, exe: pwPath };
 
   onProgress?.("Installing Chromium (one-time, ~120MB)…");
   await runNpx(["--no-install", "playwright", "install", "chromium"]);
   const installedPath = chromium.executablePath();
   if (installedPath && fs.existsSync(installedPath)) {
-    return { kind: "spawn", exe: installedPath, extraArgs: [] };
+    return { ...base, exe: installedPath };
   }
   throw new Error(
     "Failed to install Chromium. Run `npx playwright install chromium` manually, or set browser.executablePath."
@@ -127,6 +138,7 @@ async function resolveCamoufoxLauncher(
   }
   return {
     kind: "context",
+    family: "firefox",
     async launch({ userDataDir, headless }) {
       const { firefox } = await import("playwright-core");
       const options = await m.launchOptions!({ headless });
