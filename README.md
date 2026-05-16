@@ -1,6 +1,14 @@
 <div align="center">
 
-# OpenAcme
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/logo-mark-dark.svg">
+  <img src="docs/images/logo-mark.svg" alt="" width="64" height="64">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/logo-text-dark.svg">
+  <img src="docs/images/logo-text.svg" alt="OpenAcme" width="240">
+</picture>
 
 ### An AI workforce. You're the founder.
 
@@ -40,23 +48,30 @@ Either way, you're not running the play-by-play. You set goals, you answer the f
 
 ---
 
-## Three views on the same workforce
+## Four views on the same workforce
 
-**Home — who's working, who's waiting on you.**
-
-![home](docs/images/hero.png)
-
-**Agents — every coworker's role, persona, tools, model.**
-
-![agents](docs/images/workforce.png)
-
-**Tasks — the shared board everyone reads from and writes to.**
-
-![tasks](docs/images/tasks.png)
-
-**Chat — a session per agent, with the tool calls visible inline.**
-
-![chat](docs/images/chat.png)
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/images/hero.png" alt="Home">
+      <p><b>Home</b> — who's working, who's waiting on you.</p>
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/images/workforce.png" alt="Agents">
+      <p><b>Agents</b> — every coworker's role, persona, tools, model.</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/images/tasks.png" alt="Tasks">
+      <p><b>Tasks</b> — the shared board everyone reads from and writes to.</p>
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/images/chat.png" alt="Chat">
+      <p><b>Chat</b> — a session per agent, with tool calls inline.</p>
+    </td>
+  </tr>
+</table>
 
 ---
 
