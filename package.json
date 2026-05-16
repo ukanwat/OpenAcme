@@ -3,6 +3,7 @@
   "private": true,
   "scripts": {
     "build": "turbo run build",
+    "prepare": "git config core.hooksPath .githooks 2>/dev/null || true",
     "predev": "pnpm agent stop > /dev/null 2>&1 || true",
     "dev": "turbo run dev --filter=!docs --concurrency=20",
     "lint": "turbo run lint",
