@@ -3,8 +3,9 @@ export type TabId = string;
 
 export interface BrowserConfig {
   enabled: boolean;
+  provider: "local" | "browserbase" | "browser-use" | "firecrawl";
+  localBrowser: "chromium" | "cloakbrowser";
   executablePath?: string;
-  port: number;
   headless: boolean;
   noSandbox: boolean;
 }

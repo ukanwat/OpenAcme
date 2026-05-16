@@ -1,4 +1,19 @@
 export { BrowserManager } from "./manager.js";
+export { resolveLocalBinary } from "./binaries.js";
+export type { LocalBrowserKind } from "./binaries.js";
+export {
+  createBrowserProvider,
+  PROVIDER_NAMES,
+  LocalChromeProvider,
+  BrowserbaseProvider,
+  BrowserUseProvider,
+  FirecrawlProvider,
+} from "./providers/index.js";
+export type {
+  AcquiredBrowser,
+  BrowserProvider,
+  ProviderName,
+} from "./providers/index.js";
 export type {
   BrowserConfig,
   TabId,

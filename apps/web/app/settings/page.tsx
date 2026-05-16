@@ -15,6 +15,7 @@ import {
   FileJson,
   FileText,
   Search,
+  Globe2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Sidebar } from "../components/Sidebar";
@@ -188,6 +189,25 @@ export default function SettingsPage() {
   const [webSaving, setWebSaving] = useState<string | null>(null);
   const [webOverrideSaving, setWebOverrideSaving] = useState(false);
 
+  // Browser — provider selection + per-cloud creds + local-only knobs.
+  interface BrowserStatus {
+    providers: string[];
+    localBrowsers: string[];
+    active: string;
+    localBrowser: string;
+    executablePath: string;
+    headless: boolean;
+    noSandbox: boolean;
+    configured: Record<string, boolean>;
+  }
+  const [browserCfg, setBrowserCfg] = useState<BrowserStatus | null>(null);
+  const [browserExePath, setBrowserExePath] = useState("");
+  const [browserAdvancedOpen, setBrowserAdvancedOpen] = useState(false);
+  const [browserKeyInputs, setBrowserKeyInputs] = useState<Record<string, string>>({});
+  const [browserProjectIdInput, setBrowserProjectIdInput] = useState("");
+  const [browserSaving, setBrowserSaving] = useState<string | null>(null);
+  const [browserPendingRestart, setBrowserPendingRestart] = useState(false);
+
   useEffect(() => {
     const ctrl = new AbortController();
     loadConfig(ctrl.signal);
@@ -196,6 +216,7 @@ export default function SettingsPage() {
     loadMcp(ctrl.signal);
     loadAgentsMd(ctrl.signal);
     loadWebSearch(ctrl.signal);
+    loadBrowser(ctrl.signal);
     return () => ctrl.abort();
     // loadMcp is useCallback-stabilized; intentionally run-once at mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -470,6 +491,104 @@ export default function SettingsPage() {
     }
   };
 
+  // ── Browser ──
+
+  const loadBrowser = async (signal?: AbortSignal) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/browser`, { signal });
+      if (res.ok) {
+        const data = (await res.json()) as BrowserStatus;
+        setBrowserCfg(data);
+        setBrowserExePath(data.executablePath ?? "");
+      }
+    } catch (e) {
+      if ((e as Error).name === "AbortError") return;
+      // older servers may not have this endpoint — fail silently
+    }
+  };
+
+  const saveBrowserConfig = async (patch: Record<string, unknown>, label: string) => {
+    setBrowserSaving(label);
+    try {
+      const res = await fetch(`${API_BASE}/api/browser/config`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast.error("Failed to save browser settings", { description: data.error });
+        return;
+      }
+      const data = await res.json().catch(() => ({}));
+      if (data?.needsRestart) setBrowserPendingRestart(true);
+      toast.success("Browser settings saved — restart the daemon to apply");
+      await loadBrowser();
+    } catch (e) {
+      toast.error("Failed to save browser settings", {
+        description: (e as Error).message,
+      });
+    } finally {
+      setBrowserSaving(null);
+    }
+  };
+
+  const saveBrowserKey = async (provider: string) => {
+    const apiKey = browserKeyInputs[provider];
+    if (!apiKey?.trim()) {
+      toast.error("Please enter an API key");
+      return;
+    }
+    const payload: Record<string, string> = { provider, apiKey: apiKey.trim() };
+    if (provider === "browserbase") {
+      if (!browserProjectIdInput.trim()) {
+        toast.error("Browserbase also needs a project ID");
+        return;
+      }
+      payload.projectId = browserProjectIdInput.trim();
+    }
+    setBrowserSaving(`key:${provider}`);
+    try {
+      const res = await fetch(`${API_BASE}/api/browser/keys`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        toast.success(`${provider} key saved`);
+        setBrowserKeyInputs({ ...browserKeyInputs, [provider]: "" });
+        if (provider === "browserbase") setBrowserProjectIdInput("");
+        await loadBrowser();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        toast.error("Failed to save key", { description: data.error });
+      }
+    } catch (e) {
+      toast.error("Failed to save key", { description: (e as Error).message });
+    } finally {
+      setBrowserSaving(null);
+    }
+  };
+
+  const removeBrowserKey = async (provider: string) => {
+    if (!confirm(`Remove the ${provider} credentials?`)) return;
+    try {
+      const res = await fetch(
+        `${API_BASE}/api/browser/keys/${encodeURIComponent(provider)}`,
+        { method: "DELETE" }
+      );
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast.error("Failed to remove key", { description: data.error });
+        return;
+      }
+      toast.success(`${provider} credentials removed`);
+      await loadBrowser();
+    } catch (e) {
+      toast.error("Failed to remove key", { description: (e as Error).message });
+    }
+  };
+
   // ── MCP ──
 
   const loadMcp = useCallback(async (signal?: AbortSignal) => {
@@ -682,6 +801,10 @@ export default function SettingsPage() {
                 <TabsTrigger value="web-search">
                   <Search className="size-3.5" />
                   Web Search
+                </TabsTrigger>
+                <TabsTrigger value="browser">
+                  <Globe2 className="size-3.5" />
+                  Browser
                 </TabsTrigger>
                 <TabsTrigger value="context">
                   <FileText className="size-3.5" />
@@ -1247,6 +1370,293 @@ export default function SettingsPage() {
                             </div>
                           );
                         })}
+                      </>
+                    )}
+                  </CardContent>
+                </Card>
+              </TabsContent>
+
+              <TabsContent value="browser">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Browser</CardTitle>
+                    <CardDescription>
+                      Backs every <code className="border border-paper-rule bg-paper-sunk px-1 py-0.5 font-mono text-[11px] text-ink">browser_*</code> tool.
+                      Each agent gets its own session — separate Chrome process for{" "}
+                      <code className="border border-paper-rule bg-paper-sunk px-1 py-0.5 font-mono text-[11px] text-ink">local</code>,
+                      separate cloud session for the others. Provider + local
+                      flags live in{" "}
+                      <code className="border border-paper-rule bg-paper-sunk px-1 py-0.5 font-mono text-[11px] text-ink">
+                        {config?.dataDir || "~/.openacme"}/config.yaml
+                      </code>{" "}
+                      (daemon restart required); cloud keys go to{" "}
+                      <code className="border border-paper-rule bg-paper-sunk px-1 py-0.5 font-mono text-[11px] text-ink">
+                        {config?.dataDir || "~/.openacme"}/.env
+                      </code>
+                      .
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-5">
+                    {!browserCfg ? (
+                      <p className="font-mono text-[12px] text-ink-faint">Loading…</p>
+                    ) : (
+                      <>
+                        {browserPendingRestart && (
+                          <div className="rounded border border-paper-rule bg-paper-sunk px-3 py-2 font-mono text-[11px] text-ink">
+                            Restart the daemon (or run{" "}
+                            <code className="text-ink">pnpm agent restart</code>)
+                            to apply the new browser settings.
+                          </div>
+                        )}
+
+                        <div className="grid gap-2">
+                          <Label>Active provider</Label>
+                          <div className="flex items-center gap-3">
+                            <Select
+                              value={browserCfg.active}
+                              onValueChange={(v) =>
+                                saveBrowserConfig({ provider: v }, "provider")
+                              }
+                              disabled={browserSaving === "provider"}
+                            >
+                              <SelectTrigger className="w-56">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="local">Local (per-agent Chrome)</SelectItem>
+                                <SelectItem value="browserbase">Browserbase (cloud)</SelectItem>
+                                <SelectItem value="browser-use">Browser Use (cloud)</SelectItem>
+                                <SelectItem value="firecrawl">Firecrawl (cloud)</SelectItem>
+                              </SelectContent>
+                            </Select>
+                            <span className="font-mono text-[11px] text-ink-faint">
+                              browser.provider
+                            </span>
+                          </div>
+                          <p className="font-mono text-[11px] text-ink-faint">
+                            Cloud providers create one remote session per agent and bill per browser-hour.
+                          </p>
+                        </div>
+
+                        {browserCfg.active === "local" && (
+                          <div className="space-y-4 rounded border border-paper-rule bg-paper-sunk/40 p-4">
+                            <div className="grid gap-2">
+                              <Label>Browser</Label>
+                              <div className="flex items-center gap-3">
+                                <Select
+                                  value={browserCfg.localBrowser}
+                                  onValueChange={(v) =>
+                                    saveBrowserConfig({ localBrowser: v }, "localBrowser")
+                                  }
+                                  disabled={browserSaving === "localBrowser"}
+                                >
+                                  <SelectTrigger className="w-72">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="chromium">
+                                      Chromium (system Chrome, else auto-install)
+                                    </SelectItem>
+                                    <SelectItem value="cloakbrowser">
+                                      CloakBrowser (stealth, ~200MB on first use)
+                                    </SelectItem>
+                                  </SelectContent>
+                                </Select>
+                                <span className="font-mono text-[11px] text-ink-faint">
+                                  browser.localBrowser
+                                </span>
+                              </div>
+                              <p className="font-mono text-[11px] text-ink-faint">
+                                {browserCfg.localBrowser === "cloakbrowser"
+                                  ? "Requires `pnpm add cloakbrowser` in the workspace once. Binary downloads on first agent use."
+                                  : "Falls back to Playwright's bundled Chromium (~120MB, auto-downloaded once) if no system Chrome / Brave / Edge is found. Profile dirs are reusable if you later switch among Chromium-family browsers."}
+                              </p>
+                            </div>
+
+                            <div className="flex items-center gap-3">
+                              <input
+                                id="browser-headless"
+                                type="checkbox"
+                                checked={browserCfg.headless}
+                                onChange={(e) =>
+                                  saveBrowserConfig(
+                                    { headless: e.target.checked },
+                                    "headless"
+                                  )
+                                }
+                                disabled={browserSaving === "headless"}
+                              />
+                              <Label htmlFor="browser-headless">Headless</Label>
+                              <span className="font-mono text-[11px] text-ink-faint">
+                                Skip the visible window. Most users want this off so they can log in per agent.
+                              </span>
+                            </div>
+
+                            <div className="flex items-center gap-3">
+                              <input
+                                id="browser-nosandbox"
+                                type="checkbox"
+                                checked={browserCfg.noSandbox}
+                                onChange={(e) =>
+                                  saveBrowserConfig(
+                                    { noSandbox: e.target.checked },
+                                    "nosandbox"
+                                  )
+                                }
+                                disabled={browserSaving === "nosandbox"}
+                              />
+                              <Label htmlFor="browser-nosandbox">--no-sandbox</Label>
+                              <span className="font-mono text-[11px] text-ink-faint">
+                                Required only for running as root inside Docker / certain CI images.
+                              </span>
+                            </div>
+
+                            <div className="pt-2">
+                              <button
+                                type="button"
+                                onClick={() => setBrowserAdvancedOpen(!browserAdvancedOpen)}
+                                className="font-mono text-[11px] text-ink-faint hover:text-ink"
+                              >
+                                {browserAdvancedOpen ? "Hide advanced" : "Advanced (custom binary path)"}
+                              </button>
+                              {browserAdvancedOpen && (
+                                <div className="mt-3 grid gap-2">
+                                  <Label htmlFor="browser-exe">
+                                    Executable path{" "}
+                                    <span className="font-mono text-[10px] text-muted-foreground">
+                                      browser.executablePath — overrides Browser selection
+                                    </span>
+                                  </Label>
+                                  <div className="flex gap-2">
+                                    <Input
+                                      id="browser-exe"
+                                      type="text"
+                                      placeholder="(leave blank to use Browser selection above)"
+                                      value={browserExePath}
+                                      onChange={(e) => setBrowserExePath(e.target.value)}
+                                      className="flex-1"
+                                    />
+                                    <Button
+                                      onClick={() =>
+                                        saveBrowserConfig(
+                                          { executablePath: browserExePath },
+                                          "exe"
+                                        )
+                                      }
+                                      disabled={browserSaving === "exe"}
+                                    >
+                                      {browserSaving === "exe" && (
+                                        <LoadingHairline inline />
+                                      )}
+                                      Save
+                                    </Button>
+                                  </div>
+                                  <p className="font-mono text-[11px] text-ink-faint">
+                                    Path to any Chromium-family binary (Brave, Edge, patched Chromium, custom build). When set, wins over the dropdown above.
+                                  </p>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        {browserCfg.active !== "local" &&
+                          [
+                            {
+                              id: "browserbase",
+                              name: "Browserbase",
+                              envVar: "BROWSERBASE_API_KEY",
+                              needsProjectId: true,
+                              blurb: "browserbase.com — paid tier unlocks proxies + advanced stealth",
+                            },
+                            {
+                              id: "browser-use",
+                              name: "Browser Use",
+                              envVar: "BROWSER_USE_API_KEY",
+                              needsProjectId: false,
+                              blurb: "browser-use.com — best stealth pass rate (2026 benchmark)",
+                            },
+                            {
+                              id: "firecrawl",
+                              name: "Firecrawl",
+                              envVar: "FIRECRAWL_API_KEY",
+                              needsProjectId: false,
+                              blurb: "firecrawl.dev",
+                            },
+                          ]
+                            .filter((p) => p.id === browserCfg.active)
+                            .map((p) => {
+                              const isConfigured = !!browserCfg.configured[p.id];
+                              return (
+                                <div
+                                  key={p.id}
+                                  className="space-y-3 rounded border border-paper-rule bg-paper-sunk/40 p-4"
+                                >
+                                  <div className="flex items-center gap-2">
+                                    <Label htmlFor={`browser-key-${p.id}`}>
+                                      {p.name} API key
+                                    </Label>
+                                    <span className="font-mono text-[10px] text-muted-foreground">
+                                      {p.envVar}
+                                    </span>
+                                    {isConfigured && (
+                                      <Badge variant="secondary" className="ml-auto gap-1">
+                                        <Check className="size-3" />
+                                        Configured
+                                      </Badge>
+                                    )}
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <Input
+                                      id={`browser-key-${p.id}`}
+                                      type="password"
+                                      placeholder={isConfigured ? "•••••••• (set; paste a new value to replace)" : "Paste API key"}
+                                      value={browserKeyInputs[p.id] ?? ""}
+                                      onChange={(e) =>
+                                        setBrowserKeyInputs({
+                                          ...browserKeyInputs,
+                                          [p.id]: e.target.value,
+                                        })
+                                      }
+                                      className="flex-1"
+                                    />
+                                    <Button
+                                      onClick={() => saveBrowserKey(p.id)}
+                                      disabled={browserSaving === `key:${p.id}`}
+                                    >
+                                      {browserSaving === `key:${p.id}` && (
+                                        <LoadingHairline inline />
+                                      )}
+                                      Save
+                                    </Button>
+                                    {isConfigured && (
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        onClick={() => removeBrowserKey(p.id)}
+                                        title="Remove credentials"
+                                      >
+                                        <Trash2 className="size-4" />
+                                      </Button>
+                                    )}
+                                  </div>
+                                  {p.needsProjectId && (
+                                    <div className="flex gap-2">
+                                      <Input
+                                        type="text"
+                                        placeholder="Project ID (BROWSERBASE_PROJECT_ID)"
+                                        value={browserProjectIdInput}
+                                        onChange={(e) => setBrowserProjectIdInput(e.target.value)}
+                                        className="flex-1"
+                                      />
+                                    </div>
+                                  )}
+                                  <p className="font-mono text-[11px] text-ink-faint">
+                                    {p.blurb}
+                                  </p>
+                                </div>
+                              );
+                            })}
                       </>
                     )}
                   </CardContent>

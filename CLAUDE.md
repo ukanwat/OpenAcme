@@ -26,7 +26,7 @@ packages/
                 #   apply_patch, list_files, search_files, session_search, skill_view,
                 #   web_search, web_extract, execute_code, process, memory, task_*,
                 #   agent_list, browser_*)
-  browser/      # Managed Chrome via CDP — shared user-data-dir, per-agent tab ownership
+  browser/      # Per-agent browser sessions via pluggable provider (local Chrome / Browserbase / Browser-Use / Firecrawl)
   db/           # better-sqlite3 + Drizzle; sessions/messages/user_profiles +
                 #   task_comments/task_events + FTS5 (agents are filesystem-backed
                 #   under <dataDir>/agents/, not in the DB)
@@ -44,7 +44,7 @@ packages/
   eslint-config, typescript-config   # @repo/* internal
 ```
 
-Default data dir: `~/.openacme/` (`config.yaml`, `auth.json` mode 0600, `state.db`, `AGENTS.md`, `agents/<id>/{AGENT.md,workspace/,resources/,memory/}`, `tasks/<id>.md`, `skills/`, `browser-profile/`).
+Default data dir: `~/.openacme/` (`config.yaml`, `auth.json` mode 0600, `state.db`, `AGENTS.md`, `agents/<id>/{AGENT.md,workspace/,resources/,memory/,browser-profile/}`, `tasks/<id>.md`, `skills/`).
 Default server: `127.0.0.1:3210`. Default model: `openrouter` + `anthropic/claude-sonnet-4-20250514`.
 
 ---
@@ -215,7 +215,7 @@ Never log raw tokens. Never write tokens anywhere except via `store.ts`.
 
 ## Config
 
-`packages/config/src/schema.ts` is the source of truth. Top-level keys: `dataDir`, `model` (`ModelConfigSchema`), `server` (`port`, `host`), `behavior` (`AgentBehaviorSchema` — `maxSteps: 1000` + compression knobs), `skills` (`directory`, `autoGenerate`), `web` (`searchProvider`, `searchApiKey`), `browser` (`BrowserConfigSchema` — managed Chrome). **Agents are not in `config.yaml`** — each lives at `<dataDir>/agents/<id>/AGENT.md` (YAML frontmatter + system-prompt body) and is read/written by `AgentStore`. Shared workforce-wide context lives at `<dataDir>/AGENTS.md` and is merged into every agent's prompt.
+`packages/config/src/schema.ts` is the source of truth. Top-level keys: `dataDir`, `model` (`ModelConfigSchema`), `server` (`port`, `host`), `behavior` (`AgentBehaviorSchema` — `maxSteps: 1000` + compression knobs), `skills` (`directory`, `autoGenerate`), `web` (`searchProvider`, `searchApiKey`), `browser` (`BrowserConfigSchema` — per-agent sessions via pluggable provider). **Agents are not in `config.yaml`** — each lives at `<dataDir>/agents/<id>/AGENT.md` (YAML frontmatter + system-prompt body) and is read/written by `AgentStore`. Shared workforce-wide context lives at `<dataDir>/AGENTS.md` and is merged into every agent's prompt.
 
 `AgentDefinitionSchema` defaults `tools` to environment-touching tools only: `[shell, read_file, write_file, edit, apply_patch, list_files, search_files, web_search, web_extract, execute_code, process, browser_*]`. The introspection / self-management tools (`memory`, `session_search`, `skill_view`, `task_*`, `agent_list`) are **always-on system tools** merged in by `AgentManager` — do not list them under `tools`. Per-agent `model` overrides the root `model`. Other agent fields: `role` (third-person paragraph for coworkers), `persona` (second-person system prompt), `mcpServers` (private), `mcpDisabled` (excludes from global catalog), `skills`, `memoryCharLimit` (default 2200).
 
@@ -296,12 +296,36 @@ Three filesystem surfaces that shape what an agent sees and where it works. All 
 
 ## Browser (`@openacme/browser`)
 
-Managed Chrome via CDP for the whole workforce. **One Chrome process, shared user-data-dir (`<dataDir>/browser-profile/`), per-agent tab ownership.** Why shared: the human logs into accounts once and every agent inherits the session. Why per-tab ownership: agents don't trample each other's tabs.
+**Per-agent browser sessions via a pluggable provider.** Each agent that calls a browser tool gets its own session — a separate Chrome process under `<dataDir>/agents/<id>/browser-profile/` (local provider) or a separate remote session (cloud providers). Why per-agent: shared cookies cascade bans across the workforce, and shared fingerprints get the whole org flagged on social-media-style sites; each agent is a distinct persona, the runtime should reflect that. Lazy: nothing spawns / acquires until the first `browser_*` tool call. N inactive agents = 0 sessions held.
 
-- `BrowserManager` (`packages/browser/src/manager.ts`) launches Chrome with `--remote-debugging-port` (default 9322, configurable via `browser.port`), reconnects transparently if the user closes the window. Headed by default (`browser.headless: false`) so the user can see what's happening and log in; flip to headless for CI.
-- Connects via `playwright-core`'s `connectOverCDP`. `refs.ts` maintains the agent-id → owned tab-ids map; `snapshot.ts` produces the accessibility tree the LLM acts on; `cdp.ts` wraps the low-level CDP calls.
-- Tools register from `packages/tools/src/builtins/browser/`: `browser_navigate`, `browser_snapshot`, `browser_click`, `browser_type`, `browser_press_key`, `browser_take_screenshot`, `browser_wait_for`, `browser_evaluate`, `browser_console_messages`, `browser_tabs`, `browser_act` (high-level scripted action). All bound to a live `BrowserManager` in `AgentManager` via `bindBrowserTools`.
-- Config under `browser` in `config.yaml`: `enabled` (default true), `executablePath`, `port`, `headless`, `noSandbox` (for Docker-as-root).
+### Provider abstraction
+
+`packages/browser/src/providers/base.ts` — `BrowserProvider` interface. The whole contract is "give me a CDP URL for this agent." Anything that can produce one slots in. Idempotent per agent id; the provider caches sessions internally.
+
+V1 providers (all in `packages/browser/src/providers/`):
+
+| name | who runs the browser | env / config |
+|---|---|---|
+| `local` (default) | this machine, per-agent Chrome | `executablePath`, `headless`, `noSandbox` |
+| `browserbase` | Browserbase cloud | `BROWSERBASE_API_KEY`, `BROWSERBASE_PROJECT_ID`, optional `_PROXIES`, `_ADVANCED_STEALTH`, `_KEEP_ALIVE`, `_SESSION_TIMEOUT`, `_BASE_URL` |
+| `browser-use` | Browser Use cloud (best stealth in 2026 benchmarks) | `BROWSER_USE_API_KEY`, optional `_BASE_URL`, `_TIMEOUT_MIN`, `_PROXY_COUNTRY` |
+| `firecrawl` | Firecrawl cloud | `FIRECRAWL_API_KEY`, optional `FIRECRAWL_API_URL`, `FIRECRAWL_BROWSER_TTL` |
+
+Selection: `browser.provider` in `config.yaml` (workforce-wide for now; agent-level override is the obvious next extension, mirroring how `model` overrides root model). `createBrowserProvider(...)` in `providers/index.ts` is the factory called from `AgentManager`. Adding a new provider = one new file + one line in `PROVIDER_NAMES` + a switch case in `createBrowserProvider`.
+
+### Local provider details
+
+`LocalChromeProvider` (`providers/local.ts`) spawns one Chrome per agent under `<dataDir>/agents/<id>/browser-profile/`. Uses `--remote-debugging-port=0` and reads the OS-assigned port from `<userDataDir>/DevToolsActivePort` after spawn (avoids port collisions across N agents). Headed by default (`browser.headless: false`); each agent's window appears separately, so the user can log in per persona. `browser.executablePath` overrides the Chrome search and is how users opt into stealth Chromium forks (CloakBrowser, patched Brave, etc.) without us picking one.
+
+### Manager + tools
+
+`BrowserManager` (`manager.ts`) holds a `Map<agentId, AgentBrowserInstance>` — each instance is `{acquired, browser, agentTabs, activeTargetId, pageState}`. All public methods take `agentId` as the first arg. CDP attachment is via `playwright-core`'s `connectOverCDP` to the acquired URL; `withReconnect` recovers from transient drops by calling `closeAgent(id)` and re-acquiring. `closeAgent(agentId)` is called from `AgentManager.deleteAgent` before the agent dir is removed — kills the agent's Chrome / cloud session so on-disk cleanup can succeed.
+
+Tools register from `packages/tools/src/builtins/browser/`: `browser_navigate`, `browser_snapshot`, `browser_click`, `browser_type`, `browser_press_key`, `browser_take_screenshot`, `browser_wait_for`, `browser_evaluate`, `browser_console_messages`, `browser_tabs`, `browser_act`. All bound to a live `BrowserManager` in `AgentManager` via `bindBrowser`.
+
+### Config
+
+Under `browser` in `config.yaml`: `enabled` (default true), `provider` (default `local`), `executablePath` (local only), `headless` (local only, default false), `noSandbox` (local only, for Docker-as-root). The legacy `port` field is silently ignored — Chrome now picks its own port per agent.
 
 ---
 
@@ -469,6 +493,7 @@ Manual via Changesets — see `CONTRIBUTING.md`. Workflow `.github/workflows/rel
 | Change autonomous wake / scheduling | `packages/server/src/task-scheduler.ts` (+ `Agent.runAutonomous` in `packages/agent-core/src/agent.ts`) |
 | Add a task tool | `packages/tools/src/builtins/tasks.ts` — register, add to `SYSTEM_TOOLS` in `packages/tools/src/system.ts` |
 | Add a browser tool | `packages/tools/src/builtins/browser/` + `BrowserManager` in `packages/browser/src/manager.ts` |
+| Add a browser provider | new file in `packages/browser/src/providers/<name>.ts` implementing `BrowserProvider`; add to `PROVIDER_NAMES` + switch case in `providers/index.ts`; add to `BrowserConfigSchema.provider` enum in `packages/config/src/schema.ts` |
 | Add a Skills Hub source | `packages/skills/src/hub/sources/<name>.ts` + register in `packages/skills/src/hub/hub.ts` (also extend `SkillSourceId` union + `schemas.ts`) |
 | Add an agent template | `packages/agent-catalog/templates/<id>/{AGENT.md, resources/}` — frontmatter keys per the Agent catalog section |
 | Ship a bundled skill | `packages/skills/builtin/<name>/SKILL.md` — installable via `{ source: "builtin", identifier: "<name>" }` |

@@ -43,7 +43,7 @@ import {
 import * as fs from "node:fs";
 import { MemoryStore } from "@openacme/memory";
 import { TaskStore } from "@openacme/tasks";
-import { BrowserManager } from "@openacme/browser";
+import { BrowserManager, createBrowserProvider } from "@openacme/browser";
 import { Dispatcher } from "./dispatcher.js";
 import { SessionBroadcaster } from "./broadcaster.js";
 import {
@@ -277,16 +277,19 @@ export class AgentManager {
     // delay for state changes that don't fire an event (rare).
 
 
-    // Browser: one managed Chrome shared across the workforce under
-    // `<dataDir>/browser-profile/`. Lazy — Chrome doesn't spawn until
-    // the first browser_* tool call. Per-agent tab ownership lives
-    // inside the manager. Bound via the same placeholder pattern as
-    // session_search so @openacme/tools stays free of a runtime dep
-    // on playwright-core.
-    this.browserManager = new BrowserManager({
+    // Browser: per-agent session via a pluggable provider. Local provider
+    // spawns one Chrome per agent under `<dataDir>/agents/<id>/browser-profile/`;
+    // cloud providers (browserbase / browser-use / firecrawl) create one
+    // remote session per agent. Lazy — nothing spawns until the first
+    // browser_* tool call. Bound via the same placeholder pattern as
+    // session_search so @openacme/tools stays free of a runtime dep on
+    // playwright-core.
+    const browserProvider = createBrowserProvider({
+      name: config.browser.provider,
       dataDir: config.dataDir,
       config: config.browser,
     });
+    this.browserManager = new BrowserManager({ provider: browserProvider });
     bindBrowser({ manager: this.browserManager });
 
     // agent_list: surface the workforce directory + the calling agent's peer
@@ -672,6 +675,15 @@ export class AgentManager {
       this.mcpClients.delete(id);
     }
     this.agents.delete(id);
+
+    // Kill the agent's browser session BEFORE agentStore.delete blows away
+    // the on-disk profile dir. Per-agent now; orphan Chrome would prevent
+    // clean rmdir of <agents/<id>/browser-profile/.
+    try {
+      await this.browserManager.closeAgent(id);
+    } catch (e) {
+      log.warn({ err: e, agentId: id }, "deleteAgent: failed to close browser session");
+    }
 
     // Sessions: list cross-agent leaves then filter; SessionStore.list
     // is per-agent so we can use it directly here.

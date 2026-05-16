@@ -1,16 +1,10 @@
 import type { Browser, BrowserContext, Page } from "playwright-core";
-import {
-  killChrome,
-  launchChrome,
-  resolveExecutableOrThrow,
-  resolveUserDataDir,
-  type RunningChrome,
-} from "./chrome.js";
 import { connectOverCdp, isRecoverableDisconnect } from "./cdp.js";
+import type { AcquiredBrowser, BrowserProvider } from "./providers/base.js";
 import { refLocator } from "./refs.js";
 import { ariaSnapshot } from "./snapshot.js";
 import type {
-  BrowserConfig,
+  ActionResult,
   ClickCoordsParams,
   ClickParams,
   ConsoleEntry,
@@ -43,15 +37,14 @@ import type {
   TabInfo,
   TypeParams,
   WaitForParams,
-  ActionResult,
 } from "./types.js";
 
 const MAX_CONSOLE_PER_PAGE = 200;
 
 interface PerAgentTabs {
   next: number;
-  byTargetId: Map<string, TabId>; // targetId -> "tN"
-  byTabId: Map<TabId, string>; // "tN" -> targetId
+  byTargetId: Map<string, TabId>;
+  byTabId: Map<TabId, string>;
 }
 
 interface PageState {
@@ -59,132 +52,134 @@ interface PageState {
   dialogHandler: ((dialog: import("playwright-core").Dialog) => Promise<void>) | null;
 }
 
+interface AgentBrowserInstance {
+  acquired: AcquiredBrowser;
+  browser: Browser;
+  agentTabs: PerAgentTabs;
+  activeTargetId: string | null;
+  pageState: WeakMap<Page, PageState>;
+}
+
 /**
- * Owns the single managed Chrome process for the OpenAcme workforce.
+ * Per-agent browser orchestrator. Each agent that calls a browser tool
+ * gets its own session — a separate Chrome process for the local provider,
+ * a separate cloud session for Browserbase / Browser-Use / Firecrawl.
+ * Sessions are lazy and acquired on first tool call.
  *
- * One Chrome under `<dataDir>/browser-profile/`; one shared default
- * `BrowserContext` so all agents share cookies / login state. Tabs are
- * partitioned per-agent: each agent gets its own `t1`, `t2`, ... alias
- * space. Cross-agent tab access is refused.
- *
- * Lazy: nothing happens until the first tool call. CDP disconnect on
- * sleep/wake is recovered transparently — `cachedBrowser` is invalidated
- * by the `disconnected` listener and re-established on next call.
+ * Why per-agent: shared cookies cascade bans across the workforce, and
+ * shared fingerprints get the whole org flagged on social-media-style
+ * sites. Each agent is a distinct persona; the runtime should reflect that.
  */
 export class BrowserManager {
-  private readonly userDataDir: string;
-  private readonly cfg: BrowserConfig;
+  private readonly provider: BrowserProvider;
+  private instances = new Map<string, AgentBrowserInstance>();
+  private connecting = new Map<string, Promise<AgentBrowserInstance>>();
 
-  private running: RunningChrome | null = null;
-  private cachedBrowser: Browser | null = null;
-  private connectingPromise: Promise<Browser> | null = null;
-  private launchingPromise: Promise<RunningChrome> | null = null;
+  constructor(opts: { provider: BrowserProvider }) {
+    this.provider = opts.provider;
+  }
 
-  // Tab ownership: targetId -> owning agentId
-  private tabOwnership = new Map<string, string>();
-  // Per-agent alias spaces (tN ids stable within an agent)
-  private agentTabs = new Map<string, PerAgentTabs>();
-  // The agent's currently-active tab
-  private activeTabByAgent = new Map<string, string>(); // agentId -> targetId
-  // Per-page transient state (console buffer, pending dialog policy)
-  private pageState = new WeakMap<Page, PageState>();
-
-  constructor(opts: { dataDir: string; config: BrowserConfig }) {
-    this.userDataDir = resolveUserDataDir(opts.dataDir);
-    this.cfg = opts.config;
+  get providerName(): string {
+    return this.provider.name;
   }
 
   // ───────────────────────── lifecycle ─────────────────────────
 
-  private async ensureChrome(): Promise<RunningChrome> {
-    if (this.running && this.running.proc.exitCode === null) return this.running;
-    if (this.launchingPromise) return this.launchingPromise;
-    const exe = resolveExecutableOrThrow(this.cfg);
-    this.launchingPromise = launchChrome({
-      exe,
-      cdpPort: this.cfg.port,
-      userDataDir: this.userDataDir,
-      headless: this.cfg.headless,
-      noSandbox: this.cfg.noSandbox,
-    })
-      .then((r) => {
-        r.proc.once("exit", () => {
-          if (this.running === r) {
-            this.running = null;
-            this.cachedBrowser = null;
-            this.resetAllTabState();
-          }
-        });
-        this.running = r;
-        return r;
-      })
-      .finally(() => {
-        this.launchingPromise = null;
-      });
-    return this.launchingPromise;
-  }
-
-  private async getBrowser(): Promise<Browser> {
-    if (this.cachedBrowser) return this.cachedBrowser;
-    if (this.connectingPromise) return this.connectingPromise;
-    this.connectingPromise = this.connectFresh().finally(() => {
-      this.connectingPromise = null;
-    });
-    return this.connectingPromise;
-  }
-
-  private async connectFresh(): Promise<Browser> {
-    const running = await this.ensureChrome();
-    const browser = await connectOverCdp({
-      wsUrl: running.cdpUrl,
-      onDisconnected: (b) => {
-        if (this.cachedBrowser === b) this.cachedBrowser = null;
-      },
-    });
-    this.cachedBrowser = browser;
-    return browser;
-  }
-
-  private async sharedContext(): Promise<BrowserContext> {
-    const browser = await this.getBrowser();
-    const contexts = browser.contexts();
-    if (contexts.length === 0) {
-      // Should never happen with connectOverCDP — Chrome always exposes
-      // the default context — but defensive.
-      throw new Error("No BrowserContext available on the connected Chrome.");
-    }
-    const ctx = contexts[0]!;
-    return ctx;
-  }
-
-  private resetAllTabState(): void {
-    this.tabOwnership.clear();
-    this.agentTabs.clear();
-    this.activeTabByAgent.clear();
-  }
-
-  async close(): Promise<void> {
-    if (this.cachedBrowser) {
+  private async getInstance(agentId: string): Promise<AgentBrowserInstance> {
+    if (!agentId) throw new Error("BrowserManager calls require an agentId");
+    const existing = this.instances.get(agentId);
+    if (existing && existing.browser.isConnected()) return existing;
+    if (existing) {
+      this.instances.delete(agentId);
       try {
-        await this.cachedBrowser.close();
+        await existing.acquired.release();
       } catch {
-        // ignore — we're shutting down
+        // best-effort
       }
-      this.cachedBrowser = null;
     }
-    if (this.running) {
-      await killChrome(this.running);
-      this.running = null;
+    const inflight = this.connecting.get(agentId);
+    if (inflight) return inflight;
+    const p = this.connectFor(agentId).finally(() => this.connecting.delete(agentId));
+    this.connecting.set(agentId, p);
+    return p;
+  }
+
+  private async connectFor(agentId: string): Promise<AgentBrowserInstance> {
+    const acquired = await this.provider.acquire(agentId);
+    let browser;
+    try {
+      browser = await connectOverCdp({
+        wsUrl: acquired.cdpUrl,
+        onDisconnected: (b) => {
+          const inst = this.instances.get(agentId);
+          if (inst && inst.browser === b) this.instances.delete(agentId);
+        },
+      });
+    } catch (e) {
+      // Avoid leaking the upstream session (Chrome process, cloud billing
+      // window) when the initial CDP attach fails.
+      try {
+        await acquired.release();
+      } catch {
+        // best-effort
+      }
+      throw e;
     }
-    this.resetAllTabState();
+    const instance: AgentBrowserInstance = {
+      acquired,
+      browser,
+      agentTabs: { next: 1, byTargetId: new Map(), byTabId: new Map() },
+      activeTargetId: null,
+      pageState: new WeakMap(),
+    };
+    this.instances.set(agentId, instance);
+    return instance;
+  }
+
+  private async contextFor(agentId: string): Promise<{ inst: AgentBrowserInstance; ctx: BrowserContext }> {
+    const inst = await this.getInstance(agentId);
+    const contexts = inst.browser.contexts();
+    if (contexts.length === 0) {
+      throw new Error("No BrowserContext available on this agent's Chrome.");
+    }
+    return { inst, ctx: contexts[0]! };
+  }
+
+  /** Release one agent's browser session. Idempotent. */
+  async closeAgent(agentId: string): Promise<void> {
+    const inst = this.instances.get(agentId);
+    if (inst) {
+      this.instances.delete(agentId);
+      try {
+        await inst.browser.close();
+      } catch {
+        // best-effort
+      }
+    }
+    try {
+      await this.provider.releaseAgent(agentId);
+    } catch {
+      // best-effort
+    }
+  }
+
+  /** Release every agent and shut down the provider. */
+  async close(): Promise<void> {
+    const ids = Array.from(this.instances.keys());
+    await Promise.all(ids.map((id) => this.closeAgent(id)));
+    try {
+      await this.provider.releaseAll();
+    } catch {
+      // best-effort
+    }
   }
 
   // ───────────────────────── per-page observation ─────────────────────────
 
-  private observePage(page: Page): void {
-    if (this.pageState.has(page)) return;
+  private observePage(inst: AgentBrowserInstance, page: Page): void {
+    if (inst.pageState.has(page)) return;
     const state: PageState = { console: [], dialogHandler: null };
-    this.pageState.set(page, state);
+    inst.pageState.set(page, state);
     page.on("console", (msg) => {
       if (state.console.length >= MAX_CONSOLE_PER_PAGE) state.console.shift();
       state.console.push({
@@ -204,54 +199,28 @@ export class BrowserManager {
     });
   }
 
-  // ───────────────────────── tab ownership ─────────────────────────
+  // ───────────────────────── tab tracking ─────────────────────────
 
-  private agentTabsFor(agentId: string): PerAgentTabs {
-    let s = this.agentTabs.get(agentId);
-    if (!s) {
-      s = { next: 1, byTargetId: new Map(), byTabId: new Map() };
-      this.agentTabs.set(agentId, s);
-    }
-    return s;
-  }
-
-  private assignTabAlias(agentId: string, targetId: string): TabId {
-    const s = this.agentTabsFor(agentId);
-    const existing = s.byTargetId.get(targetId);
+  private assignTabAlias(inst: AgentBrowserInstance, targetId: string): TabId {
+    const existing = inst.agentTabs.byTargetId.get(targetId);
     if (existing) return existing;
-    const id: TabId = `t${s.next}`;
-    s.next += 1;
-    s.byTargetId.set(targetId, id);
-    s.byTabId.set(id, targetId);
-    this.tabOwnership.set(targetId, agentId);
+    const id: TabId = `t${inst.agentTabs.next}`;
+    inst.agentTabs.next += 1;
+    inst.agentTabs.byTargetId.set(targetId, id);
+    inst.agentTabs.byTabId.set(id, targetId);
     return id;
   }
 
-  private trackPageForAgent(agentId: string, page: Page, targetId: string): TabId {
-    this.observePage(page);
-    const tabId = this.assignTabAlias(agentId, targetId);
-    this.activeTabByAgent.set(agentId, targetId);
+  private trackPage(inst: AgentBrowserInstance, page: Page, targetId: string): TabId {
+    this.observePage(inst, page);
+    const tabId = this.assignTabAlias(inst, targetId);
+    inst.activeTargetId = targetId;
     page.once("close", () => {
-      this.releaseTab(targetId);
+      inst.agentTabs.byTargetId.delete(targetId);
+      inst.agentTabs.byTabId.delete(tabId);
+      if (inst.activeTargetId === targetId) inst.activeTargetId = null;
     });
     return tabId;
-  }
-
-  private releaseTab(targetId: string): void {
-    const owner = this.tabOwnership.get(targetId);
-    if (!owner) return;
-    this.tabOwnership.delete(targetId);
-    const s = this.agentTabs.get(owner);
-    if (s) {
-      const alias = s.byTargetId.get(targetId);
-      if (alias) {
-        s.byTabId.delete(alias);
-        s.byTargetId.delete(targetId);
-      }
-    }
-    if (this.activeTabByAgent.get(owner) === targetId) {
-      this.activeTabByAgent.delete(owner);
-    }
   }
 
   private async targetIdOf(page: Page): Promise<string> {
@@ -268,70 +237,57 @@ export class BrowserManager {
     }
   }
 
-  /**
-   * Resolve the Page for `tabId` (or the active tab if omitted) and verify
-   * the agent owns it. Throws on missing tab / cross-agent access.
-   */
-  private async resolvePage(
-    agentId: string,
-    tabId: TabId | undefined,
-    opts: { createIfNone: boolean }
-  ): Promise<{ page: Page; tabId: TabId; targetId: string }> {
-    const s = this.agentTabsFor(agentId);
-    let targetId: string | undefined;
-    if (tabId) {
-      targetId = s.byTabId.get(tabId);
-      if (!targetId) {
-        throw new Error(`Tab ${tabId} not found for this agent.`);
-      }
-    } else {
-      targetId = this.activeTabByAgent.get(agentId);
-    }
-
-    const ctx = await this.sharedContext();
-
-    if (targetId) {
-      const page = await this.findPageByTargetId(ctx, targetId);
-      if (page) {
-        this.observePage(page);
-        const resolvedTabId = s.byTargetId.get(targetId)!;
-        return { page, tabId: resolvedTabId, targetId };
-      }
-      // The target id we remember is gone (page closed externally,
-      // Chrome respawned, etc.). Clean up and fall through.
-      this.releaseTab(targetId);
-      targetId = undefined;
-    }
-
-    if (!opts.createIfNone) {
-      throw new Error(
-        "No tabs owned by this agent. Call browser_navigate first to open one."
-      );
-    }
-    const page = await ctx.newPage();
-    const newTargetId = await this.targetIdOf(page);
-    const newTabId = this.trackPageForAgent(agentId, page, newTargetId);
-    return { page, tabId: newTabId, targetId: newTargetId };
-  }
-
-  private async findPageByTargetId(
-    ctx: BrowserContext,
-    targetId: string
-  ): Promise<Page | null> {
+  private async findPageByTargetId(ctx: BrowserContext, targetId: string): Promise<Page | null> {
     for (const p of ctx.pages()) {
       try {
         const tid = await this.targetIdOf(p);
         if (tid === targetId) return p;
       } catch {
-        // ignore — the page may have closed mid-iteration
+        // page may have closed mid-iteration
       }
     }
     return null;
   }
 
+  private async resolvePage(
+    agentId: string,
+    tabId: TabId | undefined,
+    opts: { createIfNone: boolean }
+  ): Promise<{ inst: AgentBrowserInstance; page: Page; tabId: TabId; targetId: string }> {
+    const { inst, ctx } = await this.contextFor(agentId);
+    let targetId: string | null | undefined;
+    if (tabId) {
+      targetId = inst.agentTabs.byTabId.get(tabId);
+      if (!targetId) throw new Error(`Tab ${tabId} not found for this agent.`);
+    } else {
+      targetId = inst.activeTargetId;
+    }
+
+    if (targetId) {
+      const page = await this.findPageByTargetId(ctx, targetId);
+      if (page) {
+        this.observePage(inst, page);
+        const resolvedTabId = inst.agentTabs.byTargetId.get(targetId)!;
+        return { inst, page, tabId: resolvedTabId, targetId };
+      }
+      inst.agentTabs.byTargetId.delete(targetId);
+      if (inst.activeTargetId === targetId) inst.activeTargetId = null;
+      targetId = null;
+    }
+
+    if (!opts.createIfNone) {
+      throw new Error("No tabs open for this agent. Call browser_navigate first to open one.");
+    }
+    const page = await ctx.newPage();
+    const newTargetId = await this.targetIdOf(page);
+    const newTabId = this.trackPage(inst, page, newTargetId);
+    return { inst, page, tabId: newTabId, targetId: newTargetId };
+  }
+
   /**
    * Run an action with one-shot reconnect on transient CDP disconnects.
-   * The action gets a fresh `page` resolution on retry.
+   * Drops the agent's instance + cloud session before retrying so we
+   * don't reuse a server-side session that the provider already killed.
    */
   private async withReconnect<T>(
     agentId: string,
@@ -344,8 +300,7 @@ export class BrowserManager {
       return await fn(r.page, { tabId: r.tabId, targetId: r.targetId });
     } catch (e) {
       if (!isRecoverableDisconnect(e)) throw e;
-      // Invalidate connection + tab state and retry once.
-      this.cachedBrowser = null;
+      await this.closeAgent(agentId);
       const r = await this.resolvePage(agentId, tabId, opts);
       return await fn(r.page, { tabId: r.tabId, targetId: r.targetId });
     }
@@ -354,152 +309,98 @@ export class BrowserManager {
   // ───────────────────────── public API ─────────────────────────
 
   async navigate(agentId: string, p: NavigateParams): Promise<NavigateResult> {
-    return this.withReconnect(
-      agentId,
-      p.tabId,
-      { createIfNone: true },
-      async (page, ids) => {
-        await page.goto(p.url, { waitUntil: "domcontentloaded" });
-        const [title, url, snapshot] = await Promise.all([
-          page.title(),
-          Promise.resolve(page.url()),
-          ariaSnapshot(page),
-        ]);
-        return { tabId: ids.tabId, url, title, snapshot };
-      }
-    );
+    return this.withReconnect(agentId, p.tabId, { createIfNone: true }, async (page, ids) => {
+      await page.goto(p.url, { waitUntil: "domcontentloaded" });
+      const [title, url, snapshot] = await Promise.all([
+        page.title(),
+        Promise.resolve(page.url()),
+        ariaSnapshot(page),
+      ]);
+      return { tabId: ids.tabId, url, title, snapshot };
+    });
   }
 
   async snapshot(agentId: string, p: SnapshotParams): Promise<SnapshotResult> {
-    return this.withReconnect(
-      agentId,
-      p.tabId,
-      { createIfNone: false },
-      async (page, ids) => {
-        const snapshot = await ariaSnapshot(page);
-        return { tabId: ids.tabId, url: page.url(), snapshot };
-      }
-    );
+    return this.withReconnect(agentId, p.tabId, { createIfNone: false }, async (page, ids) => {
+      const snapshot = await ariaSnapshot(page);
+      return { tabId: ids.tabId, url: page.url(), snapshot };
+    });
   }
 
   async click(agentId: string, p: ClickParams): Promise<ActionResult> {
-    return this.withReconnect(
-      agentId,
-      p.tabId,
-      { createIfNone: false },
-      async (page, ids) => {
-        await refLocator(page, p.ref).click();
-        return { tabId: ids.tabId };
-      }
-    );
+    return this.withReconnect(agentId, p.tabId, { createIfNone: false }, async (page, ids) => {
+      await refLocator(page, p.ref).click();
+      return { tabId: ids.tabId };
+    });
   }
 
   async type(agentId: string, p: TypeParams): Promise<ActionResult> {
-    return this.withReconnect(
-      agentId,
-      p.tabId,
-      { createIfNone: false },
-      async (page, ids) => {
-        const loc = refLocator(page, p.ref);
-        await loc.fill(p.text);
-        if (p.submit) await loc.press("Enter");
-        return { tabId: ids.tabId };
-      }
-    );
+    return this.withReconnect(agentId, p.tabId, { createIfNone: false }, async (page, ids) => {
+      const loc = refLocator(page, p.ref);
+      await loc.fill(p.text);
+      if (p.submit) await loc.press("Enter");
+      return { tabId: ids.tabId };
+    });
   }
 
   async pressKey(agentId: string, p: PressKeyParams): Promise<ActionResult> {
-    return this.withReconnect(
-      agentId,
-      p.tabId,
-      { createIfNone: false },
-      async (page, ids) => {
-        await page.keyboard.press(p.key);
-        return { tabId: ids.tabId };
-      }
-    );
+    return this.withReconnect(agentId, p.tabId, { createIfNone: false }, async (page, ids) => {
+      await page.keyboard.press(p.key);
+      return { tabId: ids.tabId };
+    });
   }
 
-  async takeScreenshot(
-    agentId: string,
-    p: ScreenshotParams
-  ): Promise<ScreenshotResult> {
-    return this.withReconnect(
-      agentId,
-      p.tabId,
-      { createIfNone: false },
-      async (page, ids) => {
-        const buf = await page.screenshot({ fullPage: !!p.fullPage, type: "png" });
-        return {
-          tabId: ids.tabId,
-          pngBase64: buf.toString("base64"),
-          mediaType: "image/png",
-        };
-      }
-    );
+  async takeScreenshot(agentId: string, p: ScreenshotParams): Promise<ScreenshotResult> {
+    return this.withReconnect(agentId, p.tabId, { createIfNone: false }, async (page, ids) => {
+      const buf = await page.screenshot({ fullPage: !!p.fullPage, type: "png" });
+      return {
+        tabId: ids.tabId,
+        pngBase64: buf.toString("base64"),
+        mediaType: "image/png",
+      };
+    });
   }
 
   async waitFor(agentId: string, p: WaitForParams): Promise<ActionResult> {
-    return this.withReconnect(
-      agentId,
-      p.tabId,
-      { createIfNone: false },
-      async (page, ids) => {
-        if (p.text) {
-          await page
-            .getByText(p.text, { exact: false })
-            .first()
-            .waitFor({ timeout: 30_000 });
-        } else if (p.textGone) {
-          await page
-            .getByText(p.textGone, { exact: false })
-            .first()
-            .waitFor({ state: "hidden", timeout: 30_000 });
-        } else if (p.timeMs && p.timeMs > 0) {
-          await page.waitForTimeout(p.timeMs);
-        }
-        return { tabId: ids.tabId };
+    return this.withReconnect(agentId, p.tabId, { createIfNone: false }, async (page, ids) => {
+      if (p.text) {
+        await page.getByText(p.text, { exact: false }).first().waitFor({ timeout: 30_000 });
+      } else if (p.textGone) {
+        await page
+          .getByText(p.textGone, { exact: false })
+          .first()
+          .waitFor({ state: "hidden", timeout: 30_000 });
+      } else if (p.timeMs && p.timeMs > 0) {
+        await page.waitForTimeout(p.timeMs);
       }
-    );
+      return { tabId: ids.tabId };
+    });
   }
 
   async evaluate(agentId: string, p: EvaluateParams): Promise<EvaluateResult> {
-    return this.withReconnect(
-      agentId,
-      p.tabId,
-      { createIfNone: false },
-      async (page, ids) => {
-        // `function` is treated as an expression body — the model writes
-        // something like `document.title` or `(() => Array.from(document.images).length)()`.
-        const result = await page.evaluate(p.function as unknown as string);
-        return { tabId: ids.tabId, result };
-      }
-    );
+    return this.withReconnect(agentId, p.tabId, { createIfNone: false }, async (page, ids) => {
+      const result = await page.evaluate(p.function as unknown as string);
+      return { tabId: ids.tabId, result };
+    });
   }
 
   async consoleMessages(
     agentId: string,
     p: ConsoleMessagesParams
   ): Promise<ConsoleMessagesResult> {
-    return this.withReconnect(
-      agentId,
-      p.tabId,
-      { createIfNone: false },
-      async (page, ids) => {
-        const state = this.pageState.get(page);
-        const messages = state ? [...state.console] : [];
-        if (p.clear && state) state.console = [];
-        return { tabId: ids.tabId, messages };
-      }
-    );
+    return this.withReconnect(agentId, p.tabId, { createIfNone: false }, async (page, ids) => {
+      const { inst } = await this.contextFor(agentId);
+      const state = inst.pageState.get(page);
+      const messages = state ? [...state.console] : [];
+      if (p.clear && state) state.console = [];
+      return { tabId: ids.tabId, messages };
+    });
   }
 
   // ── tabs ──
 
   async tabsList(agentId: string): Promise<TabInfo[]> {
-    const ctx = await this.sharedContext();
-    const s = this.agentTabsFor(agentId);
-    const active = this.activeTabByAgent.get(agentId);
+    const { inst, ctx } = await this.contextFor(agentId);
     const out: TabInfo[] = [];
     for (const page of ctx.pages()) {
       let targetId: string;
@@ -508,13 +409,13 @@ export class BrowserManager {
       } catch {
         continue;
       }
-      const tabId = s.byTargetId.get(targetId);
+      const tabId = inst.agentTabs.byTargetId.get(targetId);
       if (!tabId) continue;
       out.push({
         tabId,
         url: page.url(),
         title: await page.title().catch(() => ""),
-        active: targetId === active,
+        active: targetId === inst.activeTargetId,
       });
     }
     out.sort((a, b) => {
@@ -526,11 +427,11 @@ export class BrowserManager {
   }
 
   async tabsNew(agentId: string, p: { url?: string }): Promise<TabInfo> {
-    const ctx = await this.sharedContext();
+    const { inst, ctx } = await this.contextFor(agentId);
     const page = await ctx.newPage();
     if (p.url) await page.goto(p.url, { waitUntil: "domcontentloaded" });
     const targetId = await this.targetIdOf(page);
-    const tabId = this.trackPageForAgent(agentId, page, targetId);
+    const tabId = this.trackPage(inst, page, targetId);
     return {
       tabId,
       url: page.url(),
@@ -540,26 +441,32 @@ export class BrowserManager {
   }
 
   async tabsClose(agentId: string, p: { tabId: TabId }): Promise<void> {
-    const s = this.agentTabsFor(agentId);
-    const targetId = s.byTabId.get(p.tabId);
+    const { inst, ctx } = await this.contextFor(agentId);
+    const targetId = inst.agentTabs.byTabId.get(p.tabId);
     if (!targetId) throw new Error(`Tab ${p.tabId} not found for this agent.`);
-    const ctx = await this.sharedContext();
     const page = await this.findPageByTargetId(ctx, targetId);
-    if (page) await page.close();
-    this.releaseTab(targetId);
+    if (page) {
+      // page.close() fires the page.once("close") handler from trackPage,
+      // which drops the alias maps + activeTargetId for us.
+      await page.close();
+    } else {
+      inst.agentTabs.byTargetId.delete(targetId);
+      inst.agentTabs.byTabId.delete(p.tabId);
+      if (inst.activeTargetId === targetId) inst.activeTargetId = null;
+    }
   }
 
   async tabsSelect(agentId: string, p: { tabId: TabId }): Promise<TabInfo> {
-    const s = this.agentTabsFor(agentId);
-    const targetId = s.byTabId.get(p.tabId);
+    const { inst, ctx } = await this.contextFor(agentId);
+    const targetId = inst.agentTabs.byTabId.get(p.tabId);
     if (!targetId) throw new Error(`Tab ${p.tabId} not found for this agent.`);
-    const ctx = await this.sharedContext();
     const page = await this.findPageByTargetId(ctx, targetId);
     if (!page) {
-      this.releaseTab(targetId);
+      inst.agentTabs.byTargetId.delete(targetId);
+      inst.agentTabs.byTabId.delete(p.tabId);
       throw new Error(`Tab ${p.tabId} is no longer open.`);
     }
-    this.activeTabByAgent.set(agentId, targetId);
+    inst.activeTargetId = targetId;
     await page.bringToFront().catch(() => {});
     return {
       tabId: p.tabId,
@@ -572,181 +479,102 @@ export class BrowserManager {
   // ── consolidated `act` verbs ──
 
   async hover(agentId: string, p: HoverParams): Promise<ActionResult> {
-    return this.withReconnect(
-      agentId,
-      p.tabId,
-      { createIfNone: false },
-      async (page, ids) => {
-        await refLocator(page, p.ref).hover();
-        return { tabId: ids.tabId };
-      }
-    );
+    return this.withReconnect(agentId, p.tabId, { createIfNone: false }, async (page, ids) => {
+      await refLocator(page, p.ref).hover();
+      return { tabId: ids.tabId };
+    });
   }
 
   async drag(agentId: string, p: DragParams): Promise<ActionResult> {
-    return this.withReconnect(
-      agentId,
-      p.tabId,
-      { createIfNone: false },
-      async (page, ids) => {
-        await refLocator(page, p.startRef).dragTo(refLocator(page, p.endRef));
-        return { tabId: ids.tabId };
-      }
-    );
+    return this.withReconnect(agentId, p.tabId, { createIfNone: false }, async (page, ids) => {
+      await refLocator(page, p.startRef).dragTo(refLocator(page, p.endRef));
+      return { tabId: ids.tabId };
+    });
   }
 
-  async selectOption(
-    agentId: string,
-    p: SelectOptionParams
-  ): Promise<SelectOptionResult> {
-    return this.withReconnect(
-      agentId,
-      p.tabId,
-      { createIfNone: false },
-      async (page, ids) => {
-        const selected = await refLocator(page, p.ref).selectOption(p.values);
-        return { tabId: ids.tabId, selected };
-      }
-    );
+  async selectOption(agentId: string, p: SelectOptionParams): Promise<SelectOptionResult> {
+    return this.withReconnect(agentId, p.tabId, { createIfNone: false }, async (page, ids) => {
+      const selected = await refLocator(page, p.ref).selectOption(p.values);
+      return { tabId: ids.tabId, selected };
+    });
   }
 
   async fillForm(agentId: string, p: FillFormParams): Promise<FillFormResult> {
-    return this.withReconnect(
-      agentId,
-      p.tabId,
-      { createIfNone: false },
-      async (page, ids) => {
-        for (const f of p.fields) {
-          await refLocator(page, f.ref).fill(f.value);
-        }
-        return { tabId: ids.tabId, filled: p.fields.length };
+    return this.withReconnect(agentId, p.tabId, { createIfNone: false }, async (page, ids) => {
+      for (const f of p.fields) {
+        await refLocator(page, f.ref).fill(f.value);
       }
-    );
+      return { tabId: ids.tabId, filled: p.fields.length };
+    });
   }
 
   async fileUpload(agentId: string, p: FileUploadParams): Promise<ActionResult> {
-    return this.withReconnect(
-      agentId,
-      p.tabId,
-      { createIfNone: false },
-      async (page, ids) => {
-        await refLocator(page, p.ref).setInputFiles(p.paths);
-        return { tabId: ids.tabId };
-      }
-    );
+    return this.withReconnect(agentId, p.tabId, { createIfNone: false }, async (page, ids) => {
+      await refLocator(page, p.ref).setInputFiles(p.paths);
+      return { tabId: ids.tabId };
+    });
   }
 
-  /**
-   * Arm a one-shot dialog handler on the page. The handler resolves the
-   * NEXT dialog event with accept/dismiss + optional prompt text.
-   */
-  async handleDialog(
-    agentId: string,
-    p: HandleDialogParams
-  ): Promise<DialogResult> {
-    return this.withReconnect(
-      agentId,
-      p.tabId,
-      { createIfNone: false },
-      async (page, ids) => {
-        await new Promise<void>((resolve, reject) => {
-          const timer = setTimeout(() => {
-            page.off("dialog", onDialog);
-            reject(new Error("Timed out waiting for a dialog"));
-          }, 30_000);
-          const onDialog = async (dialog: import("playwright-core").Dialog) => {
-            clearTimeout(timer);
-            try {
-              if (p.accept) {
-                await dialog.accept(p.promptText ?? undefined);
-              } else {
-                await dialog.dismiss();
-              }
-              resolve();
-            } catch (e) {
-              reject(e);
+  async handleDialog(agentId: string, p: HandleDialogParams): Promise<DialogResult> {
+    return this.withReconnect(agentId, p.tabId, { createIfNone: false }, async (page, ids) => {
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          page.off("dialog", onDialog);
+          reject(new Error("Timed out waiting for a dialog"));
+        }, 30_000);
+        const onDialog = async (dialog: import("playwright-core").Dialog) => {
+          clearTimeout(timer);
+          try {
+            if (p.accept) {
+              await dialog.accept(p.promptText ?? undefined);
+            } else {
+              await dialog.dismiss();
             }
-          };
-          page.once("dialog", onDialog);
-        });
-        return {
-          tabId: ids.tabId,
-          result: p.accept ? "accepted" : "dismissed",
+            resolve();
+          } catch (e) {
+            reject(e);
+          }
         };
-      }
-    );
+        page.once("dialog", onDialog);
+      });
+      return { tabId: ids.tabId, result: p.accept ? "accepted" : "dismissed" };
+    });
   }
 
   async resize(agentId: string, p: ResizeParams): Promise<ResizeResult> {
-    return this.withReconnect(
-      agentId,
-      p.tabId,
-      { createIfNone: false },
-      async (page, ids) => {
-        await page.setViewportSize({ width: p.width, height: p.height });
-        return { tabId: ids.tabId, width: p.width, height: p.height };
-      }
-    );
+    return this.withReconnect(agentId, p.tabId, { createIfNone: false }, async (page, ids) => {
+      await page.setViewportSize({ width: p.width, height: p.height });
+      return { tabId: ids.tabId, width: p.width, height: p.height };
+    });
   }
 
-  async navigateBack(
-    agentId: string,
-    p: { tabId?: TabId }
-  ): Promise<NavHistoryResult> {
-    return this.withReconnect(
-      agentId,
-      p.tabId,
-      { createIfNone: false },
-      async (page, ids) => {
-        await page.goBack({ waitUntil: "domcontentloaded" });
-        return { tabId: ids.tabId, url: page.url() };
-      }
-    );
+  async navigateBack(agentId: string, p: { tabId?: TabId }): Promise<NavHistoryResult> {
+    return this.withReconnect(agentId, p.tabId, { createIfNone: false }, async (page, ids) => {
+      await page.goBack({ waitUntil: "domcontentloaded" });
+      return { tabId: ids.tabId, url: page.url() };
+    });
   }
 
-  async navigateForward(
-    agentId: string,
-    p: { tabId?: TabId }
-  ): Promise<NavHistoryResult> {
-    return this.withReconnect(
-      agentId,
-      p.tabId,
-      { createIfNone: false },
-      async (page, ids) => {
-        await page.goForward({ waitUntil: "domcontentloaded" });
-        return { tabId: ids.tabId, url: page.url() };
-      }
-    );
+  async navigateForward(agentId: string, p: { tabId?: TabId }): Promise<NavHistoryResult> {
+    return this.withReconnect(agentId, p.tabId, { createIfNone: false }, async (page, ids) => {
+      await page.goForward({ waitUntil: "domcontentloaded" });
+      return { tabId: ids.tabId, url: page.url() };
+    });
   }
 
   async saveAsPdf(agentId: string, p: SaveAsPdfParams): Promise<PdfResult> {
-    return this.withReconnect(
-      agentId,
-      p.tabId,
-      { createIfNone: false },
-      async (page, ids) => {
-        const filename = p.filename ?? `browser-${ids.tabId}-${Date.now()}.pdf`;
-        const outPath = filename.includes("/")
-          ? filename
-          : `/tmp/${filename}`;
-        await page.pdf({ path: outPath, format: "Letter" });
-        return { tabId: ids.tabId, path: outPath };
-      }
-    );
+    return this.withReconnect(agentId, p.tabId, { createIfNone: false }, async (page, ids) => {
+      const filename = p.filename ?? `browser-${ids.tabId}-${Date.now()}.pdf`;
+      const outPath = filename.includes("/") ? filename : `/tmp/${filename}`;
+      await page.pdf({ path: outPath, format: "Letter" });
+      return { tabId: ids.tabId, path: outPath };
+    });
   }
 
-  async clickCoords(
-    agentId: string,
-    p: ClickCoordsParams
-  ): Promise<ActionResult> {
-    return this.withReconnect(
-      agentId,
-      p.tabId,
-      { createIfNone: false },
-      async (page, ids) => {
-        await page.mouse.click(p.x, p.y);
-        return { tabId: ids.tabId };
-      }
-    );
+  async clickCoords(agentId: string, p: ClickCoordsParams): Promise<ActionResult> {
+    return this.withReconnect(agentId, p.tabId, { createIfNone: false }, async (page, ids) => {
+      await page.mouse.click(p.x, p.y);
+      return { tabId: ids.tabId };
+    });
   }
 }

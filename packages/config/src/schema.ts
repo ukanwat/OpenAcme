@@ -365,41 +365,47 @@ export const WebConfigSchema = z.object({
 export type WebConfig = z.infer<typeof WebConfigSchema>;
 
 /**
- * Browser configuration — managed Chrome via CDP.
+ * Browser configuration — per-agent sessions via a pluggable provider.
  *
- * One Chrome process per OpenAcme install under
- * `<dataDir>/browser-profile/`. Headed by default so the user can log into
- * accounts that every agent then inherits. Set `headless: true` for
- * server/CI deployments.
+ * Each agent that uses a browser tool gets its OWN session under the
+ * selected provider: separate Chrome process + user-data-dir at
+ * `<dataDir>/agents/<id>/browser-profile/` for the local provider, or a
+ * separate cloud session for browserbase / browser-use / firecrawl.
+ * Cloud providers read their credentials from env vars at first call.
+ * Local Chrome is headed by default so the user can log in per agent;
+ * flip `headless: true` for server / CI deployments.
  */
 export const BrowserConfigSchema = z.object({
   enabled: z.boolean().default(true),
+  provider: z
+    .enum(["local", "browserbase", "browser-use", "firecrawl"])
+    .default("local")
+    .describe(
+      "Which backend supplies each agent's browser. 'local' spawns Chrome per agent; the cloud providers create one remote session per agent."
+    ),
+  localBrowser: z
+    .enum(["chromium", "cloakbrowser"])
+    .default("chromium")
+    .describe(
+      "Local provider only: which Chromium-family browser to run. 'chromium' prefers a system Chrome/Brave/Edge install and falls back to Playwright's auto-installed Chromium. 'cloakbrowser' uses the stealth Chromium fork (requires `pnpm add cloakbrowser` first; the binary downloads on first use)."
+    ),
   executablePath: z
     .string()
     .optional()
     .describe(
-      "Override path to a Chrome / Brave / Edge / Chromium binary. If unset, common install locations are searched."
-    ),
-  port: z
-    .number()
-    .int()
-    .min(1)
-    .max(65_535)
-    .default(9322)
-    .describe(
-      "Chrome --remote-debugging-port. Default 9322; change if it clashes with another local service."
+      "Local provider only: explicit path to a Chromium-family binary. When set, overrides `localBrowser`. Useful for custom builds or pinning a specific version."
     ),
   headless: z
     .boolean()
     .default(false)
     .describe(
-      "Run Chrome without a visible window. Default false — the user needs to see the window to log in to sites the workforce shares."
+      "Local provider only: run each agent's Chrome without a visible window. Default false — the user typically needs to see the window to log in to sites the agent will operate on."
     ),
   noSandbox: z
     .boolean()
     .default(false)
     .describe(
-      "Pass --no-sandbox to Chrome. Required when running as root in Docker / certain CI images."
+      "Local provider only: pass --no-sandbox to Chrome. Required when running as root in Docker / certain CI images."
     ),
 });
 export type BrowserConfig = z.infer<typeof BrowserConfigSchema>;

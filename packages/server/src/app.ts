@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import * as crypto from "node:crypto";
 import { createLogger } from "@openacme/config/logger";
+import { readRawConfig, writeRawConfig } from "@openacme/config";
 
 const log = createLogger("server.app");
 
@@ -1145,6 +1146,136 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
       }
       envVars[WEB_SEARCH_OVERRIDE_VAR] = provider;
       process.env[WEB_SEARCH_OVERRIDE_VAR] = provider;
+    }
+    writeDotenv(envVars);
+    return c.json({ success: true });
+  });
+
+  // ── Browser ──
+  // Cloud-provider creds live in <dataDir>/.env so they pick up without a
+  // restart. Provider selection (`browser.provider`) plus local-only knobs
+  // (executablePath, headless, noSandbox) live in config.yaml; agents
+  // instantiate one provider at AgentManager construction, so changing
+  // those requires a daemon restart.
+  const BROWSER_PROVIDERS = ["local", "browserbase", "browser-use", "firecrawl"] as const;
+  type BrowserProviderId = (typeof BROWSER_PROVIDERS)[number];
+  const BROWSER_CRED_VARS: Record<Exclude<BrowserProviderId, "local">, readonly string[]> = {
+    browserbase: ["BROWSERBASE_API_KEY", "BROWSERBASE_PROJECT_ID"],
+    "browser-use": ["BROWSER_USE_API_KEY"],
+    firecrawl: ["FIRECRAWL_API_KEY"],
+  };
+
+  function isBrowserProviderId(v: unknown): v is BrowserProviderId {
+    return typeof v === "string" && (BROWSER_PROVIDERS as readonly string[]).includes(v);
+  }
+
+  const LOCAL_BROWSERS = ["chromium", "cloakbrowser"] as const;
+  type LocalBrowserId = (typeof LOCAL_BROWSERS)[number];
+  const isLocalBrowserId = (v: unknown): v is LocalBrowserId =>
+    typeof v === "string" && (LOCAL_BROWSERS as readonly string[]).includes(v);
+
+  app.get("/api/browser", (c) => {
+    const envVars = readDotenv();
+    const configured: Record<string, boolean> = {};
+    for (const [pid, vars] of Object.entries(BROWSER_CRED_VARS)) {
+      configured[pid] = vars.every((v) => !!process.env[v] || !!envVars[v]);
+    }
+    // Read fresh from disk — in-memory `config` is the snapshot the running
+    // AgentManager booted with; the UI needs to show what will apply on the
+    // next restart (which is what was just saved).
+    const raw = readRawConfig(config.dataDir);
+    const rawBrowser = (raw.browser as Record<string, unknown> | undefined) ?? {};
+    const active = isBrowserProviderId(rawBrowser.provider) ? rawBrowser.provider : config.browser.provider;
+    const localBrowser = isLocalBrowserId(rawBrowser.localBrowser) ? rawBrowser.localBrowser : config.browser.localBrowser;
+    const exePath = typeof rawBrowser.executablePath === "string" ? rawBrowser.executablePath : (config.browser.executablePath ?? "");
+    const headless = typeof rawBrowser.headless === "boolean" ? rawBrowser.headless : config.browser.headless;
+    const noSandbox = typeof rawBrowser.noSandbox === "boolean" ? rawBrowser.noSandbox : config.browser.noSandbox;
+    return c.json({
+      providers: BROWSER_PROVIDERS,
+      localBrowsers: LOCAL_BROWSERS,
+      active,
+      localBrowser,
+      executablePath: exePath,
+      headless,
+      noSandbox,
+      configured,
+    });
+  });
+
+  app.post("/api/browser/config", async (c) => {
+    let body: {
+      provider?: string;
+      localBrowser?: string;
+      executablePath?: string;
+      headless?: boolean;
+      noSandbox?: boolean;
+    };
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "Invalid JSON" }, 400);
+    }
+    if (body.provider !== undefined && !isBrowserProviderId(body.provider)) {
+      return c.json({ error: `Unknown browser provider: ${body.provider}` }, 400);
+    }
+    if (body.localBrowser !== undefined && !isLocalBrowserId(body.localBrowser)) {
+      return c.json({ error: `Unknown local browser: ${body.localBrowser}` }, 400);
+    }
+    const raw = readRawConfig(config.dataDir);
+    const existing = (raw.browser as Record<string, unknown> | undefined) ?? {};
+    const next: Record<string, unknown> = { ...existing };
+    if (body.provider !== undefined) next.provider = body.provider;
+    if (body.localBrowser !== undefined) next.localBrowser = body.localBrowser;
+    if (body.executablePath !== undefined) {
+      const trimmed = body.executablePath.trim();
+      if (trimmed) next.executablePath = trimmed;
+      else delete next.executablePath;
+    }
+    if (body.headless !== undefined) next.headless = !!body.headless;
+    if (body.noSandbox !== undefined) next.noSandbox = !!body.noSandbox;
+    writeRawConfig(config.dataDir, { ...raw, browser: next });
+    return c.json({ success: true, needsRestart: true });
+  });
+
+  app.post("/api/browser/keys", async (c) => {
+    let body: { provider?: string; apiKey?: string; projectId?: string };
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "Invalid JSON" }, 400);
+    }
+    const { provider, apiKey, projectId } = body;
+    if (!provider || provider === "local" || !(provider in BROWSER_CRED_VARS)) {
+      return c.json({ error: "Unknown cloud browser provider" }, 400);
+    }
+    if (!apiKey || !apiKey.trim()) {
+      return c.json({ error: "apiKey is required" }, 400);
+    }
+    const envVars = readDotenv();
+    const vars = BROWSER_CRED_VARS[provider as Exclude<BrowserProviderId, "local">];
+    const apiKeyVar = vars[0]!;
+    envVars[apiKeyVar] = apiKey.trim();
+    process.env[apiKeyVar] = apiKey.trim();
+    if (provider === "browserbase") {
+      if (!projectId || !projectId.trim()) {
+        return c.json({ error: "projectId is required for browserbase" }, 400);
+      }
+      envVars["BROWSERBASE_PROJECT_ID"] = projectId.trim();
+      process.env["BROWSERBASE_PROJECT_ID"] = projectId.trim();
+    }
+    writeDotenv(envVars);
+    return c.json({ success: true });
+  });
+
+  app.delete("/api/browser/keys/:provider", (c) => {
+    const provider = c.req.param("provider");
+    if (!provider || provider === "local" || !(provider in BROWSER_CRED_VARS)) {
+      return c.json({ error: "Unknown cloud browser provider" }, 400);
+    }
+    const envVars = readDotenv();
+    for (const v of BROWSER_CRED_VARS[provider as Exclude<BrowserProviderId, "local">]) {
+      delete envVars[v];
+      delete process.env[v];
     }
     writeDotenv(envVars);
     return c.json({ success: true });

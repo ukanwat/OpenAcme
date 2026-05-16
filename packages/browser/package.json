@@ -1,7 +1,7 @@
 {
   "name": "@openacme/browser",
   "version": "0.4.0",
-  "description": "Managed Chrome via CDP for OpenAcme — shared user-data-dir, per-agent tab ownership, transparent reconnect.",
+  "description": "Per-agent browser sessions for OpenAcme — pluggable provider (local Chrome / Browserbase / Browser-Use / Firecrawl), per-agent profile dirs, transparent CDP reconnect.",
   "license": "MIT",
   "author": "Utkarsh Kanwat",
   "homepage": "https://github.com/ukanwat/OpenAcme/tree/main/packages/browser#readme",

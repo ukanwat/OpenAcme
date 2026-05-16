@@ -123,13 +123,15 @@ function processExists(pid: number): boolean {
 }
 
 export function buildLaunchArgs(opts: {
-  cdpPort: number;
   userDataDir: string;
   headless: boolean;
   noSandbox: boolean;
 }): string[] {
+  // Port 0 → Chrome picks an ephemeral one and writes it to
+  // <userDataDir>/DevToolsActivePort. Lets us run N agents in parallel
+  // without coordinating port assignment.
   const args = [
-    `--remote-debugging-port=${opts.cdpPort}`,
+    "--remote-debugging-port=0",
     `--user-data-dir=${opts.userDataDir}`,
     "--no-first-run",
     "--no-default-browser-check",
@@ -152,6 +154,33 @@ export function buildLaunchArgs(opts: {
     args.push("--disable-dev-shm-usage");
   }
   return args;
+}
+
+/**
+ * Read the port Chrome wrote to <userDataDir>/DevToolsActivePort. The file
+ * has two lines: `<port>\n/devtools/browser/<uuid>`. Polled because Chrome
+ * writes it some milliseconds after we spawn the process.
+ */
+export async function readDevToolsActivePort(opts: {
+  userDataDir: string;
+  budgetMs: number;
+}): Promise<number> {
+  const filePath = path.join(opts.userDataDir, "DevToolsActivePort");
+  const start = Date.now();
+  while (Date.now() - start < opts.budgetMs) {
+    try {
+      const raw = fs.readFileSync(filePath, "utf8");
+      const firstLine = raw.split("\n", 1)[0]?.trim();
+      const port = firstLine ? Number.parseInt(firstLine, 10) : NaN;
+      if (Number.isInteger(port) && port > 0 && port < 65_536) return port;
+    } catch {
+      // File not written yet
+    }
+    await sleep(50);
+  }
+  throw new Error(
+    `Chrome did not write DevToolsActivePort to ${filePath} within ${opts.budgetMs}ms`
+  );
 }
 
 /**
@@ -189,13 +218,19 @@ function sleep(ms: number): Promise<void> {
 
 export async function launchChrome(opts: {
   exe: string;
-  cdpPort: number;
   userDataDir: string;
   headless: boolean;
   noSandbox: boolean;
 }): Promise<RunningChrome> {
   fs.mkdirSync(opts.userDataDir, { recursive: true });
   clearStaleSingletonLocks(opts.userDataDir);
+  // Pre-existing DevToolsActivePort would confuse the port reader below;
+  // Chrome rewrites this file on its own boot, but only after a delay.
+  try {
+    fs.rmSync(path.join(opts.userDataDir, "DevToolsActivePort"), { force: true });
+  } catch {
+    // best-effort
+  }
 
   const args = buildLaunchArgs(opts);
   const proc = spawn(opts.exe, args, {
@@ -209,26 +244,32 @@ export async function launchChrome(opts: {
     earlyExit = { code, signal };
   });
 
-  // Wait for CDP — fail fast if Chrome dies during startup.
+  const earlyExitWatcher = (): Promise<never> =>
+    new Promise<never>((_, reject) => {
+      const id = setInterval(() => {
+        if (earlyExit) {
+          clearInterval(id);
+          reject(
+            new Error(
+              `Chrome exited during startup (code=${earlyExit.code} signal=${earlyExit.signal})`
+            )
+          );
+        }
+      }, 100);
+    });
+
   try {
+    const cdpPort = await Promise.race([
+      readDevToolsActivePort({ userDataDir: opts.userDataDir, budgetMs: 10_000 }),
+      earlyExitWatcher(),
+    ]);
     const wsUrl = await Promise.race([
-      pollForCdpReady({ cdpPort: opts.cdpPort, budgetMs: 15_000 }),
-      new Promise<never>((_, reject) => {
-        const id = setInterval(() => {
-          if (earlyExit) {
-            clearInterval(id);
-            reject(
-              new Error(
-                `Chrome exited during startup (code=${earlyExit.code} signal=${earlyExit.signal})`
-              )
-            );
-          }
-        }, 100);
-      }),
+      pollForCdpReady({ cdpPort, budgetMs: 15_000 }),
+      earlyExitWatcher(),
     ]);
     return {
       proc,
-      cdpPort: opts.cdpPort,
+      cdpPort,
       cdpUrl: wsUrl,
       userDataDir: opts.userDataDir,
     };
@@ -272,8 +313,9 @@ export async function killChrome(running: RunningChrome): Promise<void> {
   });
 }
 
-export function resolveUserDataDir(dataDir: string): string {
-  return path.join(dataDir, "browser-profile");
+export function resolveUserDataDir(dataDir: string, agentId: string): string {
+  if (!agentId) throw new Error("resolveUserDataDir requires an agentId");
+  return path.join(dataDir, "agents", agentId, "browser-profile");
 }
 
 export function resolveExecutableOrThrow(config: BrowserConfig): string {
