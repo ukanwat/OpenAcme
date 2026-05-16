@@ -155,10 +155,13 @@ const TASKS_GUIDANCE =
   "dispatcher until they clear. Trying to claim it directly fails with " +
   "`deps_unsatisfied`.\n" +
   "Defer: if you have nothing actionable right now and only `blocked` tasks " +
-  "remain, you can call `defer_session(\"5m\" | \"2h\" | \"24h\")` to suppress " +
-  "routine 60s spawns until that timestamp. New inbox signals (user messages, " +
-  "new tasks, comments) bypass the defer and wake you immediately. Defer is " +
-  "one-shot — it clears whenever the dispatcher does spawn you.";
+  "remain — OR you've intentionally left work in_progress and want to be " +
+  "quiet until a specific time — call `defer_session(\"5m\" | \"2h\" | \"24h\")` " +
+  "to suppress routine 60s spawns until that timestamp. New inbox signals " +
+  "(user messages, new tasks, comments) bypass the defer and wake you " +
+  "immediately. Defer is sticky: a signal-driven wake fires the turn but the " +
+  "remaining window keeps holding against subsequent routine ticks. One call " +
+  "covers the whole duration; you don't need to re-call it each turn.";
 
 /**
  * Workforce-side primitives for talking to the human and pacing your

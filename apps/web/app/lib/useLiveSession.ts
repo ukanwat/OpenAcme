@@ -124,7 +124,10 @@ export function useLiveSession(
     const handlers: Record<string, (e: MessageEvent) => void> = {
       ui_message_part: (e) => {
         try {
-          const env = JSON.parse(e.data) as { part?: unknown };
+          const env = JSON.parse(e.data) as {
+            part?: unknown;
+            messageId?: unknown;
+          };
           if (env.part === undefined) return;
           const part = env.part as {
             type?: unknown;
@@ -159,9 +162,13 @@ export function useLiveSession(
             }
           } else if (!controller) {
             // Late-joining subscriber missed the `start` chunk (SSE
-            // doesn't replay). Open an assembler so the rest of the
-            // stream still assembles; `messages_appended` at the end
-            // of the turn will settle the canonical id.
+            // doesn't replay on fresh subscribes). The assembler can't
+            // process raw text-delta chunks without a preceding
+            // text-start (AI SDK throws), so we don't try here. The
+            // server pushes throttled `messages_appended` snapshots of
+            // the in-flight assistant message for late-joiners — they
+            // update the UI via the upsert-by-id path. We still open
+            // an assembler so a later `start` (next message) works.
             openAssembler();
           }
           controller?.enqueue(env.part);

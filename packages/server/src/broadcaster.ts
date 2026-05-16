@@ -21,6 +21,14 @@ export type SessionBroadcastEvent =
        *  shape as what `result.toUIMessageStream` emits. The client
        *  consumes via `readUIMessageStream` to reassemble UIMessages. */
       part: unknown;
+      /** Assistant message id this chunk belongs to. Cached on the
+       *  broadcaster side from the `start` chunk's `messageId` and
+       *  attached to every subsequent envelope. Lets a late-joining
+       *  subscriber (page refresh mid-stream — fresh SSE connect doesn't
+       *  replay older chunks) seed its assembler with a synthetic start
+       *  so id-bearing messages keep flowing instead of being dropped
+       *  for having empty id. */
+      messageId?: string;
     }
   | {
       kind: "messages_appended";

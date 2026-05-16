@@ -37,11 +37,12 @@ export const sessions = sqliteTable(
       .notNull()
       .default(sql`(unixepoch())`)
       .$onUpdate(() => sql`(unixepoch())`),
-    // One-shot "skip routine spawns until this time" set by the agent
-    // via `defer_session(duration)`. Cleared when the dispatcher next
-    // spawns the session (defer is one-shot, not sticky). New inbox
-    // rows bypass the defer — it suppresses routine checks only, not
-    // real signals. Capped at now + 24h at write time.
+    // Sticky "skip routine spawns until this time" set by the agent via
+    // `defer_session(duration)`. Holds against periodic ticks until it
+    // naturally expires; only replaced by a subsequent `defer_session`
+    // call. New inbox rows bypass the defer (real signals always wake)
+    // BUT do not wipe it — defer keeps suppressing pure-tick wakes for
+    // the rest of the window. Capped at now + 24h at write time.
     deferUntil: integer("defer_until"),
   },
   (t) => [

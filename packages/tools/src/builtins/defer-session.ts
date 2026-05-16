@@ -19,10 +19,11 @@ import { getCurrentSessionId } from "../session-context.js";
  * rule checks inbox count; non-zero overrides any defer window. This
  * is the "skip the noise, not the signal" contract.
  *
- * One-shot: the dispatcher clears `defer_until` on actual spawn, so
- * the agent must re-call this tool on each turn it wants to defer.
- * That's by design — sticky deferral would make recovery from a
- * misjudged duration painful.
+ * Sticky: defer persists until it naturally expires or the agent
+ * replaces it with another `defer_session` call. The dispatcher does
+ * NOT clear it on spawn. A signal-driven wake fires the turn, but the
+ * remaining defer window keeps suppressing subsequent pure-tick wakes
+ * until the agent decides otherwise.
  */
 
 const FLOOR_S = 60;
@@ -47,9 +48,11 @@ const DESCRIPTION =
   "- `defer_session(\"24h\")` — maximum quiet period (the ceiling).\n\n" +
   "Real signals (a user message, a new task assigned to you, a " +
   "comment from another agent) bypass the defer and wake you " +
-  "immediately. Defer suppresses *noise*, not *signal*. The override " +
-  "resets each turn; call it again if you want to stay quiet next " +
-  "turn too.";
+  "immediately. Defer suppresses *noise*, not *signal*. It is sticky: " +
+  "a signal-driven wake fires the turn but the remaining defer window " +
+  "keeps holding against subsequent routine ticks. Call again only if " +
+  "you want to extend or shorten the window — one call covers the " +
+  "whole duration.";
 
 function parseDurationToUnixSeconds(input: string, now: number): number | null {
   const s = input.trim().toLowerCase();

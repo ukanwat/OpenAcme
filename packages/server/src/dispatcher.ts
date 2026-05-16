@@ -293,7 +293,29 @@ export class Dispatcher {
     let hasReady = false;
     let hasBlocked = false;
     for (const t of tasks) {
-      if (t.status === "in_progress") return true;
+      if (t.status === "in_progress") {
+        // Recurring task that fired recently: respect its interval as a
+        // wake floor. Without this, an agent that leaves the recurring
+        // task in_progress between fires (common pattern for tick-style
+        // tasks where the agent appends progress comments instead of
+        // calling task_update(done) each cycle) gets re-woken every 60s
+        // — ~30 wasted LLM calls per intended 30-min interval. Real
+        // signals (inbox row, cross-agent comment) still bypass: that's
+        // handled above by `inboxCount > 0`.
+        if (
+          t.recurrence?.kind === "interval" &&
+          t.last_run_at != null
+        ) {
+          const lastMs = Date.parse(t.last_run_at);
+          if (
+            Number.isFinite(lastMs) &&
+            lastMs + t.recurrence.every_ms > nowMs
+          ) {
+            continue;
+          }
+        }
+        return true;
+      }
       if (t.status === "open" && isStartReady(t.start_at, nowMs) && this.depsSatisfied(t)) {
         hasReady = true;
       } else if (t.status === "blocked") {
@@ -316,9 +338,19 @@ export class Dispatcher {
   }
 
   /**
-   * Append a turn to the agent's serial chain. Marks the session
-   * running, broadcasts state, clears defer (one-shot), runs the
-   * turn, then cleans up in the finally block.
+   * Append a turn to the agent's serial chain. Marks the session running,
+   * broadcasts state, runs the turn, then cleans up in the finally block.
+   *
+   * Defer is now sticky — we do NOT clear `defer_until` on spawn. The
+   * previous one-shot behavior caused this: a defer of 2h would hold for
+   * a while, then the first real signal (inbox row, post-interactive
+   * tick) would legitimately wake the agent AND wipe defer; from that
+   * point on every periodic 60s tick would re-spawn because nothing
+   * suppressed it (any in-progress task triggers `shouldSpawn`). With
+   * defer sticky, the same first signal still wakes the agent, but
+   * defer stays in place and holds against subsequent pure-tick wakes
+   * for the rest of the window. Only an explicit `defer_session` call
+   * (or natural expiry) changes it.
    */
   private enqueueTurn(agentId: string, sessionId: string): void {
     if (this.chains.has(agentId)) return;
@@ -339,18 +371,6 @@ export class Dispatcher {
         kind: "session_state",
         state: "running",
       });
-    }
-
-    // Clear `defer_until` on actual spawn (defer is one-shot, not
-    // sticky). Best-effort — failure here is a logging concern, not
-    // a fatal one.
-    try {
-      this.sessionStore.clearDeferUntil(sessionId);
-    } catch (e) {
-      log.warn(
-        { err: e, sessionId },
-        "clearDeferUntil failed at spawn time"
-      );
     }
 
     const promise = this.runTurn(agentId, sessionId).finally(() => {

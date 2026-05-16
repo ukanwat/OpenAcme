@@ -181,11 +181,19 @@ function renderInboxItems(items: InboxRow[]): string | null {
  * any). Wrapped in `<system-event>` tags so the model recognizes it as
  * a system-driven turn rather than human input, and so the web UI can
  * style it (matched against `metadata.kind === "autonomous_event"`).
+ *
+ * Includes an ISO timestamp in the intro line. Many agent decisions are
+ * time-sensitive (sleep windows, follow-up deadlines, recurrence
+ * checks) and inferring "now" from task ISO timestamps or shell-date
+ * round-trips is wasteful. Putting it in the wake — which sits at the
+ * tail of history, after the prompt-cache boundary — gives the agent
+ * explicit time on every turn without breaking the cached prefix.
  */
-function buildWakeText(inboxText: string | null): string {
+function buildWakeText(inboxText: string | null, now: Date): string {
+  const ts = now.toISOString();
   const intro = inboxText
-    ? "Autonomous turn — incoming signals since you last looked:"
-    : "Autonomous turn — no new signals; scan your queue.";
+    ? `Autonomous turn at ${ts} — incoming signals since you last looked:`
+    : `Autonomous turn at ${ts} — no new signals; scan your queue.`;
   const body = inboxText ? `\n\n${inboxText}` : "";
   return `<system-event>\n${intro}${body}\n</system-event>`;
 }
@@ -203,7 +211,7 @@ export interface AutonomousBroadcaster {
   broadcast(
     sessionId: string,
     event:
-      | { kind: "ui_message_part"; part: unknown }
+      | { kind: "ui_message_part"; part: unknown; messageId?: string }
       | {
           kind: "messages_appended";
           messages: Array<{
@@ -474,19 +482,20 @@ export class Agent {
     //       get here.)
     //   (c) Neither → continuation/health-check wake. Write a brief
     //       wake row so the model has something to respond to.
+    const wakeAt = new Date();
     let userMessage: UIMessage | null = null;
     if (inboxText) {
       userMessage = {
         id: randomUUID(),
         role: "user",
-        parts: [{ type: "text", text: buildWakeText(inboxText) }],
+        parts: [{ type: "text", text: buildWakeText(inboxText, wakeAt) }],
         metadata: { kind: "autonomous_event" } satisfies MessageMetadata,
       };
     } else if (!drainedUserMessage && !unansweredUser) {
       userMessage = {
         id: randomUUID(),
         role: "user",
-        parts: [{ type: "text", text: buildWakeText(null) }],
+        parts: [{ type: "text", text: buildWakeText(null, wakeAt) }],
         metadata: { kind: "autonomous_event" } satisfies MessageMetadata,
       };
     }
@@ -687,12 +696,33 @@ export class Agent {
         const bc = this.broadcaster;
         void (async () => {
           const reader = b.getReader();
+          // Cached from the `start` chunk so we can stamp it on every
+          // subsequent envelope. A page refresh mid-stream gets a fresh
+          // SSE subscribe with no replay (see routes/streams.ts); without
+          // this hint the late-joiner's assembler emits id="" messages
+          // that the client drops, and the page stays silent until the
+          // end-of-turn `messages_appended` lands.
+          let currentMessageId: string | undefined;
           try {
             for (;;) {
               const r = await reader.read();
               if (r.done) break;
+              const part = r.value as
+                | { type?: string; messageId?: string }
+                | null
+                | undefined;
+              if (
+                part?.type === "start" &&
+                typeof part.messageId === "string"
+              ) {
+                currentMessageId = part.messageId;
+              }
               try {
-                bc.broadcast(sid, { kind: "ui_message_part", part: r.value });
+                bc.broadcast(sid, {
+                  kind: "ui_message_part",
+                  part: r.value,
+                  messageId: currentMessageId,
+                });
               } catch (e) {
                 // Body kept verbatim — referenced in scheduler docs.
                 log.warn({ err: e }, "runAutonomous broadcaster part failed");
@@ -703,10 +733,47 @@ export class Agent {
           }
         })();
       }
+      // Throttled snapshot broadcasts for late-joiners. Refreshing the
+      // chat tab mid-turn opens a fresh SSE without `Last-Event-ID`, so
+      // the ring buffer doesn't replay and the AI SDK assembler can't
+      // process text-delta chunks without their original text-start.
+      // Emitting `messages_appended` with the in-flight message every
+      // ~500ms lets late-joiners render via the upsert-by-id path —
+      // they get chunky progress instead of staying silent until end-
+      // of-turn. Tabs connected from the start keep getting per-chunk
+      // `ui_message_part` events; the snapshot path is the safety net.
+      const SNAPSHOT_INTERVAL_MS = 500;
+      let lastSnapshotAt = 0;
+      const sid = opts.sessionId;
+      const bc = this.broadcaster;
       for await (const m of readUIMessageStream<UIMessage>({
         stream: assemblerStream,
       })) {
         assistantMessage = m;
+        if (bc && typeof m.id === "string" && m.id.length > 0) {
+          const now = Date.now();
+          if (now - lastSnapshotAt >= SNAPSHOT_INTERVAL_MS) {
+            lastSnapshotAt = now;
+            try {
+              bc.broadcast(sid, {
+                kind: "messages_appended",
+                messages: [
+                  {
+                    id: m.id,
+                    role: "assistant",
+                    parts: m.parts as unknown[],
+                    metadata: m.metadata,
+                  },
+                ],
+              });
+            } catch (e) {
+              log.warn(
+                { err: e, sessionId: sid },
+                "runAutonomous snapshot broadcast failed"
+              );
+            }
+          }
+        }
         if (timeoutAbort.signal.aborted) {
           timedOut = true;
           break;

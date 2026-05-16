@@ -13,6 +13,7 @@ const log = createLogger("server.app");
 
 import {
   createUIMessageStream,
+  readUIMessageStream,
   type UIMessage,
 } from "ai";
 import {
@@ -1461,12 +1462,64 @@ async function runChatTurn(args: {
       manager.broadcaster.broadcast(sessionId, {
         kind: "ui_message_part",
         part: { type: "start", messageId: responseMessageId },
+        messageId: responseMessageId,
       });
       const uiStream = result.toUIMessageStream({
         sendStart: false,
         sendFinish: false,
       });
-      const reader = (uiStream as ReadableStream<unknown>).getReader();
+      // Tee the stream: branch A forwards chunks (writer + per-chunk
+      // broadcast), branch B feeds an assembler that emits throttled
+      // `messages_appended` snapshots for late-joining subscribers. A
+      // refresh mid-stream opens a fresh SSE with no ring-buffer replay,
+      // so the AI SDK assembler on the client can't process raw
+      // text-delta chunks without their original text-start. The
+      // snapshot path is the safety net — late-joiners render via the
+      // upsert-by-id path on `messages_appended`. Tabs connected from
+      // the start still get per-chunk streaming via branch A; the
+      // snapshot broadcasts are redundant for them (upserting the same
+      // assembled message they're already building) but harmless.
+      const [streamA, streamB] = (
+        uiStream as ReadableStream<unknown>
+      ).tee();
+      const SNAPSHOT_INTERVAL_MS = 500;
+      let lastSnapshotAt = 0;
+      const assembler = (async () => {
+        try {
+          for await (const m of readUIMessageStream<OpenAcmeUIMessage>({
+            stream: streamB as ReadableStream<never>,
+            message: {
+              id: responseMessageId,
+              role: "assistant",
+              parts: [],
+            } as OpenAcmeUIMessage,
+          })) {
+            if (!m.id) continue;
+            const now = Date.now();
+            if (now - lastSnapshotAt < SNAPSHOT_INTERVAL_MS) continue;
+            lastSnapshotAt = now;
+            try {
+              manager.broadcaster.broadcast(sessionId, {
+                kind: "messages_appended",
+                messages: [
+                  {
+                    id: m.id,
+                    role: "assistant",
+                    parts: m.parts as unknown[],
+                    metadata: m.metadata,
+                  },
+                ],
+              });
+            } catch (e) {
+              log.warn({ err: e }, "runChatTurn snapshot broadcast failed");
+            }
+          }
+        } catch (e) {
+          log.warn({ err: e }, "runChatTurn assembler branch failed");
+        }
+      })();
+
+      const reader = streamA.getReader();
       try {
         for (;;) {
           const r = await reader.read();
@@ -1480,6 +1533,7 @@ async function runChatTurn(args: {
             manager.broadcaster.broadcast(sessionId, {
               kind: "ui_message_part",
               part: r.value,
+              messageId: responseMessageId,
             });
           } catch (e) {
             log.warn({ err: e }, "runChatTurn broadcaster forward failed");
@@ -1488,9 +1542,11 @@ async function runChatTurn(args: {
       } finally {
         reader.releaseLock();
       }
+      await assembler;
       manager.broadcaster.broadcast(sessionId, {
         kind: "ui_message_part",
         part: { type: "finish" },
+        messageId: responseMessageId,
       });
     },
     originalMessages: committed as unknown as OpenAcmeUIMessage[],

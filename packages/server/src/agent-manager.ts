@@ -209,8 +209,9 @@ export class AgentManager {
     // `defer_session(duration)` writes `sessions.defer_until`. The
     // dispatcher honours it on its periodic tick (skips routine
     // spawns until the timestamp), and new inbox rows bypass it
-    // (defer suppresses noise, not signal). One-shot — the dispatcher
-    // clears the field on actual spawn.
+    // (defer suppresses noise, not signal). Sticky — the field
+    // persists across signal-driven wakes until it naturally expires
+    // or the agent replaces it with another defer_session call.
     bindDeferSession({
       setDeferUntil: (sessionId, unixSeconds) => {
         this.sessionStore.setDeferUntil(sessionId, unixSeconds);

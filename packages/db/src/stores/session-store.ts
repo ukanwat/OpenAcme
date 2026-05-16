@@ -210,12 +210,13 @@ export function createSessionStore(
     // session cursor over the event log is gone — the agent inbox
     // (per-agent, delete-on-deliver) handles incrementality now.
 
-    /** Set the one-shot "skip routine spawns until this time" marker.
+    /** Set the sticky "skip routine spawns until this time" marker.
      *  The dispatcher honours this on its periodic tick, but a new
      *  inbox row for this session bypasses it (defer = "skip routine
-     *  checks," not "ignore real signals"). Cleared by the dispatcher
-     *  the next time it does spawn the session. Caller is responsible
-     *  for clamping `unixSeconds` to [now+60, now+86400]. */
+     *  checks," not "ignore real signals"). Persists across signal-
+     *  driven wakes until it naturally expires or a subsequent call
+     *  replaces it. Caller is responsible for clamping `unixSeconds`
+     *  to [now+60, now+86400]. */
     setDeferUntil(id: string, unixSeconds: number | null): void {
       const result = orm
         .update(sessions)

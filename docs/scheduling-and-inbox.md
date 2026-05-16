@@ -125,12 +125,31 @@ The intent: the agent only sees a `<system-event>` row when there's actually a s
 The `defer_session(duration)` tool writes `sessions.defer_until = now + duration`. The dispatcher's tick honors this: a session with `defer_until` in the future is skipped during **routine** spawns. The behavior:
 
 - **Routine tick**: defer is honored. Agent is left alone.
-- **Inbox row arrives** (user message, task event for this agent): defer is bypassed. The dispatcher spawns the agent anyway.
-- **Spawn actually fires**: `defer_until` is cleared. Defer is one-shot, not sticky.
+- **Inbox row arrives** (user message, task event for this agent): defer is bypassed. The dispatcher spawns the agent anyway, BUT defer stays in place for the rest of its window. The signal causes one wake; subsequent pure-tick wakes are still suppressed.
+- **Spawn actually fires**: `defer_until` is left intact. Defer is sticky — it expires by time, not by being consumed.
 
-The user-facing read: defer is "skip the noise, not the signal." An agent that wants to be quiet calls `defer_session("2h")` at the end of a turn; if anything real happens before then, the agent wakes.
+The user-facing read: defer is "skip the noise, not the signal." An agent that wants to be quiet calls `defer_session("2h")` at the end of a turn; if anything real happens before then, the agent wakes for that signal, then goes back to quiet until either another signal arrives or defer naturally expires.
 
 `defer_session("never")` is rejected at parse time — the old `sleep("never")` was a fiction (silently clamped to 24h). Ceiling is 24h; agents can't permanently silence themselves.
+
+### Why sticky instead of one-shot
+
+The original design had `defer_until` cleared on every spawn ("defer is one-shot"). In practice this produced a degenerate pattern: defer 2h → some peer comment arrives mid-window → legitimate wake fires AND wipes defer → from that point onward every 60-second tick spawns a fresh turn because nothing remains to suppress the floor. An agent that has an `in_progress` task (especially a long-running recurring tick where Tick-N comments accumulate without `task_update(done)`) ends up firing ~30 wasted LLM calls per intended 30-minute interval.
+
+Making defer sticky means the agent's intent ("don't bother me for the next N hours unless something happens") survives intermediate signal-driven wakes. The only ways defer ends:
+
+- It naturally expires (`defer_until <= now`).
+- The agent calls `defer_session` again with a different duration (the tool replaces the value).
+
+Real signals still wake the agent — that's intentional and unchanged. They just don't poison the rest of the defer window.
+
+### Recurring tasks have an interval floor on auto-wake
+
+`shouldSpawn` previously returned `true` for any `in_progress` task. For a recurring task with `every_ms` interval (e.g., the activity-tick pattern: claim → comment progress → leave in_progress → repeat), this meant the dispatcher kept firing every 60 seconds between intended fires.
+
+Now `shouldSpawn` respects the recurrence interval as a floor: if a recurring `in_progress` task last fired less than `every_ms` ago, the dispatcher does not force a wake on that task alone. Real signals (inbox rows from peers, user messages) still wake the agent. The floor only suppresses the "in_progress = wake me" auto-rule between scheduled fires.
+
+This pairs with sticky defer: defer handles the "agent explicitly said quiet" case; the interval floor handles the "agent forgot to defer but the recurrence already implies an interval" case.
 
 ---
 
