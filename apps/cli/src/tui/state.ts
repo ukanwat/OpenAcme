@@ -238,6 +238,12 @@ export function reducer(state: AppState, action: Action): AppState {
       // canonical part state ordering. Fall back to whatever we
       // accumulated in `inflight`.
       const finalized = action.responseMessage ?? state.inflight;
+      // Some providers (notably OAuth-bound endpoints) only emit input/
+      // output tokens and leave the SDK's `totalTokens` field undefined.
+      // Derive it when missing so the status line doesn't stall at 0.
+      const u = action.usage;
+      const turnTokens =
+        u?.totalTokens ?? (u ? (u.inputTokens ?? 0) + (u.outputTokens ?? 0) : 0);
       return {
         ...state,
         committed: finalized
@@ -245,8 +251,7 @@ export function reducer(state: AppState, action: Action): AppState {
           : state.committed,
         inflight: null,
         status: state.status === "error" ? "error" : "idle",
-        totalTokens:
-          state.totalTokens + (action.usage?.totalTokens ?? 0),
+        totalTokens: state.totalTokens + turnTokens,
       };
     }
     case "new-session":
