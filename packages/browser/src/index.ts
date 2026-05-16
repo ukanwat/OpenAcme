@@ -20,6 +20,7 @@ export type {
   ProviderName,
 } from "./providers/index.js";
 export type {
+  AgentBrowserOverrides,
   BrowserConfig,
   TabId,
   TabInfo,

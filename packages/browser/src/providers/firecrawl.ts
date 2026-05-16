@@ -1,4 +1,4 @@
-import type { AcquiredBrowser, BrowserProvider } from "./base.js";
+import type { AcquireOptions, AcquiredBrowser, BrowserProvider } from "./base.js";
 
 interface FirecrawlConfig {
   apiKey: string;
@@ -43,27 +43,36 @@ export class FirecrawlProvider implements BrowserProvider {
     };
   }
 
-  async acquire(agentId: string): Promise<AcquiredBrowser> {
+  async acquire(agentId: string, opts?: AcquireOptions): Promise<AcquiredBrowser> {
     if (!agentId) throw new Error("FirecrawlProvider.acquire requires an agentId");
     const existing = this.sessions.get(agentId);
     if (existing) return this.handleFor(agentId, existing);
     const inflight = this.acquiring.get(agentId);
     if (inflight) return inflight;
-    const p = this.createFor(agentId).finally(() => this.acquiring.delete(agentId));
+    const p = this.createFor(agentId, opts).finally(() => this.acquiring.delete(agentId));
     this.acquiring.set(agentId, p);
     return p;
   }
 
-  private async createFor(agentId: string): Promise<AcquiredBrowser> {
+  private async createFor(agentId: string, opts?: AcquireOptions): Promise<AcquiredBrowser> {
     const cfg = this.getConfig();
     const ttl = Number.parseInt(
       process.env.FIRECRAWL_BROWSER_TTL ?? String(DEFAULT_TTL_S),
       10
     );
+    // Per-agent profile binding: agent override (`browser.firecrawl.profileName`
+    // in AGENT.md) wins, env var is workforce fallback, else default to agentId.
+    // Sessions sharing a name share storage, so default-to-agentId gives clean
+    // per-agent isolation with zero config.
+    const profileName =
+      opts?.overrides?.firecrawl?.profileName ?? process.env.FIRECRAWL_PROFILE_NAME ?? agentId;
     const res = await fetch(`${cfg.baseUrl}/v2/browser`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfg.apiKey}` },
-      body: JSON.stringify({ ttl: Number.isFinite(ttl) && ttl > 0 ? ttl : DEFAULT_TTL_S }),
+      body: JSON.stringify({
+        ttl: Number.isFinite(ttl) && ttl > 0 ? ttl : DEFAULT_TTL_S,
+        profile: { name: profileName, saveChanges: true },
+      }),
       signal: AbortSignal.timeout(30_000),
     });
     if (!res.ok) {

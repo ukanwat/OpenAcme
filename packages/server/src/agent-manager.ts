@@ -43,7 +43,11 @@ import {
 import * as fs from "node:fs";
 import { MemoryStore } from "@openacme/memory";
 import { TaskStore } from "@openacme/tasks";
-import { BrowserManager, createBrowserProvider } from "@openacme/browser";
+import {
+  BrowserManager,
+  createBrowserProvider,
+  type AgentBrowserOverrides,
+} from "@openacme/browser";
 import { Dispatcher } from "./dispatcher.js";
 import { SessionBroadcaster } from "./broadcaster.js";
 import {
@@ -290,7 +294,12 @@ export class AgentManager {
       dataDir: config.dataDir,
       config: config.browser,
     });
-    this.browserManager = new BrowserManager({ provider: browserProvider });
+    this.browserManager = new BrowserManager({
+      provider: browserProvider,
+      resolveOverrides: (id) => this.agentStore.get(id)?.browser,
+      ensureOverrides: (id, current) =>
+        this.ensureBrowserOverridesAtAcquire(id, current),
+    });
     bindBrowser({ manager: this.browserManager });
 
     // agent_list: surface the workforce directory + the calling agent's peer
@@ -611,11 +620,151 @@ export class AgentManager {
    * or private), we reinit MCP so the new agent picks them up immediately.
    */
   async createAgent(def: AgentDefinition): Promise<Agent> {
-    this.agentStore.upsert(def);
-    await this.reinitMCPForAgent(def.id);
-    const agent = this.createAgentFromDef(def);
-    this.agents.set(def.id, agent);
+    const provisioned = await this.ensureAgentBrowserProfile(def);
+    this.agentStore.upsert(provisioned);
+    await this.reinitMCPForAgent(provisioned.id);
+    const agent = this.createAgentFromDef(provisioned);
+    this.agents.set(provisioned.id, agent);
     return agent;
+  }
+
+  /**
+   * Auto-provision a per-agent profile on cloud browser providers so each
+   * new agent starts with its own cookie isolation. Mirrors how
+   * `<agentDir>/browser-profiles/` is auto-created for the local provider.
+   *
+   * Currently only Browser Use needs upfront provisioning (its profiles are
+   * UUID-bound and must exist before a session references them). Firecrawl
+   * auto-creates profiles by name on first session use (`profile.name` =
+   * agent id by default), so no upfront call needed.
+   *
+   * No-op when: the agent already has a profileId, the workforce isn't on
+   * Browser Use, or the API key isn't configured. Failure-tolerant: a
+   * failed provision logs a warning and leaves the agent without a profile
+   * (sessions stay ephemeral until the user attaches one later via
+   * cookie-sync + AGENT.md edit).
+   */
+  private async ensureAgentBrowserProfile(
+    def: AgentDefinition
+  ): Promise<AgentDefinition> {
+    const provider = this.config.browser.provider;
+    if (provider === "browser-use") {
+      return this.ensureBrowserUseProfile(def);
+    }
+    if (provider === "firecrawl") {
+      return this.ensureFirecrawlProfile(def);
+    }
+    // local + browserbase don't need an upfront / stamped profile here:
+    //   - local uses per-agent dirs auto-created at agent build time
+    //   - browserbase profile binding isn't wired yet (separate follow-up)
+    return def;
+  }
+
+  /**
+   * Browser Use needs a real API call to provision a profile (UUID-bound).
+   * No-op when already set. Failure-tolerant — leaves the agent without a
+   * profile so sessions stay ephemeral until the user attaches one later.
+   */
+  private async ensureBrowserUseProfile(
+    def: AgentDefinition
+  ): Promise<AgentDefinition> {
+    if (def.browser?.browserUse?.profileId) return def;
+    const apiKey = process.env.BROWSER_USE_API_KEY;
+    if (!apiKey) return def;
+
+    const baseUrl = (
+      process.env.BROWSER_USE_BASE_URL ?? "https://api.browser-use.com/api/v3"
+    ).replace(/\/+$/, "");
+    try {
+      const res = await fetch(`${baseUrl}/profiles`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Browser-Use-API-Key": apiKey,
+        },
+        // user_id tags the profile with the agent id so it's findable in the
+        // Browser Use dashboard. Body is otherwise optional.
+        body: JSON.stringify({ user_id: def.id }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!res.ok) {
+        log.warn(
+          { status: res.status, agentId: def.id },
+          "browser-use profile auto-create failed; agent will use ephemeral sessions"
+        );
+        return def;
+      }
+      const data = (await res.json()) as { id?: string };
+      if (!data.id) {
+        log.warn(
+          { agentId: def.id },
+          "browser-use profile auto-create response missing id"
+        );
+        return def;
+      }
+      log.info(
+        { agentId: def.id, profileId: data.id },
+        "browser-use profile auto-provisioned"
+      );
+      return {
+        ...def,
+        browser: {
+          ...def.browser,
+          browserUse: { ...def.browser?.browserUse, profileId: data.id },
+        },
+      };
+    } catch (e) {
+      log.warn(
+        { err: e, agentId: def.id },
+        "browser-use profile auto-create errored"
+      );
+      return def;
+    }
+  }
+
+  /**
+   * Firecrawl uses name-bound profiles that auto-create on first session
+   * reference — no API call needed. We still stamp the default name
+   * (agentId) into AGENT.md so the binding is visible on disk and the user
+   * can rename it later. Idempotent.
+   */
+  private async ensureFirecrawlProfile(
+    def: AgentDefinition
+  ): Promise<AgentDefinition> {
+    if (def.browser?.firecrawl?.profileName) return def;
+    return {
+      ...def,
+      browser: {
+        ...def.browser,
+        firecrawl: { ...def.browser?.firecrawl, profileName: def.id },
+      },
+    };
+  }
+
+  /**
+   * Lazy-provision hook for BrowserManager. If the agent has no profile
+   * for the active provider, create one now and persist it back to the
+   * agent store so subsequent acquires skip this work. Failure-tolerant —
+   * returns the original overrides on any error so the acquire can still
+   * proceed (just ephemeral).
+   */
+  private async ensureBrowserOverridesAtAcquire(
+    agentId: string,
+    current: AgentBrowserOverrides | undefined
+  ): Promise<AgentBrowserOverrides | undefined> {
+    const provider = this.config.browser.provider;
+    // Already-set guards per provider — cheap shortcut to avoid a store read
+    // on every acquire after the first.
+    if (provider === "browser-use" && current?.browserUse?.profileId) return current;
+    if (provider === "firecrawl" && current?.firecrawl?.profileName) return current;
+    if (provider !== "browser-use" && provider !== "firecrawl") return current;
+    const def = this.agentStore.get(agentId);
+    if (!def) return current;
+    const provisioned = await this.ensureAgentBrowserProfile(def);
+    if (provisioned === def) return current;
+    this.agentStore.upsert(provisioned);
+    this.agents.delete(agentId);
+    return provisioned.browser;
   }
 
   /**

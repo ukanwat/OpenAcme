@@ -1,4 +1,4 @@
-import type { AcquiredBrowser, BrowserProvider } from "./base.js";
+import type { AcquireOptions, AcquiredBrowser, BrowserProvider } from "./base.js";
 
 interface BrowserUseConfig {
   apiKey: string;
@@ -43,27 +43,34 @@ export class BrowserUseProvider implements BrowserProvider {
     };
   }
 
-  async acquire(agentId: string): Promise<AcquiredBrowser> {
+  async acquire(agentId: string, opts?: AcquireOptions): Promise<AcquiredBrowser> {
     if (!agentId) throw new Error("BrowserUseProvider.acquire requires an agentId");
     const existing = this.sessions.get(agentId);
     if (existing) return this.handleFor(agentId, existing);
     const inflight = this.acquiring.get(agentId);
     if (inflight) return inflight;
-    const p = this.createFor(agentId).finally(() => this.acquiring.delete(agentId));
+    const p = this.createFor(agentId, opts).finally(() => this.acquiring.delete(agentId));
     this.acquiring.set(agentId, p);
     return p;
   }
 
-  private async createFor(agentId: string): Promise<AcquiredBrowser> {
+  private async createFor(agentId: string, opts?: AcquireOptions): Promise<AcquiredBrowser> {
     const cfg = this.getConfig();
     const timeoutMin = Number.parseInt(
       process.env.BROWSER_USE_TIMEOUT_MIN ?? String(DEFAULT_TIMEOUT_MIN),
       10
     );
-    const body = {
+    // Per-agent profile binding. Each agent has its own Browser Use
+    // profile UUID stashed on its AGENT.md under `browser.browserUse.profileId`;
+    // agent override wins, env var is the workforce-wide fallback for testing.
+    // Without either, the session boots ephemeral — no cookies, no login state.
+    const profileId =
+      opts?.overrides?.browserUse?.profileId ?? process.env.BROWSER_USE_PROFILE_ID;
+    const body: Record<string, unknown> = {
       timeout: Number.isFinite(timeoutMin) && timeoutMin > 0 ? timeoutMin : DEFAULT_TIMEOUT_MIN,
       proxyCountryCode: process.env.BROWSER_USE_PROXY_COUNTRY ?? "us",
     };
+    if (profileId) body.profile_id = profileId;
     const res = await fetch(`${cfg.baseUrl}/browsers`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Browser-Use-API-Key": cfg.apiKey },

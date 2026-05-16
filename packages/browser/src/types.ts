@@ -1,6 +1,28 @@
 /** Per-agent stable tab alias (`t1`, `t2`, ...). Opaque to the model. */
 export type TabId = string;
 
+/**
+ * Per-agent browser config — namespaced by provider so each backend's
+ * settings stay grouped. Resolved by `BrowserManager` at acquire time
+ * and forwarded to the active provider. Each agent that uses a browser
+ * gets its own profile binding for cookie isolation, mirroring how
+ * local Chrome profiles are scoped under `<agentDir>/browser-profiles/`.
+ *
+ * Set in AGENT.md frontmatter:
+ *
+ *   browser:
+ *     browserUse:
+ *       profileId: 6c0cbf15-...
+ *     firecrawl:
+ *       profileName: redditor
+ *
+ * Only the sub-block matching the workforce-active provider is consulted.
+ */
+export interface AgentBrowserOverrides {
+  browserUse?: { profileId?: string };
+  firecrawl?: { profileName?: string };
+}
+
 export interface BrowserConfig {
   enabled: boolean;
   provider: "local" | "browserbase" | "browser-use" | "firecrawl";

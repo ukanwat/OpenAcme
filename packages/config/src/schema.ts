@@ -122,6 +122,56 @@ export const MCPServerConfigSchema = z
 export type MCPServerConfig = z.infer<typeof MCPServerConfigSchema>;
 
 /**
+ * Per-agent browser overrides. Provider selection stays workforce-wide
+ * (`config.browser.provider`); profile bindings are per-agent so each
+ * agent has its own cookies / login state. Same idea as
+ * `<agentDir>/browser-profiles/` for the local provider — each agent
+ * gets its own remote profile on cloud providers.
+ *
+ * Namespaced by provider so settings stay grouped (and adding a new
+ * provider doesn't flatten its config into a soup of `xProfileId`,
+ * `yProfileName` fields). Only the sub-block matching the active
+ * provider is read at acquire time. Auto-provisioned at agent creation
+ * time when the cloud provider needs upfront profile creation
+ * (Browser Use); lazily filled on first acquire if missing.
+ *
+ * Example AGENT.md frontmatter:
+ *
+ *     browser:
+ *       browserUse:
+ *         profileId: 6c0cbf15-d470-4ca7-a90e-f7fea12f1d33
+ *       firecrawl:
+ *         profileName: redditor
+ */
+export const AgentBrowserOverridesSchema = z
+  .object({
+    browserUse: z
+      .object({
+        profileId: z
+          .string()
+          .optional()
+          .describe(
+            "Browser Use profile UUID for THIS agent. Sessions inherit the profile's cookies / saved logins. Auto-provisioned on agent creation when BROWSER_USE_API_KEY is set; lazily on first acquire otherwise."
+          ),
+      })
+      .strict()
+      .optional(),
+    firecrawl: z
+      .object({
+        profileName: z
+          .string()
+          .optional()
+          .describe(
+            "Firecrawl profile name for THIS agent. Auto-creates on first session use. Defaults to the agent id when unset."
+          ),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+export type AgentBrowserOverrides = z.infer<typeof AgentBrowserOverridesSchema>;
+
+/**
  * Agent definition — a named agent with its own config.
  */
 export const AgentDefinitionSchema = z.object({
@@ -207,6 +257,11 @@ export const AgentDefinitionSchema = z.object({
   // Optional rather than .default(false) so user-authored AGENT.md files
   // don't grow a noisy `managed: false` line on every save.
   managed: z.boolean().optional(),
+  // Per-agent browser overrides. Provider stays workforce-wide; profile
+  // bindings live here so each agent's cookies / login state are isolated.
+  // Same idea as `<agentDir>/browser-profiles/` for the local provider —
+  // each agent gets its own remote profile on cloud providers.
+  browser: AgentBrowserOverridesSchema.optional(),
 });
 export type AgentDefinition = z.infer<typeof AgentDefinitionSchema>;
 

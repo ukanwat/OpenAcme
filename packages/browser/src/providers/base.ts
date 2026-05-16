@@ -1,9 +1,18 @@
+import type { AgentBrowserOverrides } from "../types.js";
+
 /**
  * Browser provider abstraction. The contract is "give me a CDP URL for
  * this agent" — anything that can produce one (local Chrome, stealth
  * Chromium binary, cloud session) slots in here. `acquire(agentId)` and
  * `release()` are idempotent; the provider caches per-agent sessions.
  */
+
+export interface AcquireOptions {
+  /** Per-agent overrides resolved by the BrowserManager from the agent
+   *  store. Providers use these in preference to workforce-wide config
+   *  (e.g. each agent's own Browser Use profile UUID). */
+  overrides?: AgentBrowserOverrides;
+}
 
 export interface AcquiredBrowser {
   /**
@@ -32,7 +41,7 @@ export interface BrowserProvider {
   isConfigured(): boolean;
 
   /** Acquire a browser session for `agentId`. Idempotent per id. */
-  acquire(agentId: string): Promise<AcquiredBrowser>;
+  acquire(agentId: string, opts?: AcquireOptions): Promise<AcquiredBrowser>;
 
   /** Drop the cached session for `agentId`. Safe when no session held. */
   releaseAgent(agentId: string): Promise<void>;

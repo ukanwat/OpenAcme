@@ -1,6 +1,7 @@
 import type { Browser, BrowserContext, Page } from "playwright-core";
 import { connectOverCdp, isRecoverableDisconnect } from "./cdp.js";
 import type { AcquiredBrowser, BrowserProvider } from "./providers/base.js";
+import type { AgentBrowserOverrides } from "./types.js";
 import { refLocator } from "./refs.js";
 import { ariaSnapshot } from "./snapshot.js";
 import type {
@@ -79,11 +80,37 @@ interface AgentBrowserInstance {
  */
 export class BrowserManager {
   private readonly provider: BrowserProvider;
+  private readonly resolveOverrides:
+    | ((agentId: string) => AgentBrowserOverrides | undefined)
+    | null;
+  private readonly ensureOverrides:
+    | ((
+        agentId: string,
+        current: AgentBrowserOverrides | undefined
+      ) => Promise<AgentBrowserOverrides | undefined>)
+    | null;
   private instances = new Map<string, AgentBrowserInstance>();
   private connecting = new Map<string, Promise<AgentBrowserInstance>>();
 
-  constructor(opts: { provider: BrowserProvider }) {
+  constructor(opts: {
+    provider: BrowserProvider;
+    /** Look up per-agent browser overrides at acquire time. AgentManager
+     *  supplies this with a closure over agentStore. Without it, providers
+     *  fall back to env vars / their own defaults. */
+    resolveOverrides?: (agentId: string) => AgentBrowserOverrides | undefined;
+    /** Lazy-provision a per-agent profile when the agent doesn't have one
+     *  yet for the active provider. Called once per first-acquire when the
+     *  resolved overrides are missing the provider-specific profile field.
+     *  Returns the updated overrides (which AgentManager should also
+     *  persist to the agent store, so the next acquire skips this). */
+    ensureOverrides?: (
+      agentId: string,
+      current: AgentBrowserOverrides | undefined
+    ) => Promise<AgentBrowserOverrides | undefined>;
+  }) {
     this.provider = opts.provider;
+    this.resolveOverrides = opts.resolveOverrides ?? null;
+    this.ensureOverrides = opts.ensureOverrides ?? null;
   }
 
   get providerName(): string {
@@ -120,7 +147,19 @@ export class BrowserManager {
   }
 
   private async connectFor(agentId: string): Promise<AgentBrowserInstance> {
-    const acquired = await this.provider.acquire(agentId);
+    let overrides = this.resolveOverrides?.(agentId);
+    // Lazy provisioning: if the agent doesn't have a profile yet for the
+    // active provider, give AgentManager a chance to create one now and
+    // persist it back. First-acquire pays the provision cost; subsequent
+    // acquires skip this because the agent def now has the field.
+    if (this.ensureOverrides) {
+      try {
+        overrides = await this.ensureOverrides(agentId, overrides);
+      } catch {
+        // best-effort — fall through with whatever we had
+      }
+    }
+    const acquired = await this.provider.acquire(agentId, { overrides });
     let browser: Browser | null = null;
     let context: BrowserContext;
     try {
