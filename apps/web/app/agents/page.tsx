@@ -67,6 +67,7 @@ interface Agent {
   skills: string[];
   mcpServers?: Record<string, MCPServerConfigDto>;
   mcpDisabled?: string[];
+  managed?: boolean;
 }
 
 interface SkillIndexEntry {
@@ -1673,7 +1674,14 @@ function AgentDetail({
       <Card>
         <CardHeader className="flex flex-row items-start justify-between gap-4">
           <div className="min-w-0">
-            <CardTitle className="text-xl">{agent.name}</CardTitle>
+            <div className="flex flex-wrap items-center gap-2">
+              <CardTitle className="text-xl">{agent.name}</CardTitle>
+              {agent.managed && (
+                <Badge variant="outline" className="font-mono text-[11px]">
+                  Managed by OpenAcme
+                </Badge>
+              )}
+            </div>
             <div className="mt-1 flex flex-wrap items-center gap-2">
               <span className="font-mono text-[11px] tabular-nums text-ink-faint">
                 {agent.id}
@@ -1684,20 +1692,22 @@ function AgentDetail({
               </span>
             </div>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <Button size="sm" onClick={onEdit}>
-              <Pencil className="size-4" />
-              Edit
-            </Button>
-            <Button
-              variant="ghost-destructive"
-              size="sm"
-              onClick={onDelete}
-            >
-              <Trash2 className="size-4" />
-              Delete
-            </Button>
-          </div>
+          {!agent.managed && (
+            <div className="flex items-center gap-2 shrink-0">
+              <Button size="sm" onClick={onEdit}>
+                <Pencil className="size-4" />
+                Edit
+              </Button>
+              <Button
+                variant="ghost-destructive"
+                size="sm"
+                onClick={onDelete}
+              >
+                <Trash2 className="size-4" />
+                Delete
+              </Button>
+            </div>
+          )}
         </CardHeader>
         <CardContent className="space-y-5">
           {agent.role && (
@@ -1813,7 +1823,7 @@ function AgentDetail({
             )}
           </div>
 
-          <AgentResourcesPanel agentId={agent.id} />
+          <AgentResourcesPanel agentId={agent.id} readOnly={agent.managed} />
         </CardContent>
       </Card>
     </div>

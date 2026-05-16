@@ -51,9 +51,14 @@ export function buildAgentFromTemplate(
   const id = resolveId(template, opts, existingIds);
   const name = opts.nameOverride?.trim() || template.agentFields.name;
 
+  // Callers cannot forge `managed`. Only the template's own frontmatter
+  // marks an agent as platform-managed.
+  const overrides = { ...(opts.overrides ?? {}) };
+  if ("managed" in overrides) delete (overrides as Record<string, unknown>).managed;
+
   const merged = {
     ...template.agentFields,
-    ...(opts.overrides ?? {}),
+    ...overrides,
     id,
     name,
   };

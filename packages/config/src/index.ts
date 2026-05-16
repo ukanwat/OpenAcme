@@ -61,3 +61,5 @@ export {
   ensureSecret,
   clearSecret,
 } from "./secret.js";
+
+export { readLastVersion, writeLastVersion } from "./version-marker.js";

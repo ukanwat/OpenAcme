@@ -52,6 +52,7 @@ import {
   agentsCatalogCommand,
   agentsImportCommand,
 } from "./commands/agents.js";
+import { updateCommand } from "./commands/update.js";
 import { showBanner } from "./tui/banner.js";
 
 const pkg = JSON.parse(
@@ -360,6 +361,12 @@ agents
   .action((templateId: string, opts: { dataDir?: string; id?: string; name?: string }) =>
     agentsImportCommand(templateId, opts)
   );
+
+program
+  .command("update")
+  .description("Check whether a newer @openacme/cli is on npm and print the install command")
+  .option("--json", "Emit a machine-readable JSON line instead of human text")
+  .action((opts: { json?: boolean }) => updateCommand({ json: opts.json === true }));
 
 // Resolve the data dir once so the LLM provider's OAuth path can find auth.json
 // without us threading the path through every call site.

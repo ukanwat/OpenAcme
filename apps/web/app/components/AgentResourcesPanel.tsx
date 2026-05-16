@@ -27,9 +27,17 @@ function formatBytes(n: number): string {
  * Resources panel for an agent. Lists files under
  * `<agentDir>/resources/`, supports upload (file or folder), delete,
  * and download. Pure presentational + fetcher — no parent state needed
- * beyond the agentId.
+ * beyond the agentId. `readOnly` hides the mutation controls (used for
+ * platform-managed agents whose resources are owned by the catalog
+ * template).
  */
-export function AgentResourcesPanel({ agentId }: { agentId: string }) {
+export function AgentResourcesPanel({
+  agentId,
+  readOnly = false,
+}: {
+  agentId: string;
+  readOnly?: boolean;
+}) {
   const [resources, setResources] = useState<AgentResource[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -179,9 +187,9 @@ export function AgentResourcesPanel({ agentId }: { agentId: string }) {
         "grid gap-3 transition-colors",
         dragOver && "outline outline-1 outline-plot-red outline-offset-4"
       )}
-      onDragOver={onDragOver}
-      onDragLeave={onDragLeave}
-      onDrop={onDrop}
+      onDragOver={readOnly ? undefined : onDragOver}
+      onDragLeave={readOnly ? undefined : onDragLeave}
+      onDrop={readOnly ? undefined : onDrop}
     >
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
@@ -193,52 +201,54 @@ export function AgentResourcesPanel({ agentId }: { agentId: string }) {
             </span>
           </Label>
         </div>
-        <div className="flex items-center gap-2">
-          <input
-            ref={fileInputRef}
-            type="file"
-            hidden
-            multiple
-            onChange={(e) => {
-              if (e.target.files) void upload(e.target.files);
-              e.target.value = "";
-            }}
-          />
-          <input
-            ref={folderInputRef}
-            type="file"
-            hidden
-            // @ts-expect-error -- webkitdirectory + directory are non-standard
-            // attributes used to pick a folder in Chromium-based browsers.
-            webkitdirectory=""
-            directory=""
-            multiple
-            onChange={(e) => {
-              if (e.target.files) void upload(e.target.files);
-              e.target.value = "";
-            }}
-          />
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            disabled={uploading}
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <Upload className="size-4" />
-            Upload files
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            disabled={uploading}
-            onClick={() => folderInputRef.current?.click()}
-          >
-            <FolderUp className="size-4" />
-            Upload folder
-          </Button>
-        </div>
+        {!readOnly && (
+          <div className="flex items-center gap-2">
+            <input
+              ref={fileInputRef}
+              type="file"
+              hidden
+              multiple
+              onChange={(e) => {
+                if (e.target.files) void upload(e.target.files);
+                e.target.value = "";
+              }}
+            />
+            <input
+              ref={folderInputRef}
+              type="file"
+              hidden
+              // @ts-expect-error -- webkitdirectory + directory are non-standard
+              // attributes used to pick a folder in Chromium-based browsers.
+              webkitdirectory=""
+              directory=""
+              multiple
+              onChange={(e) => {
+                if (e.target.files) void upload(e.target.files);
+                e.target.value = "";
+              }}
+            />
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              disabled={uploading}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <Upload className="size-4" />
+              Upload files
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              disabled={uploading}
+              onClick={() => folderInputRef.current?.click()}
+            >
+              <FolderUp className="size-4" />
+              Upload folder
+            </Button>
+          </div>
+        )}
       </div>
 
       {loading ? (
@@ -247,7 +257,7 @@ export function AgentResourcesPanel({ agentId }: { agentId: string }) {
         </p>
       ) : resources.length === 0 ? (
         <p className="border border-paper-rule bg-paper-sunk px-3 py-2 font-mono text-[12px] text-ink-soft">
-          No resources. Drop files here or use the buttons above.
+          {readOnly ? "No resources." : "No resources. Drop files here or use the buttons above."}
         </p>
       ) : (
         <ul className="border-y border-paper-rule font-mono text-[12px]">
@@ -271,14 +281,16 @@ export function AgentResourcesPanel({ agentId }: { agentId: string }) {
               >
                 <Download className="size-3.5" />
               </a>
-              <button
-                type="button"
-                onClick={() => void removeResource(r.relPath)}
-                className="text-ink-soft hover:text-plot-red"
-                aria-label={`Delete ${r.relPath}`}
-              >
-                <Trash2 className="size-3.5" />
-              </button>
+              {!readOnly && (
+                <button
+                  type="button"
+                  onClick={() => void removeResource(r.relPath)}
+                  className="text-ink-soft hover:text-plot-red"
+                  aria-label={`Delete ${r.relPath}`}
+                >
+                  <Trash2 className="size-3.5" />
+                </button>
+              )}
             </li>
           ))}
         </ul>

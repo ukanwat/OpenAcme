@@ -201,6 +201,12 @@ export const AgentDefinitionSchema = z.object({
     .int()
     .min(60_000)
     .default(30 * 60 * 1000),
+  // Platform-managed agent. Optional + truthy semantics: present + true
+  // means catalog-owned (refreshed in place on platform self-update; API
+  // and web UI reject mutations). Absent or false means user-owned.
+  // Optional rather than .default(false) so user-authored AGENT.md files
+  // don't grow a noisy `managed: false` line on every save.
+  managed: z.boolean().optional(),
 });
 export type AgentDefinition = z.infer<typeof AgentDefinitionSchema>;
 

@@ -1,11 +1,33 @@
 import "@openacme/config/telemetry-bootstrap";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { serve, getRequestListener } from "@hono/node-server";
-import { loadConfig } from "@openacme/config";
+import {
+  loadConfig,
+  readLastVersion,
+  writeLastVersion,
+} from "@openacme/config";
 import { createLogger } from "@openacme/config/logger";
 import { createApp } from "./app.js";
 import { createDevHttpServer } from "./dev-proxy.js";
 
 const log = createLogger("server.index");
+
+/**
+ * Resolve the running platform version from `@openacme/server`'s own
+ * `package.json`. Published packages are version-locked via Changesets,
+ * so the server's version is canonical for "what's installed."
+ *
+ * Dev (`pnpm dev` → tsx): src/index.ts → ../package.json.
+ * Published: dist/index.js → ../package.json.
+ */
+function readPlatformVersion(): string {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const pkgPath = resolve(here, "..", "package.json");
+  const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as { version: string };
+  return pkg.version;
+}
 
 /**
  * Start the OpenAcme agent server.
@@ -22,11 +44,35 @@ export async function startServer(dataDirOverride?: string) {
   // Initialize MCP connections for all agents
   await manager.initMCP();
 
-  // Materialize the default Acme agent on a fresh install so the user
-  // lands with something to chat with. No-op when any agent already
-  // exists. Runs AFTER initMCP — the import path calls
-  // reinitMCPForAgent itself for the new agent.
-  await manager.ensureDefaultAgents();
+  // Materialize platform-managed catalog templates (today: Acme) that
+  // aren't on disk yet. Per-template idempotent. Runs AFTER initMCP —
+  // the import path calls reinitMCPForAgent itself for new agents.
+  await manager.ensureManagedAgents();
+
+  // Post-update refresh: when the installed platform version differs
+  // from the recorded marker, refresh in-place every managed agent and
+  // every bundled (`source: builtin`) skill so the local copy tracks
+  // the new bundled definitions. Best-effort — each step is failure-
+  // tolerant and the marker is bumped either way so we don't retry on
+  // every boot and spam logs.
+  //
+  // First-ever boot (no marker) skips the refresh — ensureManagedAgents
+  // above just installed everything fresh, and there are no builtin
+  // skills installed yet for refreshBundledSkills to operate on. Just
+  // stamp the marker so the next boot is cheap.
+  const installedVersion = readPlatformVersion();
+  const lastVersion = readLastVersion(config.dataDir);
+  if (lastVersion === undefined) {
+    tryWriteMarker(config.dataDir, installedVersion);
+  } else if (lastVersion !== installedVersion) {
+    log.info(
+      { from: lastVersion, to: installedVersion },
+      "platform version changed — refreshing bundled artifacts"
+    );
+    await tryStep("refreshManagedAgents", () => manager.refreshManagedAgents());
+    await tryStep("refreshBundledSkills", () => manager.refreshBundledSkills());
+    tryWriteMarker(config.dataDir, installedVersion);
+  }
 
   // Start the periodic dispatcher. Runs the startup sweep (resets
   // stale in_progress from any prior crash) and schedules the 60s
@@ -70,6 +116,22 @@ export async function startServer(dataDirOverride?: string) {
   process.on("SIGTERM", shutdown);
 
   return server;
+}
+
+async function tryStep(name: string, fn: () => Promise<void>): Promise<void> {
+  try {
+    await fn();
+  } catch (err) {
+    log.warn({ err }, `${name} failed during post-update`);
+  }
+}
+
+function tryWriteMarker(dataDir: string, version: string): void {
+  try {
+    writeLastVersion(dataDir, version);
+  } catch (err) {
+    log.warn({ err }, "failed to write .last-cli-version marker");
+  }
 }
 
 export { createApp } from "./app.js";

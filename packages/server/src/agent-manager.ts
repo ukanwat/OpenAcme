@@ -63,6 +63,7 @@ import {
   AgentCatalog,
   buildAgentFromTemplate,
   TemplateImportError,
+  type AgentTemplate,
 } from "@openacme/agent-catalog";
 import * as path from "node:path";
 
@@ -627,6 +628,7 @@ export class AgentManager {
   ): Promise<AgentDefinition> {
     const existing = this.agentStore.get(id);
     if (!existing) throw new Error(`Agent not found: ${id}`);
+    if (existing.managed) throw managedAgentError(id, "edited");
 
     const updated: AgentDefinition = {
       ...existing,
@@ -669,6 +671,8 @@ export class AgentManager {
    * assigned to the deleted agent — they'd sit forever as zombies.
    */
   async deleteAgent(id: string): Promise<void> {
+    const existing = this.agentStore.get(id);
+    if (existing?.managed) throw managedAgentError(id, "deleted");
     const mcpClient = this.mcpClients.get(id);
     if (mcpClient) {
       await mcpClient.disconnect();
@@ -773,60 +777,9 @@ export class AgentManager {
       workforce: { skills: [], mcpServers: [] },
     };
 
-    // Stage 1a — bundled skills.
-    // SkillHub is the single source of truth for "is this installed". An
-    // in-process SkillRegistry pre-check would short-circuit the heal path
-    // when the registry has a stale view (e.g. skill files removed by hand
-    // since boot). Always call install and translate the outcome.
-    if (template.bundledSkills.length > 0) {
-      const skillsDir = path.isAbsolute(this.config.skills.directory)
-        ? this.config.skills.directory
-        : path.join(this.config.dataDir, this.config.skills.directory);
-      const hub = new SkillHub(skillsDir, this.skillRegistry);
-      for (const s of template.bundledSkills) {
-        try {
-          await hub.install(s.identifier, {
-            source: s.source,
-            nameOverride: s.name,
-          });
-          manifest.workforce.skills.push({ name: s.name, action: "installed" });
-        } catch (err) {
-          // ALREADY_INSTALLED — lockfile + disk agree the skill is there.
-          // User's intent met; record kept, not failed.
-          if (err instanceof HubError && err.code === "ALREADY_INSTALLED") {
-            manifest.workforce.skills.push({ name: s.name, action: "kept" });
-            continue;
-          }
-          manifest.workforce.skills.push({
-            name: s.name,
-            action: "failed",
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-      }
-    }
-
-    // Stage 1b — recommended MCP servers
-    if (template.bundledMcpServers.length > 0) {
-      const globalMcp = loadGlobalMcpServers(this.config.dataDir);
-      let changed = false;
-      for (const m of template.bundledMcpServers) {
-        if (Object.prototype.hasOwnProperty.call(globalMcp, m.name)) {
-          manifest.workforce.mcpServers.push({ name: m.name, action: "kept" });
-          continue;
-        }
-        globalMcp[m.name] = m.config;
-        changed = true;
-        manifest.workforce.mcpServers.push({ name: m.name, action: "added" });
-      }
-      if (changed) {
-        saveGlobalMcpServers(this.config.dataDir, globalMcp);
-        // Re-discover MCP tools for every agent — `serversForAgent` reads
-        // mcp.json fresh on each reinit, so existing agents pick up the
-        // new entry too.
-        await this.initMCP();
-      }
-    }
+    const deps = await this.installTemplateDependencies(template);
+    manifest.workforce.skills = deps.skills;
+    manifest.workforce.mcpServers = deps.mcpServers;
 
     // Stage 2 — materialize the agent folder
     const existingIds = new Set(this.agentStore.list().map((d) => d.id));
@@ -842,25 +795,7 @@ export class AgentManager {
     await this.createAgent(def);
 
     // Resources go in after createAgent so the agent folder exists.
-    const dir = this.agentStore.agentDir(def.id);
-    if (dir) {
-      for (const r of template.resources) {
-        const dest = path.join(dir, "resources", r.relPath);
-        try {
-          fs.mkdirSync(path.dirname(dest), { recursive: true });
-          fs.copyFileSync(r.absPath, dest);
-          manifest.agent.resourceFiles.push({
-            relPath: r.relPath,
-            size: r.size,
-          });
-        } catch (err) {
-          log.warn(
-            { err, relPath: r.relPath, dest },
-            "agent-catalog: copy resource failed"
-          );
-        }
-      }
-    }
+    manifest.agent.resourceFiles = this.copyTemplateResources(template, def.id);
     manifest.agent.id = def.id;
     // Resources changed after createAgent ran; rebuild prompt on next chat.
     this.evictAgent(def.id);
@@ -869,27 +804,198 @@ export class AgentManager {
   }
 
   /**
-   * Materialize the platform-default Acme agent if the workforce is
-   * empty. Called at boot from both the server and the CLI chat paths
-   * so a fresh install lands with a working agent — the user doesn't
-   * need to run `openacme setup` first.
+   * Install bundled skills + merge bundled MCP servers for a template.
+   * Shared by `importAgentFromTemplate` and `refreshManagedAgents`. The
+   * return shape feeds directly into `ImportManifest.workforce`.
    *
-   * Idempotent: gates on `agentStore.list().length === 0`. Once any
-   * agent exists (Acme or otherwise), this is a no-op. If the user
-   * deletes Acme but keeps other agents, it stays gone — deletion is
-   * intentional. If they delete every agent, Acme materializes on next
-   * boot (clean-slate semantics).
-   *
-   * Failure-tolerant: a busted catalog or skill install logs a warning
-   * and bails. The daemon keeps booting; subsequent boots retry.
+   * SkillHub is the single source of truth for "is this installed". An
+   * in-process SkillRegistry pre-check would short-circuit the heal path
+   * when the registry has a stale view (e.g. skill files removed by hand
+   * since boot). Always call install and translate the outcome.
    */
-  async ensureDefaultAgents(): Promise<void> {
-    if (this.agentStore.list().length > 0) return;
-    try {
-      await this.importAgentFromTemplate("acme", {});
-    } catch (e) {
-      log.warn({ err: e }, "failed to materialize default Acme agent");
+  private async installTemplateDependencies(
+    template: AgentTemplate
+  ): Promise<{
+    skills: ImportManifest["workforce"]["skills"];
+    mcpServers: ImportManifest["workforce"]["mcpServers"];
+  }> {
+    const skills: ImportManifest["workforce"]["skills"] = [];
+    const mcpServers: ImportManifest["workforce"]["mcpServers"] = [];
+
+    if (template.bundledSkills.length > 0) {
+      const skillsDir = path.isAbsolute(this.config.skills.directory)
+        ? this.config.skills.directory
+        : path.join(this.config.dataDir, this.config.skills.directory);
+      const hub = new SkillHub(skillsDir, this.skillRegistry);
+      for (const s of template.bundledSkills) {
+        try {
+          await hub.install(s.identifier, {
+            source: s.source,
+            nameOverride: s.name,
+          });
+          skills.push({ name: s.name, action: "installed" });
+        } catch (err) {
+          if (err instanceof HubError && err.code === "ALREADY_INSTALLED") {
+            skills.push({ name: s.name, action: "kept" });
+            continue;
+          }
+          skills.push({
+            name: s.name,
+            action: "failed",
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
     }
+
+    if (template.bundledMcpServers.length > 0) {
+      const globalMcp = loadGlobalMcpServers(this.config.dataDir);
+      let changed = false;
+      for (const m of template.bundledMcpServers) {
+        if (Object.prototype.hasOwnProperty.call(globalMcp, m.name)) {
+          mcpServers.push({ name: m.name, action: "kept" });
+          continue;
+        }
+        globalMcp[m.name] = m.config;
+        changed = true;
+        mcpServers.push({ name: m.name, action: "added" });
+      }
+      if (changed) {
+        saveGlobalMcpServers(this.config.dataDir, globalMcp);
+        await this.initMCP();
+      }
+    }
+
+    return { skills, mcpServers };
+  }
+
+  /**
+   * Copy a template's `resources/` contents into the agent's
+   * `<agentDir>/resources/`. Overwrites existing files of the same
+   * relPath; leaves any unrelated files alone. Returns the per-file
+   * listing for the import manifest.
+   */
+  private copyTemplateResources(
+    template: AgentTemplate,
+    agentId: string
+  ): Array<{ relPath: string; size: number }> {
+    const dir = this.agentStore.agentDir(agentId);
+    if (!dir) return [];
+    const out: Array<{ relPath: string; size: number }> = [];
+    for (const r of template.resources) {
+      const dest = path.join(dir, "resources", r.relPath);
+      try {
+        fs.mkdirSync(path.dirname(dest), { recursive: true });
+        fs.copyFileSync(r.absPath, dest);
+        out.push({ relPath: r.relPath, size: r.size });
+      } catch (err) {
+        log.warn(
+          { err, relPath: r.relPath, dest },
+          "agent-catalog: copy resource failed"
+        );
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Yield every catalog template whose frontmatter sets `managed: true`,
+   * paired with its target id (the `default_id_hint` slot). Shared by
+   * ensure/refresh so the "managed template" filter lives in one place.
+   */
+  private *managedTemplates(): Generator<{
+    templateId: string;
+    template: AgentTemplate;
+    targetId: string;
+  }> {
+    for (const meta of this.agentCatalog.list()) {
+      const template = this.agentCatalog.get(meta.id);
+      if (!template) continue;
+      if (!template.agentFields.managed) continue;
+      yield {
+        templateId: meta.id,
+        template,
+        targetId: template.meta.defaultIdHint,
+      };
+    }
+  }
+
+  /**
+   * Materialize platform-managed catalog templates (today: Acme) that
+   * aren't on disk. Per-template idempotent — occupied slots are left
+   * alone; the refresh path handles version drift. Failure-tolerant: a
+   * busted install logs and the next template is tried.
+   */
+  async ensureManagedAgents(): Promise<void> {
+    for (const { templateId, targetId } of this.managedTemplates()) {
+      if (this.agentStore.get(targetId)) continue;
+      try {
+        await this.importAgentFromTemplate(templateId, {});
+      } catch (e) {
+        log.warn({ err: e, templateId }, "failed to materialize managed agent");
+      }
+    }
+  }
+
+  /**
+   * Refresh on-disk managed agents from the catalog. Skips (a) missing
+   * slots — ensureManagedAgents installs those — and (b) on-disk
+   * `managed: false` — user took ownership, respect it. For the rest:
+   * overwrite AGENT.md, re-copy resources (template-owned; extras left
+   * alone), reinstall bundled skills + MCP (idempotent), evict the
+   * cached Agent so the next chat picks up the new persona/tools.
+   */
+  async refreshManagedAgents(): Promise<void> {
+    for (const { templateId, template, targetId } of this.managedTemplates()) {
+      const onDisk = this.agentStore.get(targetId);
+      if (!onDisk || !onDisk.managed) continue;
+
+      try {
+        await this.installTemplateDependencies(template);
+
+        const existingIds = new Set(this.agentStore.list().map((d) => d.id));
+        existingIds.delete(targetId);
+        const fresh = buildAgentFromTemplate(
+          template,
+          { idOverride: targetId },
+          existingIds
+        );
+        this.agentStore.upsert(fresh);
+        this.copyTemplateResources(template, fresh.id);
+
+        await this.reinitMCPForAgent(fresh.id);
+        this.evictAgent(fresh.id);
+
+        log.info({ templateId, agentId: fresh.id }, "refreshed managed agent");
+      } catch (e) {
+        log.warn({ err: e, templateId }, "failed to refresh managed agent");
+      }
+    }
+  }
+
+  /**
+   * Refresh every platform-bundled (`source: builtin`) skill currently
+   * installed via SkillHub. `hub.update()` content-hash compares and
+   * no-ops if the bundled SKILL.md is unchanged — cheap to call on
+   * every version bump. Non-builtin skills are intentionally skipped:
+   * the platform-update path shouldn't fetch new versions of skills
+   * the user installed from arbitrary GitHub repos.
+   */
+  async refreshBundledSkills(): Promise<void> {
+    const skillsDir = path.isAbsolute(this.config.skills.directory)
+      ? this.config.skills.directory
+      : path.join(this.config.dataDir, this.config.skills.directory);
+    const hub = new SkillHub(skillsDir, this.skillRegistry);
+    const builtinEntries = hub.lockfile
+      .list()
+      .filter((e) => e.source === "builtin");
+    await Promise.all(
+      builtinEntries.map((entry) =>
+        hub.update(entry.name).catch((err) => {
+          log.warn({ err, skill: entry.name }, "failed to refresh bundled skill");
+        })
+      )
+    );
   }
 
   /** Current AGENTS.md content, or undefined when the file is absent. */
@@ -1112,6 +1218,14 @@ export class AgentManager {
 
 function hasOwn<T extends object>(obj: T, key: PropertyKey): boolean {
   return Object.prototype.hasOwnProperty.call(obj, key);
+}
+
+/** Error thrown when a caller attempts to mutate a platform-managed agent. */
+export function managedAgentError(id: string, action: "edited" | "deleted"): Error {
+  return new Error(
+    `Agent '${id}' is platform-managed and cannot be ${action}. ` +
+      `Set managed: false in AGENT.md if you want to take ownership.`
+  );
 }
 
 /**

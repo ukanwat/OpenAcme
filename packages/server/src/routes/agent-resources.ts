@@ -58,6 +58,26 @@ function streamFile(absPath: string): ReadableStream<Uint8Array> {
  * `resources/` subdir). Mirrors the route shape of `/api/skills/import`
  * for uploads and `/api/attachments/...` for downloads.
  */
+/**
+ * Resolve an agent + verify it accepts resource mutations. Returns a
+ * Hono response on rejection (404 missing / 400 managed) so the caller
+ * can `return` it directly; returns the def on success.
+ */
+function resolveMutableAgent(c: import("hono").Context, manager: AgentManager) {
+  const id = c.req.param("id") ?? "";
+  const def = manager.agentStore.get(id);
+  if (!def) return { response: c.json({ error: "Agent not found" }, 404) };
+  if (def.managed) {
+    return {
+      response: c.json(
+        { error: `Agent '${id}' is platform-managed; resources are owned by the bundled template.` },
+        400
+      ),
+    };
+  }
+  return { def };
+}
+
 export function registerAgentResourceRoutes(
   app: Hono,
   manager: AgentManager
@@ -118,10 +138,9 @@ export function registerAgentResourceRoutes(
   // `/api/skills/import` convention). The whole batch is validated
   // before any writes.
   app.post("/api/agents/:id/resources", async (c) => {
+    const guard = resolveMutableAgent(c, manager);
+    if (guard.response) return guard.response;
     const id = c.req.param("id");
-    if (!manager.agentStore.get(id)) {
-      return c.json({ error: "Agent not found" }, 404);
-    }
 
     let form: Record<string, string | File | (string | File)[]>;
     try {
@@ -206,10 +225,9 @@ export function registerAgentResourceRoutes(
   });
 
   app.delete("/api/agents/:id/resources/*", (c) => {
+    const guard = resolveMutableAgent(c, manager);
+    if (guard.response) return guard.response;
     const id = c.req.param("id");
-    if (!manager.agentStore.get(id)) {
-      return c.json({ error: "Agent not found" }, 404);
-    }
     const prefix = `/api/agents/${id}/resources/`;
     const fullPath = c.req.path;
     if (!fullPath.startsWith(prefix)) {

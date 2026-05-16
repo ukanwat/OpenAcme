@@ -345,8 +345,8 @@ async function configureProviderAndCreateAgent(
     savedAction = `Updated agent: ${firstAgent.id}`;
   } else {
     // First run: don't create an agent. The daemon's
-    // `ensureDefaultAgents()` will import the Acme template on first
-    // boot, inheriting the model we're about to write to config.yaml.
+    // `ensureManagedAgents()` will import the Acme platform agent on
+    // first boot, inheriting the model we're about to write to config.yaml.
     savedAction = "Configured provider";
   }
 

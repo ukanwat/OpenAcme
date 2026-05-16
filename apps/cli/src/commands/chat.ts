@@ -34,9 +34,9 @@ export async function chatCommand(opts: {
   }
   const manager = new AgentManager(config);
   await manager.initMCP();
-  // Materialize the default Acme agent on a fresh install so terminal
-  // chat works without `openacme setup` having been run first.
-  await manager.ensureDefaultAgents();
+  // Materialize platform-managed catalog templates (today: Acme) so
+  // terminal chat works without `openacme setup` having been run first.
+  await manager.ensureManagedAgents();
   // Start the periodic dispatcher so autonomous turns run while the
   // operator is in a terminal chat — same workforce behavior as the
   // web daemon. Without this, recurring tasks and scheduled work
@@ -45,9 +45,10 @@ export async function chatCommand(opts: {
 
   const agents = manager.listAgents();
   if (agents.length === 0) {
-    // ensureDefaultAgents above tries to import Acme on a fresh install.
-    // If we still have zero agents the catalog failed to materialize —
-    // surface the daemon log path so the user can see why.
+    // ensureManagedAgents above tries to import the Acme platform agent
+    // on a fresh install. If we still have zero agents the catalog
+    // failed to materialize — surface the daemon log path so the user
+    // can see why.
     p.cancel(
       "No agents available. The default Acme agent failed to materialize — check the daemon log (`openacme logs`) for details, or run `openacme setup` to configure a provider."
     );

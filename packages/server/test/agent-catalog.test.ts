@@ -187,7 +187,7 @@ describe("AgentManager.importAgentFromTemplate (bundled Coder)", () => {
  * First-boot materialization. Covers the path that lets a fresh install
  * land with a working Acme agent without the user running setup.
  */
-describe("AgentManager.ensureDefaultAgents", () => {
+describe("AgentManager.ensureManagedAgents", () => {
   let dataDir: string;
   let manager: AgentManager;
 
@@ -204,16 +204,17 @@ describe("AgentManager.ensureDefaultAgents", () => {
     rmSync(dataDir, { recursive: true, force: true });
   });
 
-  it("materializes Acme on an empty workforce", async () => {
+  it("materializes Acme on an empty workforce and marks it managed", async () => {
     expect(manager.listAgents()).toHaveLength(0);
 
-    await manager.ensureDefaultAgents();
+    await manager.ensureManagedAgents();
 
     const agents = manager.listAgents();
     expect(agents).toHaveLength(1);
     const acme = agents[0]!;
     expect(acme.id).toBe("acme");
     expect(acme.name).toBe("Acme");
+    expect(acme.managed).toBe(true);
 
     // Agent folder
     expect(existsSync(path.join(dataDir, "agents", "acme", "AGENT.md"))).toBe(true);
@@ -242,20 +243,30 @@ describe("AgentManager.ensureDefaultAgents", () => {
   });
 
   it("is idempotent — second call does not duplicate the agent", async () => {
-    await manager.ensureDefaultAgents();
-    await manager.ensureDefaultAgents();
+    await manager.ensureManagedAgents();
+    await manager.ensureManagedAgents();
     expect(manager.listAgents()).toHaveLength(1);
   });
 
-  it("does not re-materialize when other agents exist", async () => {
+  it("installs Acme even when other (unmanaged) agents exist", async () => {
     // Pretend a user-added agent showed up before Acme.
     await manager.importAgentFromTemplate("coder", {});
     expect(manager.listAgents().map((a) => a.id)).toEqual(["coder"]);
 
-    await manager.ensureDefaultAgents();
+    await manager.ensureManagedAgents();
 
-    // Acme stays out — the gate fires only when the workforce is empty.
-    expect(manager.listAgents().map((a) => a.id)).toEqual(["coder"]);
-    expect(existsSync(path.join(dataDir, "agents", "acme"))).toBe(false);
+    // The gate is per-template: the acme slot is empty, so Acme installs
+    // even though another agent already exists.
+    const ids = manager.listAgents().map((a) => a.id).sort();
+    expect(ids).toEqual(["acme", "coder"]);
+    expect(existsSync(path.join(dataDir, "agents", "acme"))).toBe(true);
+  });
+
+  it("rejects mutations on a managed agent", async () => {
+    await manager.ensureManagedAgents();
+    await expect(
+      manager.updateAgent("acme", { persona: "hacked" })
+    ).rejects.toThrow(/platform-managed/);
+    await expect(manager.deleteAgent("acme")).rejects.toThrow(/platform-managed/);
   });
 });

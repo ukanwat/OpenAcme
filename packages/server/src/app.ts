@@ -211,10 +211,14 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
     try {
       // Check if agent exists first
       manager.getAgent(id);
-      await manager.deleteAgent(id);
-      return c.json({ success: true });
     } catch {
       return c.json({ error: "Agent not found" }, 404);
+    }
+    try {
+      await manager.deleteAgent(id);
+      return c.json({ success: true });
+    } catch (e) {
+      return c.json({ error: (e as Error).message }, 400);
     }
   });
 
@@ -801,7 +805,11 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
     }
     const next: Record<string, MCPServerConfig> = { ...def.mcpServers };
     delete next[name];
-    await manager.updateAgent(id, { mcpServers: next });
+    try {
+      await manager.updateAgent(id, { mcpServers: next });
+    } catch (e) {
+      return c.json({ error: (e as Error).message }, 400);
+    }
     return c.json({ id, mcpServers: next });
   });
 
