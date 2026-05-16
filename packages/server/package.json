@@ -1,6 +1,6 @@
 {
   "name": "@openacme/server",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "HTTP server for the OpenAcme AI agent platform.",
   "license": "MIT",
   "author": "Utkarsh Kanwat",

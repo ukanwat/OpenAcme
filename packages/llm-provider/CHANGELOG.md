@@ -1,5 +1,32 @@
 # @openacme/llm-provider
 
+## 0.4.0
+
+### Minor Changes
+
+- Release 0.4.0.
+
+  Highlights since 0.3.0:
+  - **Browser tool**: managed Chrome via CDP with shared user-data-dir and per-agent tab ownership; ten `browser_*` tools.
+  - **Tasks v2**: comments + events split out of the task body into SQLite; pure event-driven scheduler with debounced wakes, echo suppression, lazy session allocation, recurring self-reset, and mid-turn event injection.
+  - **Agent catalog**: bespoke in-tree templates importable into the workforce (CLI `agents catalog` / `agents import`, web modal). Ships the Coder and Acme platform templates.
+  - **Skills Hub**: install + track skills from GitHub, marketplaces, URLs, `.well-known`, LobeHub, Skills.sh, ClawHub, local dirs, and a new `builtin` source.
+  - **AGENTS.md**: shared workforce context injected into every agent's prompt; restart-free updates via cache eviction.
+  - **Per-agent workspace + resources**: `<agentDir>/workspace/` as default cwd with a session-persistent shell, and `<agentDir>/resources/` listed in the prompt.
+  - **First-run setup wizard**: provider credentials, model seed, agent creation — web + CLI.
+  - **SSE-only streaming** for interactive turns: agent runs are server-owned, the originating tab is just another subscriber.
+  - **Pino-backed structured logger** with OTel log export.
+  - **LLM-generated session titles** via a structured subagent.
+  - **Operator home page** with live SSE, plus `ping_user` / `sleep` primitives.
+  - **Workforce framing**: `role` + `agent_list` tool + peer-notes memory; silent OAuth recovery via Claude Code re-import.
+  - **Design refresh**: four-color signal system, unified task activity timeline, polished OAuth callback, CLI per-tool rendering with green/red diff backgrounds.
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @openacme/auth@0.4.0
+  - @openacme/config@0.4.0
+
 ## 0.3.0
 
 ### Minor Changes
