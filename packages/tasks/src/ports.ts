@@ -70,6 +70,17 @@ export const EVENT_KINDS = [
 ] as const;
 export type EventKind = (typeof EVENT_KINDS)[number];
 
+/**
+ * Inbox row kinds. `user_message` payload is a UIMessage; `system_notice`
+ * payload is a small structured note rendered as text. Add new kinds
+ * here; the renderer in agent-core branches on this enum.
+ */
+export const INBOX_KINDS = ["user_message", "system_notice"] as const;
+export type InboxKind = (typeof INBOX_KINDS)[number];
+
+export const INBOX_SOURCES = ["user", "system"] as const;
+export type InboxSource = (typeof INBOX_SOURCES)[number];
+
 export interface EventInput {
   /** Task this event is anchored to. Nullable for session-level events
    *  (e.g. `ping_user` where the agent is not currently on a task).

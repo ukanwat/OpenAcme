@@ -193,75 +193,45 @@ export function createSessionStore(
         .run();
     },
 
-    /** Read-state cursor for the session's events inbox. Backfilled to
-     *  `unixepoch()` at migration time for existing sessions; new
-     *  sessions also default to `unixepoch()` on insert. Advanced at
-     *  the end of every autonomous turn to the max event ts actually
-     *  rendered (avoids losing events that landed in the same second). */
-    getLastSeenEventTs(id: string): number | null {
-      const row = orm
-        .select({ ts: sessions.lastSeenEventTs })
-        .from(sessions)
-        .where(eq(sessions.id, id))
-        .get();
-      return row ? row.ts : null;
-    },
+    // `getLastSeenEventTs` / `markEventsSeen` removed. The per-
+    // session cursor over the event log is gone — the agent inbox
+    // (per-agent, delete-on-deliver) handles incrementality now.
 
-    markEventsSeen(id: string, ts?: number): void {
+    /** Set the one-shot "skip routine spawns until this time" marker.
+     *  The dispatcher honours this on its periodic tick, but a new
+     *  inbox row for this session bypasses it (defer = "skip routine
+     *  checks," not "ignore real signals"). Cleared by the dispatcher
+     *  the next time it does spawn the session. Caller is responsible
+     *  for clamping `unixSeconds` to [now+60, now+86400]. */
+    setDeferUntil(id: string, unixSeconds: number | null): void {
       const result = orm
         .update(sessions)
-        .set({
-          lastSeenEventTs: ts ?? sql`(unixepoch())`,
-        })
+        .set({ deferUntil: unixSeconds })
         .where(eq(sessions.id, id))
         .run();
       if (result.changes === 0) {
         log.warn(
           { sessionId: id },
-          "markEventsSeen: session not found — cursor not advanced"
+          "setDeferUntil: session not found — value not stored"
         );
       }
     },
 
-    /** Set the per-session next-probe time (unix seconds), or null to
-     *  clear. Read by the scheduler's heartbeat arm. The agent sets this
-     *  via the `sleep` system tool; the scheduler clears it when the
-     *  probe fires (so the next turn's behavior falls back to the
-     *  agent's default cadence unless `sleep` is called again). */
-    setNextCheckAt(id: string, unixSeconds: number | null): void {
-      const result = orm
-        .update(sessions)
-        .set({ nextCheckAt: unixSeconds })
-        .where(eq(sessions.id, id))
-        .run();
-      if (result.changes === 0) {
-        log.warn(
-          { sessionId: id },
-          "setNextCheckAt: session not found — value not stored"
-        );
-      }
-    },
-
-    /** Read the per-session next-probe override. Returns null when
-     *  unset (agent hasn't called `sleep` since the last probe). */
-    getNextCheckAt(id: string): number | null {
+    getDeferUntil(id: string): number | null {
       const row = orm
-        .select({ ts: sessions.nextCheckAt })
+        .select({ ts: sessions.deferUntil })
         .from(sessions)
         .where(eq(sessions.id, id))
         .get();
       return row?.ts ?? null;
     },
 
-    /** Sessions that have a non-null next_check_at, in arbitrary order.
-     *  Used by the scheduler's startup sweep / reconcile to (re-)arm
-     *  pending probes from the DB without scanning every session. */
-    listSessionsWithNextCheck(): Session[] {
-      return orm
-        .select()
-        .from(sessions)
-        .where(sql`${sessions.nextCheckAt} IS NOT NULL`)
-        .all();
+    clearDeferUntil(id: string): void {
+      orm
+        .update(sessions)
+        .set({ deferUntil: null })
+        .where(eq(sessions.id, id))
+        .run();
     },
 
     delete(id: string): void {

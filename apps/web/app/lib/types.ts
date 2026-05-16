@@ -80,7 +80,7 @@ export interface SessionSummary {
   currentTaskTitle: string | null;
   pendingTaskCount: number;
   lastActivity: number;
-  nextCheckAt: number | null;
+  deferUntil: number | null;
   pingMessage?: string;
 }
 

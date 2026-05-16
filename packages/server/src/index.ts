@@ -28,9 +28,10 @@ export async function startServer(dataDirOverride?: string) {
   // reinitMCPForAgent itself for the new agent.
   await manager.ensureDefaultAgents();
 
-  // Start the autonomous task scheduler. Runs the startup sweep
-  // (resets stale in_progress) and arms the first wake.
-  await manager.taskScheduler.start();
+  // Start the periodic dispatcher. Runs the startup sweep (resets
+  // stale in_progress from any prior crash) and schedules the 60s
+  // tick. Replaces the old event-driven `TaskScheduler`.
+  await manager.dispatcher.start();
 
   const port = config.server.port;
   const host = config.server.host;

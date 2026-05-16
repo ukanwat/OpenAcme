@@ -30,6 +30,14 @@ export function useLiveSession(
     /** Transient data-* parts are stripped by the assembler, surfaced
      *  here instead. */
     onDataPart?: (part: { type: string; data: unknown }) => void;
+    /** A user message was queued mid-turn (sent via /api/chat while a
+     *  turn was already streaming). Other tabs watching this session
+     *  surface a queued chip; the originating tab also receives this
+     *  but its own optimistic-add path dedupes by id. */
+    onInboxQueued?: (item: { messageId: string; parts: unknown[] }) => void;
+    /** A queued user message was cancelled (via DELETE /queued/:id).
+     *  Other tabs drop their chip. */
+    onInboxCancelled?: (item: { messageId: string }) => void;
   }
 ): { state: "running" | "idle"; whenConnected: () => Promise<void> } {
   const [state, setState] = useState<"running" | "idle">("idle");
@@ -38,9 +46,13 @@ export function useLiveSession(
   const setMessagesRef = useRef(setMessages);
   const onTaskEventRef = useRef(opts?.onTaskEvent);
   const onDataPartRef = useRef(opts?.onDataPart);
+  const onInboxQueuedRef = useRef(opts?.onInboxQueued);
+  const onInboxCancelledRef = useRef(opts?.onInboxCancelled);
   setMessagesRef.current = setMessages;
   onTaskEventRef.current = opts?.onTaskEvent;
   onDataPartRef.current = opts?.onDataPart;
+  onInboxQueuedRef.current = opts?.onInboxQueued;
+  onInboxCancelledRef.current = opts?.onInboxCancelled;
   // Promise that resolves on the current EventSource's `open`. Replaced
   // on every sessionId change so callers always await the live one.
   const connectedRef = useRef<{ promise: Promise<void>; resolve: () => void }>(
@@ -150,6 +162,32 @@ export function useLiveSession(
             };
           };
           if (env.event) onTaskEventRef.current?.(env.event);
+        } catch {
+          /* ignore */
+        }
+      },
+      inbox_queued: (e) => {
+        try {
+          const env = JSON.parse(e.data) as {
+            messageId?: string;
+            parts?: unknown[];
+          };
+          if (env.messageId && env.parts) {
+            onInboxQueuedRef.current?.({
+              messageId: env.messageId,
+              parts: env.parts,
+            });
+          }
+        } catch {
+          /* ignore */
+        }
+      },
+      inbox_cancelled: (e) => {
+        try {
+          const env = JSON.parse(e.data) as { messageId?: string };
+          if (env.messageId) {
+            onInboxCancelledRef.current?.({ messageId: env.messageId });
+          }
         } catch {
           /* ignore */
         }

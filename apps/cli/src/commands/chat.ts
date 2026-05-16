@@ -37,11 +37,11 @@ export async function chatCommand(opts: {
   // Materialize the default Acme agent on a fresh install so terminal
   // chat works without `openacme setup` having been run first.
   await manager.ensureDefaultAgents();
-  // Start the scheduler so autonomous turns + heartbeat probes run
-  // while the operator is in a terminal chat — same workforce behavior
-  // as the web daemon. Without this, recurring tasks and ping_user
-  // events never fire from the CLI.
-  await manager.taskScheduler.start();
+  // Start the periodic dispatcher so autonomous turns run while the
+  // operator is in a terminal chat — same workforce behavior as the
+  // web daemon. Without this, recurring tasks and scheduled work
+  // never fire from the CLI. Replaces the old event-driven scheduler.
+  await manager.dispatcher.start();
 
   const agents = manager.listAgents();
   if (agents.length === 0) {

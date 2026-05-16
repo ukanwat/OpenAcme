@@ -405,40 +405,87 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
       manager.sessionStore.create(agentId, { id: effectiveSessionId });
     }
 
-    // Persist + broadcast the user message before the stream runs so
-    // (a) its DB timestamp predates any `ping_user` event the agent
-    // fires during the turn (otherwise `unresolvedPingsBySession` would
-    // immediately clear those pings — the user-msg row would land
-    // post-stream with a later timestamp), and (b) other tabs see the
-    // user message land at the same instant the assistant stream starts.
-    {
-      const lastUser = committed[committed.length - 1];
-      if (lastUser?.role === "user") {
-        try {
-          manager.messageStore.append(effectiveSessionId, {
-            id: lastUser.id,
-            role: "user",
-            parts: lastUser.parts as unknown[],
-          });
-          manager.broadcaster.broadcast(effectiveSessionId, {
-            kind: "messages_appended",
-            messages: [
-              {
-                id: lastUser.id,
-                role: "user",
-                parts: lastUser.parts as unknown[],
-              },
-            ],
-          });
-        } catch (e) {
-          log.warn({ err: e }, "user message pre-persist skipped");
-        }
+    const lastUser = committed[committed.length - 1];
+    const inFlight = activeTurns.has(effectiveSessionId);
+
+    // Mid-turn send semantics: if a turn is already running for this
+    // session, DON'T abort. Queue the user message to the inbox WITHOUT
+    // persisting to chat history yet — the autonomous turn that fires
+    // after the current turn ends will drain the inbox and persist the
+    // user message at the natural end of history (after the in-flight
+    // turn's assistant lands). Without deferred persist, history ends
+    // up [user1, user2, assistant1] which confuses the model on the
+    // follow-up turn — the model sees its own assistant as the last
+    // turn and won't naturally respond to the still-pending user2.
+    //
+    // UI: the page's optimistic update already shows the queued
+    // message; the persisted version arrives via broadcaster after
+    // drain with the same id so the optimistic row upserts in place.
+    if (inFlight) {
+      if (!lastUser || lastUser.role !== "user") {
+        return c.json({ error: "no_user_message" }, 400);
+      }
+      try {
+        manager.inboxStore.deliver({
+          agentId,
+          kind: "user_message",
+          source: "user",
+          sourceId: lastUser.id,
+          relatedSession: effectiveSessionId,
+          payload: lastUser,
+        });
+      } catch (e) {
+        log.warn(
+          { err: e, sessionId: effectiveSessionId },
+          "inbox queue (mid-turn user message) failed"
+        );
+        return c.json({ error: "queue_failed" }, 500);
+      }
+      // Broadcast so other tabs viewing this session render the queue
+      // chip too. The originating tab already added optimistically;
+      // its receive-side dedup by id keeps the round-trip a no-op.
+      manager.broadcaster.broadcast(effectiveSessionId, {
+        kind: "inbox_queued",
+        messageId: lastUser.id,
+        parts: lastUser.parts as unknown[],
+      });
+      return c.json({
+        sessionId: effectiveSessionId,
+        userMessageId: lastUser.id,
+        // assistantMessageId omitted — the queued message will get
+        // its own assistant id assigned by the autonomous turn.
+        queued: true,
+      });
+    }
+
+    // Standard interactive path — no turn running. Persist + broadcast
+    // the user message before the stream runs so (a) its DB timestamp
+    // predates any `ping_user` event the agent fires during the turn
+    // (otherwise `unresolvedPingsBySession` would immediately clear
+    // those pings), and (b) other tabs see the user message land at
+    // the same instant the assistant stream starts.
+    if (lastUser?.role === "user") {
+      try {
+        manager.messageStore.append(effectiveSessionId, {
+          id: lastUser.id,
+          role: "user",
+          parts: lastUser.parts as unknown[],
+        });
+        manager.broadcaster.broadcast(effectiveSessionId, {
+          kind: "messages_appended",
+          messages: [
+            {
+              id: lastUser.id,
+              role: "user",
+              parts: lastUser.parts as unknown[],
+            },
+          ],
+        });
+      } catch (e) {
+        log.warn({ err: e }, "user message pre-persist skipped");
       }
     }
 
-    // One in-flight interactive turn per session — the new send wins.
-    const previousController = activeTurns.get(effectiveSessionId);
-    if (previousController) previousController.abort();
     const controller = new AbortController();
     activeTurns.set(effectiveSessionId, controller);
     const signal = controller.signal;
@@ -461,7 +508,6 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
       }
     });
 
-    const lastUser = committed[committed.length - 1];
     return c.json({
       sessionId: effectiveSessionId,
       userMessageId: lastUser?.id ?? null,
@@ -479,6 +525,34 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
     ctrl.abort();
     activeTurns.delete(id);
     return c.json({ ok: true });
+  });
+
+  // Cancel a queued user message (sent while a turn was streaming, sits
+  // in `agent_inbox` until the autonomous follow-up drains it). The UI's
+  // ✕ on the queued-message chip calls this. Race: if the follow-up
+  // turn already drained the row, `cancelled` is 0 — the message has
+  // landed in chat history and is no longer cancelable.
+  app.delete("/api/sessions/:sessionId/queued/:messageId", (c) => {
+    const sessionId = c.req.param("sessionId");
+    const messageId = c.req.param("messageId");
+    const session = manager.sessionStore.get(sessionId);
+    if (!session) return c.json({ error: "session_not_found" }, 404);
+    const cancelled = manager.inboxStore.cancelQueuedUserMessage({
+      agentId: session.agentId,
+      messageId,
+      sessionId,
+    });
+    // Broadcast on actual cancel so other tabs drop their chip. When
+    // `cancelled === 0` the row was already drained (race) — no chip
+    // exists in any tab anymore, and the broadcast would be confusing
+    // because the message HAS landed in chat by now.
+    if (cancelled > 0) {
+      manager.broadcaster.broadcast(sessionId, {
+        kind: "inbox_cancelled",
+        messageId,
+      });
+    }
+    return c.json({ ok: true, cancelled });
   });
 
   // ── Models ──
@@ -1016,7 +1090,7 @@ async function runChatTurn(args: {
 }): Promise<void> {
   const { manager, agentId, sessionId, committed, responseMessageId, signal } = args;
 
-  manager.taskScheduler.markInteractiveBusy(sessionId);
+  manager.dispatcher.markInteractiveBusy(sessionId);
   manager.broadcaster.broadcast(sessionId, {
     kind: "session_state",
     state: "running",
@@ -1092,7 +1166,7 @@ async function runChatTurn(args: {
     originalMessages: committed as unknown as OpenAcmeUIMessage[],
     generateId: () => responseMessageId,
     onFinish: ({ responseMessage }) => {
-      manager.taskScheduler.clearInteractiveBusy(sessionId);
+      manager.dispatcher.clearInteractiveBusy(sessionId);
       try {
         const sanitizedParts = ensureStepBoundaries(
           finalizeOrphanToolParts(
@@ -1162,7 +1236,7 @@ async function runChatTurn(args: {
   } catch (e) {
     // execute() threw before onFinish ran — emit idle so observers
     // unstick. Chunks up to the failure point already broadcast.
-    manager.taskScheduler.clearInteractiveBusy(sessionId);
+    manager.dispatcher.clearInteractiveBusy(sessionId);
     manager.broadcaster.broadcast(sessionId, {
       kind: "session_state",
       state: "idle",

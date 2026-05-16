@@ -105,7 +105,12 @@ describe("TaskStore CRUD", () => {
 });
 
 describe("TaskStore dependencies", () => {
-  it("auto-blocks when deps unmet, auto-opens when satisfied", async () => {
+  it("stores the caller's status verbatim — deps don't auto-flip", async () => {
+    // Pre-refactor the store auto-flipped to `blocked` on unmet deps
+    // and back to `open` on satisfy. That moved to the read side —
+    // the dispatcher / prompt rendering computes eligibility live via
+    // `isQueueEligible`. The stored status is purely what the caller
+    // (or recurrence reset) requested. `blocked` is now explicit-only.
     const a = await store.create({
       title: "a",
       assignee: "x",
@@ -117,7 +122,7 @@ describe("TaskStore dependencies", () => {
       created_by: "x",
       depends_on: [a.id],
     });
-    expect(b.status).toBe("blocked");
+    expect(b.status).toBe("open");
 
     await store.update(a.id, { status: "done" });
     const refreshed = store.get(b.id)!;
@@ -153,7 +158,12 @@ describe("TaskStore dependencies", () => {
     ).rejects.toMatchObject({ code: "cycle" });
   });
 
-  it("canceled deps do not satisfy", async () => {
+  it("dependent's stored status is unaffected by dep being canceled", async () => {
+    // Read-time predicate: a canceled dep means the dependent isn't
+    // eligible (`isQueueEligible` returns false), but the stored
+    // status stays `open`. Eligibility is a query-time concept now,
+    // not stored. To explicitly mark it stuck, a human/agent calls
+    // `task_update(status: "blocked")`.
     const a = await store.create({
       title: "a",
       assignee: "x",
@@ -167,7 +177,28 @@ describe("TaskStore dependencies", () => {
     });
     await store.update(a.id, { status: "canceled" });
     const refreshed = store.get(b.id)!;
-    expect(refreshed.status).toBe("blocked");
+    expect(refreshed.status).toBe("open");
+  });
+
+  it("rejects in_progress transition when deps aren't done", async () => {
+    // Constraint enforcement at the write boundary: the agent can
+    // read everything but trying to claim a task with unmet deps
+    // fails with `deps_unsatisfied`. This is the actionable error
+    // the agent uses to learn the rule.
+    const a = await store.create({
+      title: "a",
+      assignee: "x",
+      created_by: "x",
+    });
+    const b = await store.create({
+      title: "b",
+      assignee: "x",
+      created_by: "x",
+      depends_on: [a.id],
+    });
+    await expect(
+      store.update(b.id, { status: "in_progress" })
+    ).rejects.toMatchObject({ code: "deps_unsatisfied" });
   });
 });
 
@@ -622,12 +653,14 @@ describe("TaskStore recurrence", () => {
     const full = s.renderRecentActivity("sX", "owner", 0);
     expect(full.split("\n").length).toBe(3);
 
-    // excludeActor=owner: task_assigned has actor=null (kept), owner's
-    // self comment dropped, outsider's kept → 2 lines.
+    // excludeActor=owner: task_assigned now carries the honest actor
+    // (creator=owner) — the old `actor: null` carve-out is gone. So
+    // the assigned event AND owner's self comment both get dropped;
+    // only outsider's comment remains → 1 line.
     const filtered = s.renderRecentActivity("sX", "owner", 0, new Date(), {
       excludeActor: "owner",
     });
-    expect(filtered.split("\n").length).toBe(2);
+    expect(filtered.split("\n").length).toBe(1);
     expect(filtered).toContain("comment by outsider");
     expect(filtered).not.toContain("comment by owner");
   });
@@ -704,7 +737,11 @@ describe("TaskStore recurrence", () => {
     expect(status.payload).toMatchObject({ from: "in_progress", to: "open" });
   });
 
-  it("recurring task done: dependents do NOT unblock on transient close", async () => {
+  it("recurring task transient close: dependent stored status is stable", async () => {
+    // The recurrence reset (done → open with next start_at) doesn't
+    // touch dependents. Eligibility is read-time anyway — `isQueueEligible`
+    // will see the recurring task back in `open`, treat it as not-done,
+    // and exclude the dependent from the ready set.
     const a = await store.create({
       title: "recurring-a",
       assignee: "x",
@@ -717,10 +754,10 @@ describe("TaskStore recurrence", () => {
       created_by: "x",
       depends_on: [a.id],
     });
-    expect(b.status).toBe("blocked");
+    expect(b.status).toBe("open");
     await store.update(a.id, { status: "done" });
     const refreshedB = store.get(b.id)!;
-    expect(refreshedB.status).toBe("blocked");
+    expect(refreshedB.status).toBe("open");
   });
 
   it("rejects invalid cron expr at the write boundary", async () => {
@@ -978,11 +1015,12 @@ describe("TaskStore event emission", () => {
     await s.create({ title: "x", assignee: "doer", created_by: "boss" });
     expect(events).toHaveLength(1);
     expect(events[0]!.kind).toBe("task_assigned");
-    // `agent_id` is the assignee (who the event concerns); `actor` is
-    // null so echo suppression never blocks a fresh task from waking
-    // its assignee.
+    // `agent_id` is the assignee (the event's recipient). `actor` is
+    // the honest creator now — the old `actor: null` carve-out for
+    // task_assigned is gone. Echo suppression moved to the inbox-
+    // delivery boundary in AgentManager; the store emits the truth.
     expect(events[0]!.agentId).toBe("doer");
-    expect(events[0]!.actor).toBeNull();
+    expect(events[0]!.actor).toBe("boss");
     expect(events[0]!.payload).toMatchObject({
       assignee: "doer",
       created_by: "boss",
@@ -1015,34 +1053,19 @@ describe("TaskStore event emission", () => {
     });
     const e = events.find((e) => e.kind === "comment_added");
     expect(e).toBeDefined();
-    expect(e!.agentId).toBe("b");
-    expect(e!.payload).toMatchObject({ kind: "result" });
+    // `agentId` is the RECIPIENT (the task's assignee), so the inbox
+    // delivery boundary routes the notice to whoever should be notified.
+    // The author lives in `actor` (and now also in payload.author).
+    expect(e!.agentId).toBe("a");
+    expect(e!.actor).toBe("b");
+    expect(e!.payload).toMatchObject({ kind: "result", author: "b" });
   });
 
-  it("emits dep_unblocked when dependents auto-unblock", async () => {
-    const { commentStore, eventStore, events } = makeStores();
-    const s = new TaskStore(dir, { commentStore, eventStore });
-    const blocker = await s.create({
-      title: "blocker",
-      assignee: "x",
-      created_by: "x",
-    });
-    const dep = await s.create({
-      title: "dependent",
-      assignee: "y",
-      created_by: "x",
-      depends_on: [blocker.id],
-    });
-    expect(dep.status).toBe("blocked");
-    events.length = 0;
-
-    await s.update(blocker.id, { status: "done" });
-    const unblock = events.find((e) => e.kind === "dep_unblocked");
-    expect(unblock).toBeDefined();
-    expect(unblock!.taskId).toBe(dep.id);
-    expect(unblock!.agentId).toBe("y");
-    expect(unblock!.payload).toMatchObject({ blocked_by_task_id: blocker.id });
-  });
+  // (Removed: "emits dep_unblocked when dependents auto-unblock"
+  // — the store no longer auto-unblocks dependents. Dependency
+  // eligibility is computed at read time by the dispatcher's
+  // readiness predicate; no `dep_unblocked` event is emitted, no
+  // graph-walk runs on close.)
 
   it("does not emit when no eventStore is wired", async () => {
     const s = new TaskStore(dir);

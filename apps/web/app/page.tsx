@@ -176,6 +176,16 @@ function ChatPageInner() {
   const [messages, setMessages] = useState<OpenAcmeUIMessage[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<Error | null>(null);
+  // Messages the user sent while a turn was already streaming. They
+  // live here (as floating chips above the input) until the next turn
+  // fires and the server-side autonomous drain persists each one to
+  // chat history. We track by id so the SSE/refetch upsert can clear
+  // them as their canonical version lands in `messages`.
+  type QueuedMessage = {
+    id: string;
+    parts: OpenAcmeUIMessage["parts"];
+  };
+  const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
 
   // `data-status` board: same id replaces; empty message clears.
   const [statusBoard, setStatusBoard] = useState<
@@ -208,6 +218,20 @@ function ChatPageInner() {
             return { ...prev, [data.id]: { kind: data.kind, message: data.message } };
           });
         }
+      },
+      // Tab-to-tab queue sync: another tab queued a message, render
+      // the chip here too. Dedup by id so the originating tab's own
+      // optimistic add isn't duplicated when its own broadcast comes
+      // back.
+      onInboxQueued: ({ messageId, parts }) => {
+        setQueuedMessages((q) => {
+          if (q.some((m) => m.id === messageId)) return q;
+          return [...q, { id: messageId, parts: parts as OpenAcmeUIMessage["parts"] }];
+        });
+      },
+      // Another tab cancelled a queued message — drop the chip.
+      onInboxCancelled: ({ messageId }) => {
+        setQueuedMessages((q) => q.filter((m) => m.id !== messageId));
       },
     }
   );
@@ -574,7 +598,11 @@ function ChatPageInner() {
 
   const send = useCallback(async () => {
     if (!input.trim() && pendingAttachments.length === 0) return;
-    if (isStreaming || !activeAgentId) return;
+    if (!activeAgentId) return;
+    // Mid-turn sends are allowed: the server queues them into the
+    // agent's inbox without aborting the in-flight turn. The message
+    // persists to chat history immediately so the UI renders it
+    // in-order; the next turn picks it up.
     if (pendingAttachments.some((p) => p.status === "uploading")) {
       toast.error("Wait for uploads to finish");
       return;
@@ -619,8 +647,25 @@ function ChatPageInner() {
       role: "user",
       parts: userParts as OpenAcmeUIMessage["parts"],
     };
+
+    // Mid-turn send → server returns { queued: true } and persists the
+    // message after the running turn ends. Render it as a queued chip
+    // above the input rather than landing it in the chat history
+    // immediately — the chat history will pick it up via SSE when the
+    // autonomous drain persists it.
+    const willQueue = isStreaming;
     const historyForServer = [...messages, optimisticUser];
-    setMessages(historyForServer);
+    if (willQueue) {
+      setQueuedMessages((q) => [
+        ...q,
+        {
+          id: userMessageId,
+          parts: userParts as OpenAcmeUIMessage["parts"],
+        },
+      ]);
+    } else {
+      setMessages(historyForServer);
+    }
 
     setSubmitting(true);
     try {
@@ -643,10 +688,27 @@ function ChatPageInner() {
       const e = err instanceof Error ? err : new Error(String(err));
       setError(e);
       toast.error("Send failed", { description: e.message });
+      // On failure, drop the queued chip so the user can retry. (Chat
+      // history changes are already best-effort; the optimistic add
+      // happened earlier and is hard to surgically remove without
+      // walking ids.)
+      if (willQueue) {
+        setQueuedMessages((q) => q.filter((m) => m.id !== userMessageId));
+      }
     } finally {
       setSubmitting(false);
     }
   }, [input, isStreaming, activeAgentId, pendingAttachments, messages, liveSession]);
+
+  // When the canonical version of a queued message lands in `messages`
+  // (server persisted it during the autonomous follow-up turn and
+  // SSE/refetch brought it in), drop the chip. We match by id so any
+  // optimistic vs persisted timing race resolves cleanly.
+  useEffect(() => {
+    if (queuedMessages.length === 0) return;
+    const messageIds = new Set(messages.map((m) => m.id));
+    setQueuedMessages((q) => q.filter((m) => !messageIds.has(m.id)));
+  }, [messages, queuedMessages.length]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.nativeEvent.isComposing) return;
@@ -655,6 +717,45 @@ function ChatPageInner() {
       void send();
     }
   };
+
+  const cancelQueued = useCallback(
+    async (messageId: string) => {
+      // Optimistic chip removal — drop locally first so the UI feels
+      // instant. If the cancel races the autonomous drain (server
+      // returns `cancelled: 0`), the message has already started
+      // processing and will appear in chat history. Surface that to
+      // the user with a toast rather than silently letting them think
+      // it was cancelled.
+      setQueuedMessages((all) => all.filter((m) => m.id !== messageId));
+      const sid = activeSessionIdRef.current;
+      if (!sid) return;
+      try {
+        const res = await fetch(
+          `${API_BASE}/api/sessions/${encodeURIComponent(sid)}/queued/${encodeURIComponent(messageId)}`,
+          { method: "DELETE" }
+        );
+        if (res.ok) {
+          const body = (await res.json().catch(() => ({}))) as {
+            cancelled?: number;
+          };
+          if (body.cancelled === 0) {
+            toast.message("Already processing", {
+              description:
+                "The agent had already started on this message — it will appear in the chat.",
+            });
+          }
+        }
+      } catch {
+        // Network failure leaves the inbox row in place; next turn
+        // will drain it and the message lands in chat. Surface so
+        // the user isn't surprised by an "uncancelled" message.
+        toast.error("Cancel failed", {
+          description: "Network error — the message may still arrive.",
+        });
+      }
+    },
+    []
+  );
 
   // First-run / "no provider configured" takes over the whole viewport.
   // The chat chrome (sidebar, sessions, composer) is non-functional without
@@ -834,6 +935,47 @@ function ChatPageInner() {
 
         <div className="shrink-0 border-t border-paper-rule bg-paper">
           <div className="mx-auto max-w-3xl px-6 py-4">
+            {queuedMessages.length > 0 && (
+              <div className="mb-2 border border-paper-rule bg-paper-sunk px-3 py-2">
+                <div className="mb-1.5 flex items-center justify-between font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
+                  <span>
+                    Queued · {queuedMessages.length}
+                  </span>
+                  <span>Sent on next turn</span>
+                </div>
+                <ul className="space-y-1">
+                  {queuedMessages.map((q) => {
+                    const textPart = q.parts.find(
+                      (p) => (p as { type?: string }).type === "text"
+                    ) as { type: "text"; text?: string } | undefined;
+                    const filePart = q.parts.find(
+                      (p) => (p as { type?: string }).type === "file"
+                    ) as { type: "file"; filename?: string } | undefined;
+                    const summary =
+                      (textPart?.text?.trim() ?? "") ||
+                      (filePart?.filename ? `[file: ${filePart.filename}]` : "(empty)");
+                    return (
+                      <li
+                        key={q.id}
+                        className="flex items-start gap-2 text-sm text-ink-soft"
+                      >
+                        <span className="mt-0.5 size-1.5 shrink-0 rounded-full bg-plot-red pulse-live" />
+                        <span className="line-clamp-2 break-words">{summary}</span>
+                        <button
+                          type="button"
+                          className="ml-auto shrink-0 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint hover:text-plot-red"
+                          aria-label="Cancel queued message"
+                          onClick={() => void cancelQueued(q.id)}
+                          title="Cancel — drops the queued message before the next turn picks it up"
+                        >
+                          ✕
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            )}
             <div className="mb-2 flex items-center justify-between">
               <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
                 Compose
@@ -891,7 +1033,7 @@ function ChatPageInner() {
                   size="icon"
                   variant="ghost"
                   onClick={() => fileInputRef.current?.click()}
-                  disabled={isStreaming || !activeAgentId || !acceptsAttachments}
+                  disabled={!activeAgentId || !acceptsAttachments}
                   className="shrink-0"
                   aria-label="Attach files"
                   title={
@@ -908,13 +1050,23 @@ function ChatPageInner() {
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
                   placeholder={
-                    activeAgent ? `Message ${activeAgent.name}` : "Select an agent"
+                    activeAgent
+                      ? isStreaming
+                        ? `Queue next message for ${activeAgent.name}…`
+                        : `Message ${activeAgent.name}`
+                      : "Select an agent"
                   }
-                  disabled={isStreaming || !activeAgentId}
+                  disabled={!activeAgentId}
                   rows={1}
                   className="min-h-[44px] max-h-48 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 focus-visible:outline-none font-sans text-sm"
                 />
-                {isStreaming ? (
+                {/* When the agent is mid-turn we show BOTH Stop and Send.
+                    Send queues the message (server writes it to chat + to
+                    the inbox; the running turn keeps going, the new
+                    message gets picked up on the next turn). Stop aborts
+                    the current run if the user wants to redirect instead.
+                    When idle, only Send is shown. */}
+                {isStreaming && (
                   <Button
                     size="icon"
                     variant="destructive"
@@ -925,22 +1077,28 @@ function ChatPageInner() {
                     <Square className="size-4 fill-current" />
                     <span className="sr-only">Stop</span>
                   </Button>
-                ) : (
-                  <Button
-                    size="icon"
-                    onClick={() => void send()}
-                    disabled={
-                      (!input.trim() && pendingAttachments.length === 0) ||
-                      !activeAgentId ||
-                      pendingAttachments.some((p) => p.status === "uploading")
-                    }
-                    className="shrink-0"
-                    aria-label="Send message"
-                  >
-                    <ArrowUp className="size-4" />
-                    <span className="sr-only">Send</span>
-                  </Button>
                 )}
+                <Button
+                  size="icon"
+                  onClick={() => void send()}
+                  disabled={
+                    (!input.trim() && pendingAttachments.length === 0) ||
+                    !activeAgentId ||
+                    pendingAttachments.some((p) => p.status === "uploading")
+                  }
+                  className="shrink-0"
+                  aria-label={isStreaming ? "Queue message" : "Send message"}
+                  title={
+                    isStreaming
+                      ? "Queue for next turn (current turn keeps going)"
+                      : "Send"
+                  }
+                >
+                  <ArrowUp className="size-4" />
+                  <span className="sr-only">
+                    {isStreaming ? "Queue" : "Send"}
+                  </span>
+                </Button>
               </div>
             </div>
           </div>

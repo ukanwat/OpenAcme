@@ -32,6 +32,8 @@ export {
 export {
   COMMENT_KINDS,
   EVENT_KINDS,
+  INBOX_KINDS,
+  INBOX_SOURCES,
 } from "./ports.js";
 
 export type {
@@ -43,5 +45,7 @@ export type {
   EventInput,
   EventKind,
   EventStorePort,
+  InboxKind,
+  InboxSource,
   TaskEvent,
 } from "./ports.js";
