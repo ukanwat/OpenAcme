@@ -64,6 +64,16 @@ function buildAssistantMessage(
   parts: UIMessage["parts"]
 ): UIMessage | null {
   if (parts.length === 0) return null;
+  // step-start is an internal boundary marker; if it's the only thing the
+  // turn produced (abort landed between start-step and any text/tool),
+  // the row would convert to an empty assistant model message and
+  // Anthropic would reject the NEXT turn with "content must be
+  // non-empty". Drop messages that carry no real content.
+  const hasContent = parts.some((p) => {
+    const t = (p as { type?: string }).type;
+    return t === "text" || t === "reasoning" || (t?.startsWith("tool-") ?? false);
+  });
+  if (!hasContent) return null;
   return {
     id,
     role: "assistant",
@@ -858,7 +868,7 @@ export function App({
               placeholder={
                 state.status === "streaming"
                   ? "streaming…"
-                  : "Type a message · drop a file · @path · /commands · esc"
+                  : "Type a message · Shift+↵ or \\↵ newline · /commands · esc"
               }
               onSpecialKey={handleSpecialKey}
               onPastePath={(rawPath) => tryAttachPath(rawPath)}
@@ -877,6 +887,18 @@ export function App({
   );
 }
 
+const INPUT_KEYS: { key: string; description: string }[] = [
+  { key: "↵", description: "send message" },
+  { key: "Shift+↵ / Ctrl+↵ / Alt+↵", description: "newline (terminal-dependent)" },
+  { key: "Ctrl+J", description: "newline (every terminal)" },
+  { key: "\\↵", description: "newline (every terminal, bash-style)" },
+  { key: "@<path>", description: "attach a file at submit" },
+  { key: "drag-drop", description: "attach files (iTerm2 / kitty / Windows Terminal)" },
+  { key: "Ctrl+A / Ctrl+E", description: "jump to start / end" },
+  { key: "Ctrl+U", description: "clear to start of line" },
+  { key: "Ctrl+X", description: "clear pending attachments" },
+];
+
 function HelpOverlay() {
   return (
     <Box
@@ -894,6 +916,14 @@ function HelpOverlay() {
             <Text key={a} dimColor>{` (/${a})`}</Text>
           ))}
           <Text dimColor>{"  · " + c.description}</Text>
+        </Box>
+      ))}
+      <Text dimColor> </Text>
+      <Text bold color="yellow">Input keys</Text>
+      {INPUT_KEYS.map((k) => (
+        <Box key={k.key}>
+          <Text color="cyan">{k.key}</Text>
+          <Text dimColor>{"  · " + k.description}</Text>
         </Box>
       ))}
       <Text dimColor> </Text>
