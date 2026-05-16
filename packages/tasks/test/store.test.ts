@@ -415,22 +415,30 @@ describe("TaskStore atomic write", () => {
 describe("TaskStore malformed-file handling", () => {
   it("warns once per malformed file across many list() calls", async () => {
     const fs = await import("node:fs");
-    fs.writeFileSync(path.join(dir, "broken.md"), "not yaml");
-    const warn = vi
-      .spyOn(console, "warn")
-      .mockImplementation(() => undefined);
+    // The logger resolves its destination lazily on first write. Set
+    // OPENACME_LOG_FILE + resetModules so the fresh import lands on our
+    // tempfile instead of fd=2 (which bypasses any process.stderr spy).
+    const logFile = path.join(dir, "test-logs.ndjson");
+    const prev = process.env["OPENACME_LOG_FILE"];
+    process.env["OPENACME_LOG_FILE"] = logFile;
+    vi.resetModules();
     try {
-      store.list();
-      store.list();
-      store.list();
-      const calls = warn.mock.calls.filter(
-        (c) =>
-          typeof c[0] === "string" &&
-          (c[0] as string).includes("Skipping malformed task file")
-      );
+      const mod = await import("../src/store.js");
+      const fresh = new mod.TaskStore(dir);
+      fs.writeFileSync(path.join(dir, "broken.md"), "not yaml");
+      fresh.list();
+      fresh.list();
+      fresh.list();
+      const content = fs.existsSync(logFile)
+        ? fs.readFileSync(logFile, "utf8")
+        : "";
+      const calls = content
+        .split("\n")
+        .filter((l) => l.includes("skipping malformed task file"));
       expect(calls.length).toBe(1);
     } finally {
-      warn.mockRestore();
+      if (prev === undefined) delete process.env["OPENACME_LOG_FILE"];
+      else process.env["OPENACME_LOG_FILE"] = prev;
     }
   });
 });
