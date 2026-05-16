@@ -81,13 +81,26 @@ export function MultilineInput({
       if (key.downArrow && onSpecialKey({ name: "down", shift: !!key.shift, ctrl: !!key.ctrl, meta: !!key.meta })) return;
     }
 
-    // Submit on plain Enter; insert newline on Enter with any modifier or Ctrl+J.
+    // Submit on plain Enter. Multi-line ways in, in order of reliability:
+    //   - `\<Enter>` (bash-style continuation) — works everywhere; the
+    //     trailing backslash is consumed and replaced by a newline.
+    //   - Ctrl+J — universal "insert LF" key, works in every terminal
+    //     but undiscoverable without docs.
+    //   - Shift / Alt / Ctrl + Enter — only fires in terminals that map
+    //     the modifier through (iTerm2 + kitty yes; Terminal.app no).
     if (key.return) {
       if (key.shift || key.ctrl || key.meta) {
         insertAt("\n");
-      } else {
-        onSubmit(value);
+        return;
       }
+      if (value.slice(0, cursor).endsWith("\\")) {
+        const next =
+          value.slice(0, cursor - 1) + "\n" + value.slice(cursor);
+        onChange(next);
+        setCursor(cursor); // backslash dropped, newline inserted in its place
+        return;
+      }
+      onSubmit(value);
       return;
     }
     // Ctrl+J — universal "insert newline" that works in every terminal.
