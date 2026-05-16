@@ -314,8 +314,12 @@ export class TaskStore {
         }
       }
 
-      const explicitStatus = input.status ?? "open";
-      const status = this.computeAutoStatus(deps, explicitStatus, byId);
+      // Status is whatever the caller set (default `open`). Deps are
+      // a read-time predicate now — the dispatcher computes readiness
+      // fresh on each tick by checking `deps_satisfied AND start_at
+      // ≤ now AND status = open`. Storing `blocked` on dep-unmet was
+      // the old auto-flipper model; gone.
+      const status = input.status ?? "open";
 
       // Reject creating directly as in_progress if another in-progress
       // task already owns this session.
@@ -369,17 +373,15 @@ export class TaskStore {
       };
 
       await this.writeFile(task);
-      // `task_assigned` represents new work entering the system, not a
-      // reaction to existing work. We emit it with `actor: null` so
-      // echo suppression never blocks it — otherwise a self-assigned
-      // task created in the agent's own session would never wake the
-      // agent (and there's no periodic tick to catch it). Creator info
-      // is preserved in the payload.
+      // Emit with the honest actor (creator). Echo suppression now
+      // lives at the inbox-delivery boundary, not in the scheduler —
+      // and the dispatcher's periodic tick will catch self-assigned
+      // tasks regardless of whether the event delivers an inbox row.
       this.emitEvent({
         taskId: task.id,
         sessionId: task.session_id,
         agentId: task.assignee,
-        actor: null,
+        actor: input.created_by,
         kind: "task_assigned",
         payload: { assignee: task.assignee, created_by: task.created_by },
       });
@@ -454,17 +456,11 @@ export class TaskStore {
         (requestedStatus === "done" || requestedStatus === "canceled") &&
         existing.status !== requestedStatus;
 
-      // Auto blocked/open only applies to non-terminal target statuses.
-      let nextStatus: TaskStatus;
-      if (
-        requestedStatus === "done" ||
-        requestedStatus === "canceled" ||
-        requestedStatus === "in_progress"
-      ) {
-        nextStatus = requestedStatus;
-      } else {
-        nextStatus = this.computeAutoStatus(nextDeps, requestedStatus, byId);
-      }
+      // No more auto-flipper. The caller's requested status is what we
+      // store. Eligibility (deps + start_at) is computed by readers
+      // (dispatcher, prompt rendering) at query time. `blocked` is
+      // now explicit-only — never set by the store.
+      const nextStatus: TaskStatus = requestedStatus;
 
       // At-most-one-in_progress per session.
       if (nextStatus === "in_progress" && nextSessionId) {
@@ -565,13 +561,12 @@ export class TaskStore {
             effectiveRecurrence.session === "fresh"
               ? null
               : next.session_id;
-          // Re-evaluate auto-blocked against deps for the reset open
-          // status — a recurring task whose deps regressed should sit
-          // blocked, not open.
-          const resetStatus = this.computeAutoStatus(nextDeps, "open", byId);
+          // Always `open` — the dispatcher's readiness predicate will
+          // skip it on the next tick if deps regressed or `start_at`
+          // hasn't passed yet. No stored `blocked` for dep-blocked.
           next = {
             ...next,
-            status: resetStatus,
+            status: "open",
             start_at: nextFire.toISOString(),
             closed_at: null,
             session_id: resetSessionId,
@@ -612,12 +607,11 @@ export class TaskStore {
         });
       }
 
-      // Dependents only unblock on a real terminal "done". A recurring
-      // task that self-reset isn't actually done — it's pending its
-      // next fire — so dependents must keep waiting.
-      if (isClosing && nextStatus === "done" && !didReset) {
-        await this.unblockDependents(next.id);
-      }
+      // No graph-walk on close — dependents are unblocked implicitly
+      // by the dispatcher's readiness predicate (which sees the dep
+      // now done on its next state-check). The `dep_unblocked` event
+      // is no longer emitted; the dispatcher doesn't route on events
+      // and there's no other reader that cares.
 
       this.fireOnChange();
       return next;
@@ -803,72 +797,6 @@ export class TaskStore {
     }
   }
 
-  private computeAutoStatus(
-    deps: string[],
-    requested: TaskStatus,
-    byId: Map<string, Task>
-  ): TaskStatus {
-    if (requested === "done" || requested === "canceled") return requested;
-    // Explicit `blocked` is honored — the scheduler uses it to park
-    // failed turns, and we don't want a retry loop where the auto-correct
-    // immediately flips it back to a runnable status.
-    if (requested === "blocked") return requested;
-    if (deps.length === 0) return requested;
-    return depsSatisfied(deps, byId) ? "open" : "blocked";
-  }
-
-  private async unblockDependents(doneId: string): Promise<void> {
-    const fresh = this.list();
-    const byId = new Map(fresh.map((t) => [t.id, t]));
-    // Make sure the now-done task is reflected so depsSatisfied sees it.
-    const closedNow = byId.get(doneId);
-    if (closedNow) byId.set(doneId, { ...closedNow, status: "done" });
-
-    for (const dep of fresh) {
-      if (!dep.depends_on.includes(doneId)) continue;
-      if (dep.status !== "blocked") continue;
-      if (!depsSatisfied(dep.depends_on, byId)) continue;
-      // Mutex-guarded write — re-enter via update() but skip
-      // recursive fan-out since the close that triggered this is
-      // already fanning out at the same level.
-      try {
-        let didUnblock = false;
-        let assignee = dep.assignee;
-        let depSessionId: string | null = dep.session_id;
-        await this.withMutex(dep.id, async () => {
-          const cur = this.get(dep.id);
-          if (!cur || cur.status !== "blocked") return;
-          if (!depsSatisfied(cur.depends_on, byId)) return;
-          const next: Task = {
-            ...cur,
-            status: "open",
-            updated_at: isoNow(),
-          };
-          await this.writeFile(next);
-          didUnblock = true;
-          assignee = next.assignee;
-          depSessionId = next.session_id;
-        });
-        if (didUnblock) {
-          // actor=null: the dep's wake target is a different session than
-          // the closer's (same-session deps would be a cycle, rejected
-          // upstream). Propagating the closer here would echo-suppress
-          // every same-agent cross-session unblock.
-          this.emitEvent({
-            taskId: dep.id,
-            sessionId: depSessionId,
-            agentId: assignee,
-            actor: null,
-            kind: "dep_unblocked",
-            payload: { blocked_by_task_id: doneId },
-          });
-        }
-      } catch (e) {
-        log.warn({ err: e, taskId: dep.id }, "unblockDependents failed");
-      }
-    }
-  }
-
   private async writeFile(task: Task): Promise<void> {
     const file = this.filePath(task.id);
     const dir = path.dirname(file);
@@ -953,16 +881,22 @@ export class TaskStore {
     const comment = this.commentStore.add(input);
     const isSystemAuthor = input.author.startsWith("system:");
     const excerpt = input.body.replace(/\s+/g, " ").trim().slice(0, 80);
+    // `agentId` is the recipient (the task's assignee, who should be
+    // notified via inbox). `actor` is who authored the comment. Echo
+    // suppression at the inbox-delivery boundary filters out self-
+    // authored comments so the assignee doesn't get pinged about
+    // their own messages.
     this.emitEvent({
       taskId: input.taskId,
       sessionId: task.session_id,
-      agentId: input.author,
+      agentId: task.assignee,
       actor: isSystemAuthor ? null : input.author,
       kind: "comment_added",
       payload: {
         comment_id: comment.id,
         kind: comment.kind ?? null,
         excerpt,
+        author: input.author,
       },
     });
     this.fireOnChange();

@@ -7,6 +7,7 @@ import {
   applySchema,
   createSessionStore,
   createMessageStore,
+  createInboxStore,
 } from "@openacme/db";
 import { MemoryStore } from "@openacme/memory";
 import { TaskStore } from "@openacme/tasks";
@@ -56,6 +57,7 @@ function makeAgent(): Agent {
     attachmentsRoot: path.join(tmpRoot, "att"),
     memoryStore: new MemoryStore(path.join(tmpRoot, "agents")),
     taskStore: new TaskStore(path.join(tmpRoot, "tasks")),
+    inboxStore: createInboxStore(db),
   });
 }
 

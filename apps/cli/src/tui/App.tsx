@@ -205,12 +205,12 @@ export function App({
       sendingRef.current = true;
       const ctrl = new AbortController();
       abortRef.current = ctrl;
-      // Block the scheduler from racing an autonomous wake into the
+      // Block the dispatcher from racing an autonomous wake into the
       // same session while this interactive turn runs. Cleared in the
-      // `finally` below. Without this, the CLI scheduler (which now
-      // boots in chat.ts) can fire `runAutonomous` concurrently with
-      // `runStream` here, both racing the same session's history.
-      manager.taskScheduler.markInteractiveBusy(state.sessionId);
+      // `finally` below. Without this the CLI dispatcher can fire
+      // `runAutonomous` concurrently with `runStream` here, both
+      // racing the same session's history.
+      manager.dispatcher.markInteractiveBusy(state.sessionId);
 
       // Commit each pending attachment to disk and build a UIMessage with
       // text + file parts. The CLI runs in-process and writes straight
@@ -410,7 +410,7 @@ export function App({
       } finally {
         if (abortRef.current === ctrl) abortRef.current = null;
         sendingRef.current = false;
-        manager.taskScheduler.clearInteractiveBusy(state.sessionId);
+        manager.dispatcher.clearInteractiveBusy(state.sessionId);
       }
     },
     [manager, state.agentId, state.sessionId, state.committed]

@@ -20,7 +20,13 @@ import {
   memoryFreshnessText,
 } from "@openacme/memory";
 import { TaskStore } from "@openacme/tasks";
-import type { SessionStore, MessageStore, StoredUIMessage } from "@openacme/db";
+import type {
+  SessionStore,
+  MessageStore,
+  StoredUIMessage,
+  InboxStore,
+  InboxRow,
+} from "@openacme/db";
 import { buildSystemPrompt } from "./prompt.js";
 import { Compressor } from "./compression.js";
 import { findRelevantMemories, type RelevantMemory } from "./selector.js";
@@ -135,25 +141,53 @@ export class AutonomousTurnTimeout extends Error {
   }
 }
 
-function buildAutonomousPrompt(): string {
-  return [
-    "Autonomous turn — no human is in this session right now.",
-    "",
-    "Your queue and recent activity are in the system prompt. Decide what to",
-    "work on:",
-    "",
-    "- If something is `in_progress` in this session, continue it (or hand off",
-    "  via comment + status change if you're stuck).",
-    "- Else pick the most relevant `open` task and call",
-    "  `task_update(id, status: \"in_progress\")` to claim it before working.",
-    "- If recent events on tasks you're involved with need a response (a",
-    "  question, a result you depend on, a failure), handle that first.",
-    "- If nothing in the queue is actionable right now, end the turn with no",
-    "  tool calls. The system will wake you again when something changes.",
-    "",
-    "When you finish an assigned task, leave the canonical answer with",
-    "`task_comment(id, body, kind: \"result\")` BEFORE marking it done.",
-  ].join("\n");
+/**
+ * Render inbox rows that are NOT user_messages into a single text
+ * block. Returns `null` for empty (no rows or only user_message rows).
+ *
+ * user_message rows are skipped here because the user message has
+ * already been persisted to the chat history (`/api/chat` writes it
+ * directly when the message arrives mid-turn, before queuing the
+ * inbox row). Re-rendering it inside a `<system-event>` wake row
+ * would duplicate the message in the agent's context.
+ *
+ * system_notice → `[system] <eventKind> on <relatedTask|session> by
+ * <sourceId>: <payload-summary>`.
+ */
+function renderInboxItems(items: InboxRow[]): string | null {
+  const nonUser = items.filter((i) => i.kind !== "user_message");
+  if (nonUser.length === 0) return null;
+  const lines: string[] = [];
+  for (const item of nonUser) {
+    const p = item.payload as {
+      eventKind?: string;
+      payload?: unknown;
+    } | null;
+    const kind = p?.eventKind ?? "notice";
+    const anchor = item.relatedTask
+      ? `task ${item.relatedTask}`
+      : item.relatedSession
+        ? `session ${item.relatedSession}`
+        : "this session";
+    const by = item.sourceId ?? "system";
+    const detail = p?.payload ? ` ${JSON.stringify(p.payload)}` : "";
+    lines.push(`[system] ${kind} on ${anchor} by ${by}${detail}`);
+  }
+  return lines.join("\n\n");
+}
+
+/**
+ * The wake message wrapper. Brief intro + rendered inbox content (if
+ * any). Wrapped in `<system-event>` tags so the model recognizes it as
+ * a system-driven turn rather than human input, and so the web UI can
+ * style it (matched against `metadata.kind === "autonomous_event"`).
+ */
+function buildWakeText(inboxText: string | null): string {
+  const intro = inboxText
+    ? "Autonomous turn — incoming signals since you last looked:"
+    : "Autonomous turn — no new signals; scan your queue.";
+  const body = inboxText ? `\n\n${inboxText}` : "";
+  return `<system-event>\n${intro}${body}\n</system-event>`;
 }
 
 /**
@@ -190,6 +224,7 @@ export class Agent {
   readonly attachmentsRoot: string;
   readonly memoryStore: MemoryStore;
   readonly taskStore: TaskStore;
+  readonly inboxStore: InboxStore;
   readonly broadcaster: AutonomousBroadcaster | null;
   readonly compressor = new Compressor();
   private cachedSystemPrompts = new Map<string, string>();
@@ -214,6 +249,11 @@ export class Agent {
       /** Shared task store. Same instance is bound to the task tools and
        *  driven by the server-side TaskScheduler. */
       taskStore: TaskStore;
+      /** Per-agent delivery queue. Drained at turn start + at LLM-step
+       *  boundaries; rows hard-deleted after delivery. The autonomous
+       *  loop reads from here for both initial wake content and
+       *  mid-turn signal injection. */
+      inboxStore: InboxStore;
       /** Optional UI broadcaster. When present, autonomous turns push
        *  their UIMessage stream chunks here so SSE-subscribed clients
        *  see the run live. Interactive turns don't use this — the
@@ -228,6 +268,7 @@ export class Agent {
     this.attachmentsRoot = deps.attachmentsRoot;
     this.memoryStore = deps.memoryStore;
     this.taskStore = deps.taskStore;
+    this.inboxStore = deps.inboxStore;
     this.broadcaster = deps.broadcaster ?? null;
   }
 
@@ -343,90 +384,175 @@ export class Agent {
       status: "in_progress",
     })[0];
 
-    // Recent-activity snapshot goes inline in the user message, not in
-    // the cached system prompt — otherwise stale snapshots would leak
-    // into subsequent interactive turns and sessions.system_prompt.
-    // Cursor advances to the max rendered ts (not wall-clock) so events
-    // at the same second aren't dropped by the next turn's `gt(...)`.
-    const lastSeen = this.sessionStore.getLastSeenEventTs(opts.sessionId) ?? 0;
-    let maxRenderedTs = lastSeen;
-    let recentActivity = "";
+    // Drain the per-agent inbox. Every event emit fans out a row here
+    // (see AgentManager's `eventStore.onEmit` hook, with same-agent
+    // echo suppression at the delivery boundary). Anything the agent
+    // should know about since its last turn is in this list. The rows
+    // are hard-deleted once we've materialized them into chat history
+    // below — the inbox is staging, the chat is the audit.
+    let pendingInbox: InboxRow[] = [];
     try {
-      const events = this.taskStore.recentEventsForSession(
-        opts.sessionId,
-        this.config.id,
-        lastSeen
-      );
-      if (events.length > 0) {
-        for (const e of events) {
-          if (e.createdAt > maxRenderedTs) maxRenderedTs = e.createdAt;
-        }
-        recentActivity = this.taskStore.renderRecentActivity(
-          opts.sessionId,
-          this.config.id,
-          lastSeen
-        );
-      }
+      pendingInbox = this.inboxStore.pendingFor(this.config.id);
     } catch (e) {
       log.warn(
-        { err: e, sessionId: opts.sessionId },
-        "failed to load recent activity"
+        { err: e, agentId: this.config.id, sessionId: opts.sessionId },
+        "inboxStore.pendingFor failed; turn will run without inbox content"
       );
     }
 
-    // Wrap the autonomous prompt in a <system-event> block so the
-    // model recognizes it as a system signal (not human input) and
-    // doesn't echo it. Persisted with `metadata.kind = "autonomous_event"`
-    // so the web chat view can hide it from the human reader — these
-    // messages are scaffolding, not conversation.
-    const innerText = recentActivity
-      ? `${buildAutonomousPrompt()}\n\n## Recent activity since you last looked\n\n${recentActivity}`
-      : buildAutonomousPrompt();
-    const userMessageText =
-      `<system-event>\n${innerText}\n</system-event>`;
+    // Filter inbox rows to those for THIS session: user_messages with a
+    // matching relatedSession get persisted as real user-role chat rows
+    // here. user_messages for OTHER sessions stay in the inbox (different
+    // session's turn drains them). system_notices ride along regardless.
+    const queuedUserMessagesForThisSession = pendingInbox.filter(
+      (i) =>
+        i.kind === "user_message" && i.relatedSession === opts.sessionId
+    );
+    const drainedUserMessage = queuedUserMessagesForThisSession.length > 0;
 
-    const userMessage: UIMessage = {
-      id: randomUUID(),
-      role: "user",
-      parts: [{ type: "text", text: userMessageText }],
-      metadata: { kind: "autonomous_event" } satisfies MessageMetadata,
-    };
+    // Persist + broadcast each queued user message NOW so it lands in
+    // chat history with a timestamp after the in-flight turn's
+    // assistant (if any). The autonomous turn that's about to run
+    // will respond to these messages. Reuse the original message id
+    // from the payload so the UI's optimistic upsert collapses.
+    for (const row of queuedUserMessagesForThisSession) {
+      const payload = row.payload as
+        | { id?: string; role?: string; parts?: unknown[] }
+        | null;
+      if (!payload || payload.role !== "user" || !Array.isArray(payload.parts)) {
+        continue;
+      }
+      const msgId =
+        typeof payload.id === "string" && payload.id ? payload.id : randomUUID();
+      try {
+        this.messageStore.append(opts.sessionId, {
+          id: msgId,
+          role: "user",
+          parts: payload.parts,
+        });
+        this.broadcaster?.broadcast(opts.sessionId, {
+          kind: "messages_appended",
+          messages: [{ id: msgId, role: "user", parts: payload.parts }],
+        });
+      } catch (e) {
+        log.warn(
+          { err: e, msgId, sessionId: opts.sessionId },
+          "failed to persist queued user message; row will not be re-rendered"
+        );
+      }
+    }
 
-    const history = [
-      ...(sanitizeStoredHistory(
-        this.messageStore.getHistory(opts.sessionId)
-      ) as unknown as UIMessage[]),
-      userMessage,
-    ];
+    const inboxText = renderInboxItems(pendingInbox);
+    const baseHistory = sanitizeStoredHistory(
+      this.messageStore.getHistory(opts.sessionId)
+    ) as unknown as UIMessage[];
 
-    // Persist + broadcast the synthesized user message BEFORE the
-    // assistant turn runs. Two reasons (mirroring /api/chat):
-    // (1) The inbox `unresolvedPingsBySession` rule clears a ping if
-    //     any user message lands after it. If we persisted post-stream
-    //     the autonomous prompt would get a timestamp later than any
-    //     `ping_user` the agent fired during the turn, auto-clearing it.
-    // (2) Tabs subscribed to this session via SSE should see the
-    //     auto-prompt land at the start of the turn, not after.
-    try {
-      this.messageStore.append(opts.sessionId, {
-        id: userMessage.id,
+    // "Has the agent already responded to every real user message in
+    // history?" Walk backwards: if we hit a real (non-autonomous) user
+    // message before any assistant, there's an unanswered user message.
+    let unansweredUser = false;
+    for (let i = baseHistory.length - 1; i >= 0; i--) {
+      const m = baseHistory[i]!;
+      if (m.role === "assistant") break;
+      if (
+        m.role === "user" &&
+        (m.metadata as MessageMetadata | undefined)?.kind !== "autonomous_event"
+      ) {
+        unansweredUser = true;
+        break;
+      }
+    }
+
+    // Wake-row decision:
+    //   (a) `inboxText` non-null  → system_notices to surface; write a
+    //       wake row containing them. Wake row exists.
+    //   (b) drained a user_message OR there's an unanswered user
+    //       message in history → no wake row; history's user message
+    //       is what the agent responds to. (The mid-turn /api/chat
+    //       queue path persists the user msg BEFORE writing the
+    //       inbox row, so it's already in history by the time we
+    //       get here.)
+    //   (c) Neither → continuation/health-check wake. Write a brief
+    //       wake row so the model has something to respond to.
+    let userMessage: UIMessage | null = null;
+    if (inboxText) {
+      userMessage = {
+        id: randomUUID(),
         role: "user",
-        parts: userMessage.parts as unknown[],
-        metadata: { kind: "autonomous_event" },
-      });
-      this.broadcaster?.broadcast(opts.sessionId, {
-        kind: "messages_appended",
-        messages: [
-          {
-            id: userMessage.id,
-            role: "user",
-            parts: userMessage.parts as unknown[],
-            metadata: { kind: "autonomous_event" },
-          },
-        ],
-      });
-    } catch (e) {
-      log.warn({ err: e }, "runAutonomous: failed to pre-persist auto user message");
+        parts: [{ type: "text", text: buildWakeText(inboxText) }],
+        metadata: { kind: "autonomous_event" } satisfies MessageMetadata,
+      };
+    } else if (!drainedUserMessage && !unansweredUser) {
+      userMessage = {
+        id: randomUUID(),
+        role: "user",
+        parts: [{ type: "text", text: buildWakeText(null) }],
+        metadata: { kind: "autonomous_event" } satisfies MessageMetadata,
+      };
+    }
+
+    const history = userMessage ? [...baseHistory, userMessage] : baseHistory;
+
+    // Persist + broadcast the synthesized wake row BEFORE the assistant
+    // turn runs (mirroring /api/chat): keeps `ping_user`'s inbox
+    // resolution rule honest about ordering, and lets SSE-subscribed
+    // tabs render the wake row at the same instant the assistant
+    // stream starts. Skipped entirely when there's no wake row.
+    let persistSucceeded = userMessage === null;
+    if (userMessage) {
+      try {
+        this.messageStore.append(opts.sessionId, {
+          id: userMessage.id,
+          role: "user",
+          parts: userMessage.parts as unknown[],
+          metadata: { kind: "autonomous_event" },
+        });
+        persistSucceeded = true;
+        this.broadcaster?.broadcast(opts.sessionId, {
+          kind: "messages_appended",
+          messages: [
+            {
+              id: userMessage.id,
+              role: "user",
+              parts: userMessage.parts as unknown[],
+              metadata: { kind: "autonomous_event" },
+            },
+          ],
+        });
+      } catch (e) {
+        log.warn({ err: e }, "runAutonomous: failed to pre-persist auto user message");
+      }
+    }
+
+    // Hard-delete rows we've handled. We've handled:
+    //   - All queued user_messages for THIS session (persisted above).
+    //   - system_notice rows once the wake row is persisted (or if
+    //     there is no wake row because we skipped it; either way the
+    //     system_notice is reflected in the prompt or correctly judged
+    //     unneeded).
+    // user_messages addressed to OTHER sessions stay in the inbox so
+    // their session's turn picks them up.
+    const idsToDelete: number[] = [];
+    for (const row of pendingInbox) {
+      if (row.kind === "user_message") {
+        if (row.relatedSession === opts.sessionId) idsToDelete.push(row.id);
+        // else: leave for other session
+      } else {
+        // system_notice — drained whether or not the wake row landed,
+        // since we either rendered it into a persisted wake row or
+        // deliberately skipped (e.g., would have been redundant).
+        if (persistSucceeded) idsToDelete.push(row.id);
+      }
+    }
+    if (idsToDelete.length > 0) {
+      try {
+        this.inboxStore.deleteDelivered(idsToDelete);
+      } catch (e) {
+        log.warn(
+          { err: e, count: idsToDelete.length },
+          "inboxStore.deleteDelivered failed; rows may re-deliver"
+        );
+      }
     }
 
     const timeoutMs =
@@ -452,28 +578,44 @@ export class Agent {
         }).catch(() => ({ entries: [], modelContent: null }))
       : { entries: [], modelContent: null };
 
+    // Memory recall: attach a "relevant memory" part to the LAST
+    // user-role message the model will see, so the cached system
+    // prompt can stay clean. With the wake row optional now, attach
+    // to the wake row if present, otherwise to the most-recent real
+    // user message in history (typically the queued mid-turn one).
+    // Attach in-memory only — recall already runs per-turn and isn't
+    // persisted to the chat row.
     const recallPart = this.buildRelevantMemoryPart(
       recall.entries,
       recall.modelContent
     );
     if (recallPart) {
-      userMessage.parts = [
-        ...(userMessage.parts as UIMessage["parts"]),
-        recallPart as unknown as UIMessage["parts"][number],
-      ];
+      const target =
+        userMessage ??
+        ([...history].reverse().find((m) => m.role === "user") as
+          | UIMessage
+          | undefined);
+      if (target) {
+        target.parts = [
+          ...(target.parts as UIMessage["parts"]),
+          recallPart as unknown as UIMessage["parts"][number],
+        ];
+      }
     }
 
-    // Mid-turn event injection: between LLM steps, surface new events
-    // that landed since the last injection, excluding self-authored
-    // (echo). Cursor advances on the max ts rendered, not wall-clock,
-    // so same-second events aren't lost by the next `gt(...)` query.
-    // Wrapped in a `user` role message — mid-stream `system` role is
-    // non-standard for Anthropic and breaks prefix prompt-cache.
+    // Mid-turn inbox drain: between LLM steps, splice any signals that
+    // landed since the last drain (either turn start or the previous
+    // step boundary). Rows arrive here from the same inbox the turn-
+    // start drain reads — echo suppression (don't re-deliver this
+    // agent's own actions) happens at the emit boundary in
+    // AgentManager, so anything we see here is for-this-agent and
+    // not self-authored. Wrapped in a `user` role message — mid-stream
+    // `system` role is non-standard for Anthropic and breaks prefix
+    // prompt-cache.
     let injectionCount = 0;
-    let injectionCursor = lastSeen;
     const MAX_INJECTIONS = 5;
     const turnAgentId = this.config.id;
-    const turnTaskStore = this.taskStore;
+    const turnInboxStore = this.inboxStore;
     const turnSessionId = opts.sessionId;
     const prepareStep: Parameters<typeof streamText>[0]["prepareStep"] = (
       stepOpts
@@ -481,27 +623,18 @@ export class Agent {
       if (stepOpts.stepNumber === 0) return undefined;
       if (injectionCount >= MAX_INJECTIONS) return undefined;
       try {
-        const fresh = turnTaskStore.recentEventsForSession(
-          turnSessionId,
-          turnAgentId,
-          injectionCursor,
-          { excludeActor: turnAgentId }
-        );
+        const fresh = turnInboxStore.pendingFor(turnAgentId);
         if (fresh.length === 0) return undefined;
-        const formatted = turnTaskStore.renderRecentActivity(
-          turnSessionId,
-          turnAgentId,
-          injectionCursor,
-          new Date(),
-          { excludeActor: turnAgentId }
-        );
+        const formatted = renderInboxItems(fresh);
         if (!formatted) return undefined;
-        let maxTs = injectionCursor;
-        for (const e of fresh) {
-          if (e.createdAt > maxTs) maxTs = e.createdAt;
-          if (e.createdAt > maxRenderedTs) maxRenderedTs = e.createdAt;
+        try {
+          turnInboxStore.deleteDelivered(fresh.map((r) => r.id));
+        } catch (e) {
+          log.warn(
+            { err: e, sessionId: turnSessionId },
+            "mid-turn inbox delete failed; rows may re-inject"
+          );
         }
-        injectionCursor = maxTs;
         injectionCount++;
         return {
           messages: [
@@ -510,17 +643,16 @@ export class Agent {
               role: "user",
               content:
                 "<system-event>\n" +
-                "New events landed while you were working — review and react if relevant, otherwise keep going.\n\n" +
+                "New signals landed while you were working — review and react if relevant, otherwise keep going.\n\n" +
                 formatted +
                 "\n</system-event>",
             },
           ],
         };
       } catch (e) {
-        // Body kept verbatim — referenced in CLAUDE.md / scheduler docs.
         log.warn(
           { err: e, sessionId: turnSessionId },
-          `Mid-turn event injection failed for ${turnSessionId}`
+          `Mid-turn inbox drain failed for ${turnSessionId}`
         );
         return undefined;
       }
@@ -593,13 +725,11 @@ export class Agent {
       if (timeoutAbort.signal.aborted) {
         timedOut = true;
       } else {
-        // Advance cursor before propagating so failures don't bury
-        // events forever — the agent didn't process them, but the
-        // failure is a known condition and the events will still be
-        // re-surfaced on the next wake via the recent-activity feed
-        // capped at limit=20 (a follow-up could carry an "(N more
-        // older not shown)" hint).
-        this.advanceEventCursor(opts.sessionId, maxRenderedTs);
+        // No cursor to advance — the inbox rows that were drained at
+        // turn start are already deleted, and their content is in the
+        // persisted chat row above (so the agent's history still
+        // reflects what we tried to deliver). New signals arriving
+        // post-failure will be in the inbox for the next turn.
         clearTimeout(timer);
         if (externalAbort) {
           externalAbort.removeEventListener("abort", onExternalAbort);
@@ -614,13 +744,11 @@ export class Agent {
     }
 
     if (timedOut) {
-      this.advanceEventCursor(opts.sessionId, maxRenderedTs);
       throw new AutonomousTurnTimeout(
         `Autonomous turn timed out after ${timeoutMs}ms in session ${opts.sessionId}`
       );
     }
     if (!assistantMessage) {
-      this.advanceEventCursor(opts.sessionId, maxRenderedTs);
       throw new Error(
         `Autonomous turn in session ${opts.sessionId} produced no assistant message`
       );
@@ -661,22 +789,12 @@ export class Agent {
       });
     }
 
-    // Advance the per-session events cursor by the max event ts we
-    // actually rendered (initial recent-activity + mid-turn injections).
-    // Using max-rendered instead of `now()` avoids the second-resolution
-    // race where events landing in the same wall-clock second as cursor
-    // advance get silently skipped by the next turn's `gt(...)` query.
-    this.advanceEventCursor(opts.sessionId, maxRenderedTs);
+    // No cursor advance — inbox-drain-and-delete is the new
+    // incrementality mechanism. Rows we rendered (turn start + mid-
+    // turn) are already gone from the inbox; what remains is fresh
+    // for the next turn.
 
     return { assistant: assistantMessage, usage };
-  }
-
-  private advanceEventCursor(sessionId: string, ts: number): void {
-    try {
-      this.sessionStore.markEventsSeen(sessionId, ts);
-    } catch (e) {
-      log.warn({ err: e, sessionId }, "markEventsSeen failed");
-    }
   }
 
   /**

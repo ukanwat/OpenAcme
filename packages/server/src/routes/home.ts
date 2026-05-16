@@ -27,8 +27,10 @@ export interface SessionSummary {
   pendingTaskCount: number;
   /** Last activity unix-seconds. Driven by session.updated_at. */
   lastActivity: number;
-  /** Unix-seconds the agent set via `sleep`, or null when default cadence. */
-  nextCheckAt: number | null;
+  /** Unix-seconds the agent set via `defer_session(duration)`, or
+   *  null when no defer is active. The dispatcher's tick honours this
+   *  for routine spawns; new inbox rows bypass it. */
+  deferUntil: number | null;
   /** When status === "waiting", the agent's ping message. */
   pingMessage?: string;
 }
@@ -61,9 +63,10 @@ export function buildHomePayload(manager: AgentManager): HomePayload {
   const pings = manager.eventStore.unresolvedPingsBySession();
   const pingBySession = new Map(pings.map((p) => [p.sessionId, p]));
 
-  // Currently-running sessions: from the scheduler. Stable getter
-  // exposes the internal Set; falling back to inspection if absent.
-  const running = manager.taskScheduler.runningSessionIds();
+  // Currently-running sessions: union of dispatcher-spawned turns and
+  // interactive `/api/chat` turns. `dispatcher.runningSessionIds()`
+  // unions both; the home view doesn't care which kind of turn it is.
+  const running = manager.dispatcher.runningSessionIds();
   const runningSet = new Set(running);
 
   // Group tasks by session_id for O(1) lookup.
@@ -110,7 +113,7 @@ export function buildHomePayload(manager: AgentManager): HomePayload {
       currentTaskTitle: inProgress?.title ?? null,
       pendingTaskCount: nonTerminal.length,
       lastActivity: session.updatedAt,
-      nextCheckAt: session.nextCheckAt ?? null,
+      deferUntil: session.deferUntil ?? null,
       pingMessage: ping?.message,
     };
 

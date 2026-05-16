@@ -3,7 +3,12 @@ import Database from "better-sqlite3";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { applySchema, createSessionStore, createMessageStore } from "@openacme/db";
+import {
+  applySchema,
+  createSessionStore,
+  createMessageStore,
+  createInboxStore,
+} from "@openacme/db";
 import { MemoryStore } from "@openacme/memory";
 import { TaskStore } from "@openacme/tasks";
 import type { ToolRegistry } from "@openacme/tools";
@@ -80,6 +85,7 @@ function makeAgent(opts: {
     attachmentsRoot: opts.attachmentsRoot ?? "/tmp/openacme-test-attachments",
     memoryStore: new MemoryStore(path.join(tmpRoot, "agents")),
     taskStore: new TaskStore(path.join(tmpRoot, "tasks")),
+    inboxStore: createInboxStore(opts.db),
   });
 }
 

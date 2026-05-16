@@ -47,9 +47,9 @@ export {
   type PingUserEventEmit,
 } from "./builtins/ping.js";
 export {
-  bindSleep,
-  type SleepBindings,
-} from "./builtins/sleep.js";
+  bindDeferSession,
+  type DeferSessionBindings,
+} from "./builtins/defer-session.js";
 export { SYSTEM_TOOLS, type SystemTool } from "./system.js";
 
 // Import builtins to trigger self-registration
@@ -67,5 +67,5 @@ import "./builtins/memory.js";
 import "./builtins/tasks.js";
 import "./builtins/agent.js";
 import "./builtins/ping.js";
-import "./builtins/sleep.js";
+import "./builtins/defer-session.js";
 import "./builtins/browser/index.js";

@@ -20,7 +20,7 @@ export const SYSTEM_TOOLS = [
   "task_comments",
   "agent_list",
   "ping_user",
-  "sleep",
+  "defer_session",
 ] as const;
 
 export type SystemTool = (typeof SYSTEM_TOOLS)[number];

@@ -26,11 +26,19 @@ export {
   type TaskEventRow,
 } from "./stores/event-store.js";
 export {
+  createInboxStore,
+  type InboxStore,
+  type InboxDeliverInput,
+  type InboxRow,
+  type AgentInboxRow,
+} from "./stores/inbox-store.js";
+export {
   sessions,
   messages,
   userProfiles,
   taskComments,
   taskEvents,
+  agentInbox,
   type NewSession,
   type MessageRow,
   type NewMessageRow,
@@ -38,4 +46,5 @@ export {
   type NewUserProfile,
   type NewTaskCommentRow,
   type NewTaskEventRow,
+  type NewAgentInboxRow,
 } from "./schema.js";

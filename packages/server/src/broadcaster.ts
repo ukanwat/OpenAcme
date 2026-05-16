@@ -56,6 +56,24 @@ export type SessionBroadcastEvent =
         payload: string | null;
         createdAt: number;
       };
+    }
+  | {
+      /** A user message was queued mid-turn (via /api/chat while a
+       *  turn was already in flight). Sent so OTHER tabs subscribed to
+       *  this session can render the queued chip — without this, only
+       *  the originating tab sees its own queue. The originating tab
+       *  has already added the chip optimistically; deduping by id on
+       *  the client makes the round-trip a no-op for the sender. */
+      kind: "inbox_queued";
+      messageId: string;
+      parts: unknown[];
+    }
+  | {
+      /** A queued user message was cancelled (DELETE /queued/:id).
+       *  Other tabs drop their chip; the originating tab already did
+       *  so optimistically. */
+      kind: "inbox_cancelled";
+      messageId: string;
     };
 
 export interface BroadcastEnvelope {

@@ -180,9 +180,15 @@ export function summarizeEventPayload(
   }
   switch (e.kind) {
     case "comment_added": {
+      // `e.agentId` is the recipient (task assignee). The author is in
+      // `payload.author` (or `e.actor` for non-system authors). Fall
+      // back to `e.actor` for older events that pre-date the payload
+      // change; treat null actor as "system".
+      const author =
+        (p.author && String(p.author)) || e.actor || "system";
       const lead = p.kind
-        ? `${String(p.kind)} comment by ${e.agentId}`
-        : `comment by ${e.agentId}`;
+        ? `${String(p.kind)} comment by ${author}`
+        : `comment by ${author}`;
       const excerpt = p.excerpt ? String(p.excerpt) : "";
       return excerpt ? `${lead}: "${excerpt}"` : lead;
     }

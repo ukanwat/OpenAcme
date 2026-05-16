@@ -111,35 +111,54 @@ MEMORY [${pct}% — ${used}/${limit} chars] · ${snapshot.entryCount} ${entryWor
  * recurring-done semantic (done → open self-reset).
  */
 const TASKS_GUIDANCE =
-  "Tasks are persistent units of work backed by markdown files. The scheduler runs " +
-  "them autonomously: when a task's start_at arrives or a queue slot opens, the " +
-  "assignee agent runs a turn for it without further user input.\n" +
-  "File a task when: the work spans multiple turns or sessions, has a future start " +
-  "time, needs to wait on another task (depends_on), or should be handed to a " +
-  "different agent. Don't file a task for something you can finish in the current " +
-  "turn — just do it.\n" +
-  "Each task binds to a session. The `session` field on `task_create` controls where " +
-  "the work lives: `\"current\"` (only when self-assigning) puts the task in your " +
-  "current session; `\"fresh\"` requests a brand-new session the scheduler allocates " +
-  "when ready; omit for the smart default (current when self-assigning, fresh " +
-  "otherwise). If you intend to work on a task RIGHT NOW in this same turn, use " +
-  "`\"current\"` — otherwise a parallel session can wake and race you. Per-session, " +
-  "at most one task is in_progress at a time; the rest queue in created_at order.\n" +
+  "Tasks are persistent units of work backed by markdown files. A periodic " +
+  "dispatcher (60s tick) checks the board and spawns you when there's something " +
+  "to do — a new assignment, an `in_progress` task you're working on, a ready " +
+  "open task, or a comment from another agent / human in your inbox.\n" +
+  "File a task when: the work spans multiple turns or sessions, has a future " +
+  "start time, needs to wait on another task (depends_on), or should be handed " +
+  "to a different agent. Don't file a task for something you can finish in the " +
+  "current turn — just do it.\n" +
+  "Each task binds to a session. The `session` field on `task_create` controls " +
+  "where the work lives: `\"current\"` (only when self-assigning) puts the task in " +
+  "your current session; `\"fresh\"` requests a brand-new session the dispatcher " +
+  "allocates when ready; omit for the smart default (current when self-assigning, " +
+  "fresh otherwise). If you intend to work on a task RIGHT NOW in this same turn, " +
+  "use `\"current\"`. Per-session, at most one task is in_progress at a time — " +
+  "the rest queue in created_at order. Try to claim a second concurrently and " +
+  "the store rejects with a clear error.\n" +
   "Cross-agent: passing a different `assignee` files work for that agent. They'll " +
-  "pick it up autonomously in a fresh session — you don't message them directly.\n" +
+  "pick it up autonomously in a fresh session — you don't message them directly. " +
+  "Comments on a shared task are the coordination channel.\n" +
   "Recurring tasks: pass `recurrence` (cron or interval). When you mark a recurring " +
   "task `done`, the store self-resets it to `open` with the next fire time — the " +
   "returned status is `open`, not `done`, and `runs` increments. This is intentional. " +
   "Use `status: \"canceled\"` to stop the recurrence permanently. Choose " +
   "`recurrence.session: \"reuse\"` for an ongoing thread (context accumulates), " +
   "`\"fresh\"` (default) for clean isolation each fire.\n" +
-  "Status discipline: flip to `in_progress` when you start, `done` when finished, " +
-  "`blocked` if you can't proceed (the scheduler also flips to blocked on errors / " +
-  "timeouts; that stops a failing recurring task from looping). Append progress notes " +
-  "to the body — pass the FULL replacement body, not a diff.\n" +
-  "Use `task_list` for the live queue and `task_view` to read a task's full body " +
-  "before starting work — the system-prompt snapshot is from session start and may " +
-  "be stale.";
+  "Status discipline (focus model): every turn ends with the focus task in one of " +
+  "three explicit states. `done` (with a `kind: \"result\"` comment summarizing the " +
+  "outcome) when finished. `blocked` (with a reason) when you can't proceed without " +
+  "external input — flip it back to `open` once unblocked. `open + start_at: " +
+  "\"<future ISO>\"` to snooze a task to a wall-clock time. If you leave it in " +
+  "`in_progress` and end the turn, the dispatcher will pick you back up on the " +
+  "next tick to continue or close out — don't worry about forgetting it.\n" +
+  "Constraints are enforced at the write boundary, not via the prompt. Try " +
+  "anything: `task_update` rejects illegal transitions (cycles, in_progress " +
+  "with unmet deps, two in_progress on the same session) with specific errors " +
+  "that tell you exactly what's wrong and how to recover. Reads are unrestricted " +
+  "— `task_list` / `task_view` / `task_comments` show everything in the system, " +
+  "including other agents' tasks. The system-prompt snapshot is from session " +
+  "start and may be stale; call the read tools for fresh state when it matters.\n" +
+  "Dependencies are read-time predicates: a task's `depends_on` doesn't change " +
+  "its stored status, but a task with unmet deps won't be picked up by the " +
+  "dispatcher until they clear. Trying to claim it directly fails with " +
+  "`deps_unsatisfied`.\n" +
+  "Defer: if you have nothing actionable right now and only `blocked` tasks " +
+  "remain, you can call `defer_session(\"5m\" | \"2h\" | \"24h\")` to suppress " +
+  "routine 60s spawns until that timestamp. New inbox signals (user messages, " +
+  "new tasks, comments) bypass the defer and wake you immediately. Defer is " +
+  "one-shot — it clears whenever the dispatcher does spawn you.";
 
 /**
  * Workforce-side primitives for talking to the human and pacing your

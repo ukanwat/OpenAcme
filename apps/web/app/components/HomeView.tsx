@@ -60,18 +60,18 @@ function formatRelative(unixSeconds: number): string {
   return `${d}d ago`;
 }
 
-function formatNextCheck(unixSeconds: number | null): string | null {
+function formatDefer(unixSeconds: number | null): string | null {
   if (unixSeconds == null) return null;
   const now = Math.floor(Date.now() / 1000);
   const diff = unixSeconds - now;
-  if (diff <= 0) return "due now";
-  if (diff < 60) return `wakes ${diff}s`;
+  if (diff <= 0) return null;
+  if (diff < 60) return `quiet ${diff}s`;
   const m = Math.floor(diff / 60);
-  if (m < 60) return `wakes ${m}m`;
+  if (m < 60) return `quiet ${m}m`;
   const h = Math.floor(m / 60);
-  if (h < 24) return `wakes ${h}h`;
+  if (h < 24) return `quiet ${h}h`;
   const d = Math.floor(h / 24);
-  return `wakes ${d}d`;
+  return `quiet ${d}d`;
 }
 
 interface RowProps {
@@ -82,7 +82,7 @@ interface RowProps {
 }
 
 function SessionRow({ s, onClick, compact, active }: RowProps) {
-  const wakeLabel = formatNextCheck(s.nextCheckAt);
+  const wakeLabel = formatDefer(s.deferUntil);
   const statusDot =
     s.status === "waiting"
       ? "bg-plot-red pulse-live"

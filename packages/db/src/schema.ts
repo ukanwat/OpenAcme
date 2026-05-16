@@ -1,6 +1,11 @@
 import { sql } from "drizzle-orm";
 import { sqliteTable, text, integer, index } from "drizzle-orm/sqlite-core";
-import { COMMENT_KINDS, EVENT_KINDS } from "@openacme/tasks";
+import {
+  COMMENT_KINDS,
+  EVENT_KINDS,
+  INBOX_KINDS,
+  INBOX_SOURCES,
+} from "@openacme/tasks";
 
 /**
  * Drizzle schema definitions. Source of truth for the structured tables;
@@ -31,17 +36,12 @@ export const sessions = sqliteTable(
     updatedAt: integer("updated_at")
       .notNull()
       .default(sql`(unixepoch())`),
-    // Per-session inbox cursor for the events feed. Defaults to session
-    // creation time; advanced at the end of every successful turn so the
-    // next turn's "Recent activity" prompt block is incremental.
-    lastSeenEventTs: integer("last_seen_event_ts")
-      .notNull()
-      .default(sql`(unixepoch())`),
-    // Per-session next-probe override the agent sets via `sleep`. When
-    // non-null, scheduler arms a one-shot cron at this absolute unix
-    // second to wake the session. Cleared on each turn; if the agent
-    // doesn't re-set, the scheduler falls back to agent.probeIntervalMs.
-    nextCheckAt: integer("next_check_at"),
+    // One-shot "skip routine spawns until this time" set by the agent
+    // via `defer_session(duration)`. Cleared when the dispatcher next
+    // spawns the session (defer is one-shot, not sticky). New inbox
+    // rows bypass the defer — it suppresses routine checks only, not
+    // real signals. Capped at now + 24h at write time.
+    deferUntil: integer("defer_until"),
   },
   (t) => [
     index("idx_sessions_agent_id").on(t.agentId),
@@ -151,6 +151,48 @@ export const taskEvents = sqliteTable(
   ]
 );
 
+/**
+ * Per-agent delivery queue. Rows are written when signals (user
+ * messages, task events, system notices) should reach an agent that
+ * isn't currently reading. The runtime drains pending rows at turn
+ * start and at LLM-step boundaries, then **hard-deletes** them — this
+ * table is staging, not audit. The immutable audit log lives in
+ * `task_events`.
+ *
+ * Ordering is by `id` (autoincrement). Same-agent self-emits are
+ * filtered at the delivery boundary (in AgentManager) so the agent's
+ * own actions don't show up in its own inbox.
+ */
+export const agentInbox = sqliteTable(
+  "agent_inbox",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    agentId: text("agent_id").notNull(),
+    /** Drizzle `enum` is a TS hint only. Source of truth:
+     *  `INBOX_KINDS` in `@openacme/tasks`. */
+    kind: text("kind", { enum: INBOX_KINDS }).notNull(),
+    /** Two values: `"user"` for anything originating from a human,
+     *  `"system"` for everything platform-generated (task events,
+     *  cron, system notices). Source of truth: `INBOX_SOURCES`. */
+    source: text("source", { enum: INBOX_SOURCES }).notNull(),
+    /** Optional originator id — user id for `source: "user"`, agent id
+     *  or system tag for `source: "system"`. Not used for routing;
+     *  surfaced in the rendered drain for audit / prompt context. */
+    sourceId: text("source_id"),
+    relatedTask: text("related_task"),
+    relatedSession: text("related_session"),
+    /** JSON. For `user_message`, the full UIMessage so it can be
+     *  spliced into the chat history at drain time. For
+     *  `system_notice`, a small structured object the renderer
+     *  formats as text. */
+    payload: text("payload").notNull(),
+    createdAt: integer("created_at")
+      .notNull()
+      .default(sql`(unixepoch())`),
+  },
+  (t) => [index("idx_inbox_agent").on(t.agentId, t.id)]
+);
+
 // Schema-derived types. `$inferSelect` is what comes out of a query;
 // `$inferInsert` is what callers pass in (defaults / nullables become
 // optional, the rest stay required). The `parts` column is JSON-stringified
@@ -165,3 +207,5 @@ export type TaskCommentRow = typeof taskComments.$inferSelect;
 export type NewTaskCommentRow = typeof taskComments.$inferInsert;
 export type TaskEventRow = typeof taskEvents.$inferSelect;
 export type NewTaskEventRow = typeof taskEvents.$inferInsert;
+export type AgentInboxRow = typeof agentInbox.$inferSelect;
+export type NewAgentInboxRow = typeof agentInbox.$inferInsert;

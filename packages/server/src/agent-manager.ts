@@ -20,10 +20,12 @@ import {
   createMessageStore,
   createCommentStore,
   createEventStore,
+  createInboxStore,
   type SessionStore,
   type MessageStore,
   type CommentStore,
   type EventStore,
+  type InboxStore,
 } from "@openacme/db";
 import {
   registry as toolRegistry,
@@ -34,7 +36,7 @@ import {
   bindBrowser,
   bindAgentTool,
   bindPingUser,
-  bindSleep,
+  bindDeferSession,
   closeAllShellSessions,
   SYSTEM_TOOLS,
 } from "@openacme/tools";
@@ -42,7 +44,7 @@ import * as fs from "node:fs";
 import { MemoryStore } from "@openacme/memory";
 import { TaskStore } from "@openacme/tasks";
 import { BrowserManager } from "@openacme/browser";
-import { TaskScheduler } from "./task-scheduler.js";
+import { Dispatcher } from "./dispatcher.js";
 import { SessionBroadcaster } from "./broadcaster.js";
 import {
   MCPClient,
@@ -108,13 +110,18 @@ export class AgentManager {
   readonly messageStore: MessageStore;
   readonly commentStore: CommentStore;
   readonly eventStore: EventStore;
+  readonly inboxStore: InboxStore;
   readonly attachmentsRoot: string;
   readonly agentsDir: string;
   /** `<dataDir>/AGENTS.md` contents; restart to pick up edits. */
   private agentsMd: string | undefined;
   readonly memoryStore: MemoryStore;
   readonly taskStore: TaskStore;
-  readonly taskScheduler: TaskScheduler;
+  /** Periodic state-checker. Replaces the old event-driven
+   *  `TaskScheduler`. Public-readonly so `app.ts` (`/api/chat`'s
+   *  interactive busy hooks) and `routes/home.ts` (runningSessionIds)
+   *  can reach it. */
+  readonly dispatcher: Dispatcher;
   readonly agentStore: AgentStore;
   readonly browserManager: BrowserManager;
   readonly agentCatalog: AgentCatalog;
@@ -135,6 +142,7 @@ export class AgentManager {
     this.messageStore = createMessageStore(this.db);
     this.commentStore = createCommentStore(this.db);
     this.eventStore = createEventStore(this.db);
+    this.inboxStore = createInboxStore(this.db);
 
     // Agents live as folders at <dataDir>/agents/<id>/AGENT.md — the
     // directory is the only source of truth, no DB mirror, no shadow
@@ -193,33 +201,58 @@ export class AgentManager {
       },
     });
 
-    // `sleep` writes the per-session next-probe override. Scheduler
-    // arms a cron when this column changes; on probe-fire it's cleared
-    // so the next turn either re-sets via sleep or falls back to the
-    // agent's default cadence.
-    bindSleep({
-      setNextCheckAt: (sessionId, unixSeconds) => {
-        this.sessionStore.setNextCheckAt(sessionId, unixSeconds);
-        // Notify the scheduler so its cron arms reconcile to the new
-        // value without waiting for the next event.
-        this.taskScheduler.reconcile();
+    // `defer_session(duration)` writes `sessions.defer_until`. The
+    // dispatcher honours it on its periodic tick (skips routine
+    // spawns until the timestamp), and new inbox rows bypass it
+    // (defer suppresses noise, not signal). One-shot — the dispatcher
+    // clears the field on actual spawn.
+    bindDeferSession({
+      setDeferUntil: (sessionId, unixSeconds) => {
+        this.sessionStore.setDeferUntil(sessionId, unixSeconds);
       },
     });
 
     this.broadcaster = new SessionBroadcaster();
-    this.taskScheduler = new TaskScheduler({
+    this.dispatcher = new Dispatcher({
       taskStore: this.taskStore,
       sessionStore: this.sessionStore,
+      inboxStore: this.inboxStore,
       agentManager: this,
       broadcaster: this.broadcaster,
     });
-    // Pure event-driven wake — every state change emits an event,
-    // scheduler.onEvent runs the unified pipeline (lazy session alloc,
-    // echo suppression, debounce + rate-limit queue, fire wake).
-    // Same hook also fans the event out to SSE subscribers of the
-    // affected session so the operator's home view updates live.
+    // Event fan-out has two branches now:
+    //   1. Inbox delivery — every event for an agent that isn't the
+    //      actor becomes a `system_notice` inbox row addressed to that
+    //      agent. Echo suppression lives HERE, at the delivery boundary,
+    //      not at emit sites — so emits can carry the honest actor for
+    //      audit purposes and inbox routing still ignores self-actions.
+    //      The dispatcher's periodic tick discovers the inbox row on
+    //      its next pass (or immediately on the post-interactive tick).
+    //   2. Broadcaster — SSE fan-out to subscribed UI tabs.
     this.eventStore.onEmit((event) => {
-      this.taskScheduler.onEvent(event);
+      if (event.agentId && event.actor !== event.agentId) {
+        try {
+          this.inboxStore.deliver({
+            agentId: event.agentId,
+            kind: "system_notice",
+            source: "system",
+            sourceId: event.actor ?? null,
+            relatedTask: event.taskId ?? null,
+            relatedSession: event.sessionId ?? null,
+            payload: {
+              eventKind: event.kind,
+              eventId: event.id,
+              payload: event.payload,
+            },
+          });
+        } catch (e) {
+          log.warn(
+            { err: e, eventId: event.id },
+            "inboxStore.deliver failed — signal lost for this agent"
+          );
+        }
+      }
+
       const sessionId = event.sessionId ?? this.deriveSessionForEvent(event);
       if (sessionId) {
         this.broadcaster.broadcast(sessionId, {
@@ -237,10 +270,12 @@ export class AgentManager {
         });
       }
     });
-    // setOnChange covers the few mutations that don't emit events
-    // (e.g. a bare `start_at` patch with no status change) — it only
-    // reconciles cron arms; wakes still go through events.
-    this.taskStore.setOnChange(() => this.taskScheduler.reconcile());
+    // `taskStore.setOnChange` used to drive scheduler cron-arm
+    // reconciliation. The dispatcher is purely state-checking on a
+    // 60s tick, so this hook is no longer needed. The tick rediscovers
+    // any task state shift on its next pass — at worst a 60-second
+    // delay for state changes that don't fire an event (rare).
+
 
     // Browser: one managed Chrome shared across the workforce under
     // `<dataDir>/browser-profile/`. Lazy — Chrome doesn't spawn until
@@ -963,6 +998,7 @@ export class AgentManager {
       attachmentsRoot: this.attachmentsRoot,
       memoryStore: this.memoryStore,
       taskStore: this.taskStore,
+      inboxStore: this.inboxStore,
       broadcaster: this.broadcaster,
     });
   }
@@ -1042,8 +1078,8 @@ export class AgentManager {
     // closed sqlite handle ("The database connection is not open") at
     // exit. Particularly visible in CLI chat where the scheduler runs
     // in-process and a turn may have been kicked just before exit.
-    this.taskScheduler.stop();
-    await this.taskScheduler.drain();
+    this.dispatcher.stop();
+    await this.dispatcher.drain();
     for (const [_, mcpClient] of this.mcpClients) {
       await mcpClient.disconnect();
     }
