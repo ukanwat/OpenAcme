@@ -1,5 +1,10 @@
 import type { Provider } from "@openacme/config";
 
+// Re-export so existing callers (`@openacme/server/routes/setup.ts`,
+// CLI setup wizard) keep working — the canonical home is `@openacme/config`
+// now since the loader needs it to bootstrap config.yaml on first boot.
+export { DEFAULT_MODEL_BY_PROVIDER } from "@openacme/config";
+
 export interface ModelPreset {
   id: string;
   label: string;
@@ -52,22 +57,3 @@ export const MODEL_PRESETS: Record<Provider, ModelPreset[]> = {
 
 /** Sentinel value used by the setup wizard to mean "open a free-text prompt". */
 export const CUSTOM_MODEL_ID = "__custom__";
-
-/**
- * Recommended default model per provider — used when a user finishes setup
- * for a provider but hasn't explicitly picked a model yet. Picked from the
- * "(recommended)" entry in MODEL_PRESETS, biased toward "balanced" over
- * "most capable" to keep cost in line on a fresh install. The user changes
- * via the web UI's model picker or by editing config.yaml.
- *
- * `null` for providers where a default doesn't make sense (`custom` needs a
- * baseUrl + a model id the user supplies; we won't pick for them).
- */
-export const DEFAULT_MODEL_BY_PROVIDER: Record<Provider, string | null> = {
-  openai: "gpt-5.5",
-  anthropic: "claude-sonnet-4-6",
-  google: "gemini-2.5-flash",
-  openrouter: "anthropic/claude-sonnet-4.6",
-  ollama: "llama3.3",
-  custom: null,
-};

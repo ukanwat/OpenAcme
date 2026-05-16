@@ -47,7 +47,7 @@ export function anthropicCachePolicy(
   cfg: ModelConfig,
 ): "native" | "openrouter" | "none" {
   if (cfg.provider === "anthropic") return "native";
-  if (cfg.provider === "openrouter") {
+  if (cfg.provider === "openrouter" && cfg.model) {
     const m = cfg.model.toLowerCase();
     if (m.startsWith("anthropic/") || m.includes("claude")) return "openrouter";
   }

@@ -3,7 +3,13 @@ import * as path from "node:path";
 import * as os from "node:os";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { config as loadDotenv } from "dotenv";
-import { ConfigSchema, type Config } from "./schema.js";
+import {
+  ConfigSchema,
+  type Config,
+  type Provider,
+  type AuthMode,
+} from "./schema.js";
+import { DEFAULT_MODEL_BY_PROVIDER } from "./defaults.js";
 
 /**
  * Resolve `~` to the user's home directory.
@@ -29,12 +35,84 @@ export function resolveDataDir(dataDir?: string): string {
 }
 
 /**
+ * Detect which provider the user has credentials for. Used by `loadConfig`
+ * to bootstrap a starter `config.yaml` on first boot, and reusable by
+ * callers that want to know "which provider would the user reasonably
+ * default to right now."
+ *
+ * Priority mirrors `shouldUseOAuth` semantics in `@openacme/llm-provider`:
+ * OAuth tokens win over env vars; among env vars, anthropic > openai >
+ * openrouter > google (matches the "balanced default" intent in
+ * `DEFAULT_MODEL_BY_PROVIDER`).
+ *
+ * Reads `auth.json` directly (no `@openacme/auth` dep) so config stays a
+ * leaf package. Caller is responsible for loading `<dataDir>/.env` into
+ * `process.env` first — `loadConfig` already does this before calling.
+ */
+export function detectConfiguredProvider(
+  dataDir: string
+): { provider: Provider; auth: AuthMode } | null {
+  const authPath = path.join(dataDir, "auth.json");
+  if (fs.existsSync(authPath)) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(authPath, "utf-8")) as {
+        anthropic?: { access_token?: string };
+        openai?: { access_token?: string };
+      };
+      if (parsed.anthropic?.access_token) {
+        return { provider: "anthropic", auth: "oauth" };
+      }
+      if (parsed.openai?.access_token) {
+        return { provider: "openai", auth: "oauth" };
+      }
+    } catch {
+      // Malformed auth.json — fall through to env vars.
+    }
+  }
+  if (process.env["ANTHROPIC_API_KEY"]) {
+    return { provider: "anthropic", auth: "api_key" };
+  }
+  if (process.env["OPENAI_API_KEY"]) {
+    return { provider: "openai", auth: "api_key" };
+  }
+  if (process.env["OPENROUTER_API_KEY"]) {
+    return { provider: "openrouter", auth: "api_key" };
+  }
+  if (process.env["GOOGLE_GENERATIVE_AI_API_KEY"]) {
+    return { provider: "google", auth: "api_key" };
+  }
+  return null;
+}
+
+/**
+ * Build the starter config object written to disk on first boot. Returns
+ * an empty object when no credentials are detected — Zod fills the rest
+ * of the schema and chat surfaces a clean "No model configured" error.
+ */
+function buildStarterConfig(dataDir: string): Record<string, unknown> {
+  const detected = detectConfiguredProvider(dataDir);
+  if (!detected) return {};
+  const modelId = DEFAULT_MODEL_BY_PROVIDER[detected.provider];
+  if (!modelId) return {};
+  return {
+    model: {
+      provider: detected.provider,
+      model: modelId,
+      auth: detected.auth,
+    },
+  };
+}
+
+/**
  * Load configuration from a YAML file + .env secrets.
  *
  * Resolution order:
  * 1. Load .env from data directory
- * 2. Load config.yaml from data directory
- * 3. Merge with defaults via Zod
+ * 2. Bootstrap config.yaml if missing — write a starter using
+ *    `detectConfiguredProvider` so UI-only first-run users get a real
+ *    file on disk with a sensible provider/model.
+ * 3. Load config.yaml from data directory
+ * 4. Merge with defaults via Zod
  */
 export function loadConfig(dataDirOverride?: string): Config {
   const dataDir = resolveDataDir(dataDirOverride);
@@ -45,20 +123,24 @@ export function loadConfig(dataDirOverride?: string): Config {
     loadDotenv({ path: envPath });
   }
 
-  // Load config.yaml
+  // Bootstrap config.yaml if missing. `writeRawConfig` is the canonical
+  // writer — it strips `dataDir` and matches the format the setup wizard
+  // and `/api/keys` use, so the file looks identical regardless of which
+  // path produced it.
   const configPath = path.join(dataDir, "config.yaml");
+  if (!fs.existsSync(configPath)) {
+    writeRawConfig(dataDir, buildStarterConfig(dataDir));
+  }
   let rawConfig: Record<string, unknown> = {};
-  if (fs.existsSync(configPath)) {
-    const content = fs.readFileSync(configPath, "utf-8");
-    try {
-      rawConfig = (parseYaml(content) as Record<string, unknown>) ?? {};
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      throw new Error(
-        `Failed to parse config.yaml at ${configPath}: ${message}\n` +
-        `Please check your YAML syntax. You can validate it at https://yamlchecker.com/`
-      );
-    }
+  const content = fs.readFileSync(configPath, "utf-8");
+  try {
+    rawConfig = (parseYaml(content) as Record<string, unknown>) ?? {};
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    throw new Error(
+      `Failed to parse config.yaml at ${configPath}: ${message}\n` +
+      `Please check your YAML syntax. You can validate it at https://yamlchecker.com/`
+    );
   }
 
   // Parse and validate with defaults

@@ -20,7 +20,10 @@ describe("AgentManager.importAgentFromTemplate (bundled Coder)", () => {
 
   beforeEach(() => {
     dataDir = mkdtempSync(path.join(tmpdir(), "openacme-catalog-"));
-    const config = ConfigSchema.parse({ dataDir });
+    const config = ConfigSchema.parse({
+      dataDir,
+      model: { provider: "anthropic", model: "claude-sonnet-4-6" },
+    });
     manager = new AgentManager(config);
   });
 
@@ -165,7 +168,10 @@ describe("AgentManager.importAgentFromTemplate (bundled Coder)", () => {
 
     // Re-list — the agent should still report id "coder" from its folder,
     // not the bogus frontmatter id.
-    const fresh = new AgentManager(ConfigSchema.parse({ dataDir }));
+    const fresh = new AgentManager(ConfigSchema.parse({
+      dataDir,
+      model: { provider: "anthropic", model: "claude-sonnet-4-6" },
+    }));
     try {
       const agents = fresh.listAgents();
       const coder = agents.find((a) => a.id === "coder");
@@ -187,7 +193,10 @@ describe("AgentManager.ensureDefaultAgents", () => {
 
   beforeEach(() => {
     dataDir = mkdtempSync(path.join(tmpdir(), "openacme-acme-"));
-    manager = new AgentManager(ConfigSchema.parse({ dataDir }));
+    manager = new AgentManager(ConfigSchema.parse({
+      dataDir,
+      model: { provider: "anthropic", model: "claude-sonnet-4-6" },
+    }));
   });
 
   afterEach(async () => {

@@ -35,7 +35,10 @@ export {
   writeRawConfig,
   resolveDataDir,
   resolveConfigPath,
+  detectConfiguredProvider,
 } from "./loader.js";
+
+export { DEFAULT_MODEL_BY_PROVIDER } from "./defaults.js";
 
 export { createAgentStore, type AgentStore } from "./agent-store.js";
 

@@ -18,8 +18,8 @@ export function ModelPicker({
   onSelect,
   onCancel,
 }: {
-  currentProvider: Provider;
-  currentModel: string;
+  currentProvider: Provider | undefined;
+  currentModel: string | undefined;
   configured: Record<string, boolean>;
   onSelect: (next: { provider: Provider; model: string; label: string }) => void;
   onCancel: () => void;

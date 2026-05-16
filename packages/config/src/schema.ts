@@ -55,10 +55,17 @@ export type AuthMode = z.infer<typeof AuthModeSchema>;
 
 /**
  * Model configuration — which provider and model to use.
+ *
+ * `provider` and `model` are optional: the loader bootstraps them on first
+ * boot from configured credentials (auth.json + env vars + .env) via
+ * `detectConfiguredProvider`. When nothing is configured both stay undefined
+ * and chat surfaces a clean "No model configured" error so the setup panel
+ * picks up the state. Hardcoding a default here would silently route a user
+ * with only an Anthropic key through OpenRouter (and into a confusing 401).
  */
 export const ModelConfigSchema = z.object({
-  provider: ProviderSchema.default("openrouter"),
-  model: z.string().default("anthropic/claude-sonnet-4-20250514"),
+  provider: ProviderSchema.optional(),
+  model: z.string().optional(),
   baseUrl: z.string().optional(),
   apiKey: z.string().optional(),
   auth: AuthModeSchema.default("api_key"),

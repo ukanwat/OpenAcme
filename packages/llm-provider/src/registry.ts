@@ -143,9 +143,21 @@ function stripAnthropicSamplingParams(body: unknown): unknown {
  * Mirrors the Hermes pattern of using raw OpenAI SDK + base_url swapping,
  * but with proper provider-specific packages for better type safety.
  */
+/**
+ * Inside the factories we know `provider` and `model` are populated —
+ * `getModel` narrows once at the boundary so factory bodies don't need
+ * `config.model!` non-null assertions sprinkled everywhere. The schema
+ * leaves both fields optional so first-run users without configured
+ * credentials can still load a config without a hardcoded fallback model.
+ */
+type ResolvedModelConfig = ModelConfig & {
+  provider: Provider;
+  model: string;
+};
+
 const providerFactories: Record<
   Provider,
-  (config: ModelConfig) => LanguageModel
+  (config: ResolvedModelConfig) => LanguageModel
 > = {
   openai: (config) => {
     const dataDir = resolveDataDir();
@@ -461,11 +473,16 @@ const providerFactories: Record<
  * This is the primary entry point for LLM access across the platform.
  */
 export function getModel(config: ModelConfig): LanguageModel {
-  const factory = providerFactories[config.provider as Provider];
+  if (!config.provider || !config.model) {
+    throw new Error(
+      "No model configured. Add an API key or sign in via OAuth in Settings."
+    );
+  }
+  const factory = providerFactories[config.provider];
   if (!factory) {
     throw new Error(`Unknown provider: ${config.provider}`);
   }
-  return factory(config);
+  return factory(config as ResolvedModelConfig);
 }
 
 /**

@@ -308,6 +308,20 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
     const def = manager.getAgentDef(agentId);
     if (!def) return c.json({ error: "Agent not found" }, 404);
 
+    // Cheap upfront gate before we touch attachments / persist anything.
+    // The Agent build path throws the same message if we let it through,
+    // but a 400 here keeps the SSE channel clean and lets the web's
+    // ChatSetupPanel render the "configure a provider" state synchronously.
+    if (!def.model.provider || !def.model.model) {
+      return c.json(
+        {
+          error:
+            "No model configured. Add an API key or sign in via OAuth in Settings.",
+        },
+        400
+      );
+    }
+
     const effectiveSessionId = sessionId || randomUUID();
 
     // Validate-then-commit: walk the incoming messages once to collect

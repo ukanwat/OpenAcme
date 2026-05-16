@@ -962,6 +962,15 @@ export class AgentManager {
     // Resolve the agent's effective model against the root config
     // before building. Per-agent `model` overrides; absent → root.
     const effectiveModel = this.resolveModel(def);
+    // First-run / unconfigured workforce: schema no longer defaults
+    // provider+model to a stale anthropic/sonnet string. Fail fast with a
+    // user-actionable message instead of letting the AI SDK throw a cryptic
+    // "model is required" deep in the stream path.
+    if (!effectiveModel.provider || !effectiveModel.model) {
+      throw new Error(
+        "No model configured. Add an API key or sign in via OAuth in Settings."
+      );
+    }
     // Look up the agent's model in the bundled registry once at
     // AgentConfig build time. The runtime compressor only sees the
     // resolved contextWindow — it never has to know about the snapshot.
