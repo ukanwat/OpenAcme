@@ -77,38 +77,60 @@ export function useLiveSession(
     );
     es.onopen = () => resolveConnected();
 
-    // Feed `readUIMessageStream` via a manually-controlled
-    // ReadableStream. SSE handlers enqueue chunks; the assembler
-    // pulls and yields UIMessages as they assemble.
+    // One assembler per assistant message. `readUIMessageStream` keeps
+    // a single `state.message` for the lifetime of its input stream and
+    // a `start` chunk only overwrites `state.message.id` — it does NOT
+    // clear `state.message.parts`. Reusing one assembler across turns
+    // therefore bleeds the previous turn's parts into the next turn's
+    // bubble until `messages_appended` lands. Open a fresh assembler on
+    // every `start` (i.e. every new message id) and close it on
+    // `finish`.
     let controller: ReadableStreamDefaultController<unknown> | null = null;
-    const stream = new ReadableStream<unknown>({
-      start(c) {
-        controller = c;
-      },
-    });
-    void (async () => {
+    let currentMessageId: string | null = null;
+
+    const closeCurrent = () => {
       try {
-        for await (const message of readUIMessageStream<OpenAcmeUIMessage>({
-          stream: stream as ReadableStream<never>,
-        })) {
-          // Late-joining subscribers miss the `start` chunk (SSE doesn't
-          // replay on fresh connect), so the assembler emits with an
-          // empty-string id. Drop those — `messages_appended` for the
-          // real id will arrive at the end of the turn.
-          if (!message.id) continue;
-          setMessagesRef.current?.((prev) => upsertById(prev, message));
-        }
+        controller?.close();
       } catch {
-        // Stream closed on session change — expected.
+        /* already closed */
       }
-    })();
+      controller = null;
+      currentMessageId = null;
+    };
+
+    const openAssembler = () => {
+      const stream = new ReadableStream<unknown>({
+        start(c) {
+          controller = c;
+        },
+      });
+      void (async () => {
+        try {
+          for await (const message of readUIMessageStream<OpenAcmeUIMessage>({
+            stream: stream as ReadableStream<never>,
+          })) {
+            if (!message.id) continue;
+            // structuredClone is performed inside readUIMessageStream
+            // per emit, so each yielded `message` is a fresh snapshot —
+            // safe to hand to React state.
+            setMessagesRef.current?.((prev) => upsertById(prev, message));
+          }
+        } catch {
+          /* stream closed — expected on turn boundary / unmount */
+        }
+      })();
+    };
 
     const handlers: Record<string, (e: MessageEvent) => void> = {
       ui_message_part: (e) => {
         try {
           const env = JSON.parse(e.data) as { part?: unknown };
           if (env.part === undefined) return;
-          const part = env.part as { type?: unknown; data?: unknown };
+          const part = env.part as {
+            type?: unknown;
+            data?: unknown;
+            messageId?: unknown;
+          };
           if (
             typeof part.type === "string" &&
             part.type.startsWith("data-") &&
@@ -123,7 +145,29 @@ export function useLiveSession(
               /* surface-only; never break assembly */
             }
           }
+          // Message-boundary control: a `start` chunk opens a fresh
+          // assembler so the new bubble doesn't inherit the prior
+          // turn's parts; a `finish` chunk closes the current one so
+          // the iterator drains cleanly.
+          if (part.type === "start") {
+            const newId =
+              typeof part.messageId === "string" ? part.messageId : null;
+            if (!controller || newId !== currentMessageId) {
+              closeCurrent();
+              currentMessageId = newId;
+              openAssembler();
+            }
+          } else if (!controller) {
+            // Late-joining subscriber missed the `start` chunk (SSE
+            // doesn't replay). Open an assembler so the rest of the
+            // stream still assembles; `messages_appended` at the end
+            // of the turn will settle the canonical id.
+            openAssembler();
+          }
           controller?.enqueue(env.part);
+          if (part.type === "finish") {
+            closeCurrent();
+          }
         } catch {
           /* ignore */
         }
@@ -202,11 +246,7 @@ export function useLiveSession(
         es.removeEventListener(name, fn);
       }
       es.close();
-      try {
-        controller?.close();
-      } catch {
-        /* already closed */
-      }
+      closeCurrent();
     };
   }, [sessionId]);
 
