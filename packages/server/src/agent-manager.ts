@@ -887,6 +887,17 @@ export class AgentManager {
     this.agents.delete(id);
   }
 
+  /** Drop every cached `Agent`. Use after skill-registry mutations (install,
+   *  uninstall, import, hub update) — those affect `skillsIndex` for every
+   *  agent (especially ones with `skills: []` meaning "see all"), and the
+   *  index is baked into `AgentConfig` + the cached system prompt at
+   *  construction time. Without this, agents keep referencing a stale
+   *  skills list and never see newly-installed skills until restart.
+   */
+  evictAllAgents(): void {
+    this.agents.clear();
+  }
+
   /** For events emitted by TaskStore before the new sessionId column
    *  was always populated, derive the session from the task's current
    *  binding so SSE fan-out still routes correctly. New emits in the
@@ -929,6 +940,7 @@ export class AgentManager {
     const deps = await this.installTemplateDependencies(template);
     manifest.workforce.skills = deps.skills;
     manifest.workforce.mcpServers = deps.mcpServers;
+    const skillsRegistryMutated = deps.skills.some((s) => s.action === "installed");
 
     // Stage 2 — materialize the agent folder
     const existingIds = new Set(this.agentStore.list().map((d) => d.id));
@@ -947,7 +959,14 @@ export class AgentManager {
     manifest.agent.resourceFiles = this.copyTemplateResources(template, def.id);
     manifest.agent.id = def.id;
     // Resources changed after createAgent ran; rebuild prompt on next chat.
-    this.evictAgent(def.id);
+    // If we installed new skills, every cached agent has a stale skillsIndex
+    // (agents with `skills: []` see all of the registry) — evict them all
+    // so the next chat across the workforce rebuilds with the new entries.
+    if (skillsRegistryMutated) {
+      this.evictAllAgents();
+    } else {
+      this.evictAgent(def.id);
+    }
 
     return { agent: def, manifest };
   }

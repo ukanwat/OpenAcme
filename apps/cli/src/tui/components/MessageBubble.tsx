@@ -1,4 +1,5 @@
 import { Box, Text } from "ink";
+import React from "react";
 import type { UIMessage } from "@openacme/agent-core";
 import { ToolBlock } from "./ToolBlock.js";
 import { renderMarkdown } from "../markdown.js";
@@ -71,12 +72,41 @@ function PartView({ part, finalized }: { part: Part; finalized: boolean }) {
   return null;
 }
 
+function renderUserTextWithSkills(
+  text: string,
+  known: Set<string>
+): React.ReactNode[] {
+  const re = /(^|[\s(\[{])\/([a-zA-Z][\w-]*)\b/g;
+  const out: React.ReactNode[] = [];
+  let last = 0;
+  let key = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const name = m[2];
+    if (!name || !known.has(name)) continue;
+    const tokenStart = m.index + (m[1] ? m[1].length : 0);
+    if (tokenStart > last) {
+      out.push(<Text key={`p-${key++}`}>{text.slice(last, tokenStart)}</Text>);
+    }
+    out.push(
+      <Text key={`s-${key++}`} bold>{`/${name}`}</Text>
+    );
+    last = tokenStart + name.length + 1;
+  }
+  if (last < text.length) {
+    out.push(<Text key={`p-${key++}`}>{text.slice(last)}</Text>);
+  }
+  return out;
+}
+
 export function MessageBubble({
   message,
   live = false,
+  skillNames = [],
 }: {
   message: UIMessage;
   live?: boolean;
+  skillNames?: string[];
 }) {
   if (message.role === "user") {
     const text = message.parts
@@ -86,6 +116,19 @@ export function MessageBubble({
       )
       .map((p) => (p as { text: string }).text)
       .join("\n");
+    // `/skill-name` expansions prepend one or more `[Skill: <name>] ... ---`
+    // blocks. Strip them from the rendered bubble — the model still gets
+    // the full text — and render any `/skill-name` tokens in the remainder
+    // as bold inline references.
+    let displayText = text;
+    while (true) {
+      const sm = displayText.match(
+        /^\[Skill: ([^\]]+)\]\n\n([\s\S]*?)\n\n---\n\n([\s\S]*)$/
+      );
+      if (!sm) break;
+      displayText = sm[3] ?? "";
+    }
+    const knownSkills = new Set(skillNames);
     const files = message.parts.filter(
       (p): p is Extract<Part, { type: "file" }> =>
         (p as { type?: unknown }).type === "file"
@@ -97,9 +140,9 @@ export function MessageBubble({
             {RIGHT_ARROW} you
           </Text>
         </Box>
-        {text && (
+        {displayText && (
           <Box marginLeft={2}>
-            <Text>{text}</Text>
+            <Text>{renderUserTextWithSkills(displayText, knownSkills)}</Text>
           </Box>
         )}
         {files.length > 0 && (

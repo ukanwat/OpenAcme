@@ -18,11 +18,13 @@ export function MessageList({
   modelLabel,
   committed,
   inflight,
+  skillNames = [],
 }: {
   agentName: string;
   modelLabel: string;
   committed: UIMessage[];
   inflight: UIMessage | null;
+  skillNames?: string[];
 }) {
   // Hide the synthesized "system-event" user prompts that runAutonomous
   // prepends to each autonomous turn. They're scaffolding visible to
@@ -49,11 +51,17 @@ export function MessageList({
               modelLabel={item.modelLabel}
             />
           ) : (
-            <MessageBubble key={`${item.msg.id}-${index}`} message={item.msg} />
+            <MessageBubble
+              key={`${item.msg.id}-${index}`}
+              message={item.msg}
+              skillNames={skillNames}
+            />
           )
         }
       </Static>
-      {inflight && <MessageBubble message={inflight} live />}
+      {inflight && (
+        <MessageBubble message={inflight} live skillNames={skillNames} />
+      )}
     </Box>
   );
 }

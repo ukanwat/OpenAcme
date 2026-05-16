@@ -101,13 +101,16 @@ function KnownToolBlock({
       }),
     [toolName, part.input, part.output, part.errorText]
   );
-  const taskHref = useMemo(
-    () =>
-      SINGLE_TASK_TOOLS.has(toolName)
-        ? resolveTaskHref(toolName, part.input, part.output)
-        : null,
-    [toolName, part.input, part.output]
-  );
+  const openHref = useMemo(() => {
+    if (SINGLE_TASK_TOOLS.has(toolName)) {
+      return resolveTaskHref(toolName, part.input, part.output);
+    }
+    if (toolName === "skill_view" && isObj(part.input)) {
+      const n = str((part.input as Record<string, unknown>).name);
+      return n ? `/skills?name=${encodeURIComponent(n)}` : null;
+    }
+    return null;
+  }, [toolName, part.input, part.output]);
 
   return (
     <div className="border border-paper-rule section-enter">
@@ -115,7 +118,7 @@ function KnownToolBlock({
         toolName={toolName}
         status={status}
         summary={summary}
-        taskHref={taskHref}
+        taskHref={openHref}
       />
       {body && <div className="border-t border-paper-rule">{body}</div>}
     </div>
