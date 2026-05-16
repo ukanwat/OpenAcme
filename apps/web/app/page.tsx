@@ -1452,9 +1452,9 @@ function ChatAgentReadyState({ agent }: { agent: Agent }) {
       >
         {agent.name}
       </SectionEyebrow>
-      {agent.persona && (
+      {agent.role && (
         <p className="mt-5 max-w-prose text-[14px] leading-relaxed text-ink-soft">
-          {agent.persona}
+          {agent.role}
         </p>
       )}
       <div className="mt-8">
