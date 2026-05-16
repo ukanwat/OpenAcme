@@ -65,7 +65,7 @@ export function hasMemoryWritesIn(
   return false;
 }
 
-// Manifest pre-injected so the fork doesn't burn a turn on `view /memories`.
+// Manifest pre-injected so the fork doesn't burn a turn on `view ""`.
 function buildExtractionPrompt(
   newMessageCount: number,
   existingManifest: string
@@ -118,7 +118,7 @@ export async function runExtractor(
     const headers = await scanMemoryFiles(memoryDir, args.abortSignal);
     manifest = formatMemoryManifest(headers);
   } catch {
-    // Scan failure: fork can `view /memories` itself if needed.
+    // Scan failure: fork can `view ""` itself if needed.
   }
 
   const prompt = buildExtractionPrompt(args.newMessageCount, manifest);

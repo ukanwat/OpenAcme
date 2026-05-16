@@ -1139,7 +1139,7 @@ export class Agent {
       try {
         const body = fs.readFileSync(r.path, "utf-8");
         const rel = path.relative(memoryDir, r.path);
-        const content = truncateForSurfacing(body, `/memories/${rel}`);
+        const content = truncateForSurfacing(body, rel);
         entries.push({ path: r.path, mtimeMs: r.mtimeMs, content });
       } catch {
         // File vanished between scan and read.
@@ -1152,7 +1152,7 @@ export class Agent {
 
     const blocks = entries.map((e) => {
       const rel = path.relative(memoryDir, e.path);
-      const logicalPath = `/memories/${rel}`;
+      const logicalPath = rel;
       const staleness = memoryFreshnessText(e.mtimeMs);
       const header = staleness
         ? `${staleness}\n\nMemory: ${logicalPath}:`

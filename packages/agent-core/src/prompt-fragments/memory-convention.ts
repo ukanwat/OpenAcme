@@ -6,7 +6,7 @@
 
 export const MEMORY_CONVENTION = `## Memory convention
 
-You have a persistent, file-based memory system at \`/memories/\`. This directory holds a \`MEMORY.md\` index plus per-topic entry files. You should build up this system over time so that future conversations can have a complete picture of who you are working with (the user AND your peer agents), how the work should be done, what behaviors to avoid or repeat, and the context behind ongoing initiatives.
+You have a persistent, file-based memory system accessed through the \`memory\` tool. It holds a \`MEMORY.md\` index plus per-topic entry files. Paths are **bare relative names** — \`MEMORY.md\`, \`notes.md\`, \`peers/coder.md\` — matching the link targets shown in your index. No leading slash, no \`/memories/\` prefix. You should build up this system over time so that future conversations can have a complete picture of who you are working with (the user AND your peer agents), how the work should be done, what behaviors to avoid or repeat, and the context behind ongoing initiatives.
 
 If the work-item explicitly asks you to remember something, save it immediately. If it asks you to forget something, find and remove the relevant entry.
 

@@ -102,7 +102,7 @@ describe("agent_list", () => {
     const res = await runList({}, "alice");
     const bob = res.agents.find((a) => a.id === "bob");
     expect(bob?.peer_note?.truncated).toBe(true);
-    expect(bob?.peer_note?.content).toContain("/memories/peers/bob.md");
+    expect(bob?.peer_note?.content).toContain("peers/bob.md");
     // content is bounded; the suffix adds a small hint but the original
     // 3000-byte payload should be cut down.
     expect(bob!.peer_note!.content.length).toBeLessThan(huge.length);

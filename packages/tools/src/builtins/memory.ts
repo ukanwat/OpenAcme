@@ -30,8 +30,9 @@ export function bindMemory(b: MemoryBindings): void {
  * a tool round-trip and a "I'll check my memory" preface to every first turn.
  */
 const TOOL_DESCRIPTION = [
-  "Read and write entries in your persistent /memories/ directory.",
-  "Your MEMORY.md index is already in your system prompt; use `view` on a specific entry file when it looks relevant to the work, when the user references prior conversations, or when you're explicitly asked to recall.",
+  "Read and write entries in your persistent memory.",
+  "Paths are bare relative names: `MEMORY.md`, `notes.md`, `peers/coder.md`. They match the link targets shown in your MEMORY.md index verbatim. No leading slash. No `/memories/` prefix.",
+  "Your MEMORY.md index is already in your system prompt; call `view` on a specific entry file when it looks relevant to the work, when the user references prior conversations, or when you're explicitly asked to recall. Pass an empty path to view to list everything.",
   "Use `create` / `str_replace` / `insert` / `delete` / `rename` to maintain memory entries — see the memory convention in your system prompt for the file shape and what NOT to save.",
 ].join("\n");
 
@@ -60,7 +61,7 @@ const MemoryParams = z
       .string()
       .optional()
       .describe(
-        "Path under /memories. Required for view/create/str_replace/insert/delete."
+        "Bare relative path: `MEMORY.md`, `notes.md`, `peers/coder.md`. No leading slash. Required for view/create/str_replace/insert/delete. Empty string on `view` lists the memory dir."
       ),
     view_range: z
       .array(z.number().int())
@@ -95,11 +96,11 @@ const MemoryParams = z
     old_path: z
       .string()
       .optional()
-      .describe("rename: existing path under /memories"),
+      .describe("rename: existing bare relative path"),
     new_path: z
       .string()
       .optional()
-      .describe("rename: new path under /memories (must not exist)"),
+      .describe("rename: new bare relative path (must not exist)"),
   })
   .superRefine((v, ctx) => {
     const need = (field: string) => {

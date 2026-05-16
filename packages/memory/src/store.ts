@@ -9,10 +9,13 @@
  *     <topic>.md           ← agent-created entry files (read on demand)
  *     <subdir>/<topic>.md  ← agent-organized; we don't enforce layout
  *
- * Tool calls reference paths in the agent's virtual view: `/memories/...`.
- * The store translates to filesystem paths internally and rejects anything
- * that escapes the per-agent root (path-traversal protection per Anthropic
- * security note).
+ * Tool calls reference paths as **bare relative names** keyed off the
+ * agent's memory dir: `MEMORY.md`, `notes.md`, `peers/coder.md`. These
+ * match the link targets shown in `MEMORY.md` verbatim so the agent never
+ * has to translate between what it reads in the index and what it passes
+ * to the tool. The store rejects leading slashes (which read as absolute
+ * paths and trip the agent into using shell tools) and any `..` traversal
+ * that escapes the per-agent root.
  *
  * Concurrency: per-agent in-process async mutex serializes
  * read-modify-write. Cross-process safety is NOT provided — atomic rename
@@ -45,7 +48,6 @@ import { memoryFreshnessNote } from "./freshness.js";
 
 // ── Constants ──────────────────────────────────────────────────────────
 
-const MEMORIES_ROOT = "/memories";
 const MEMORY_DIR = "memory";
 const INDEX_FILE = "MEMORY.md";
 const TMP_PREFIX = ".mem_";
@@ -155,25 +157,38 @@ export class MemoryStore {
   }
 
   /**
-   * Translate a virtual `/memories/...` path (as the agent sees it) to
-   * an absolute filesystem path under `<agentsDir>/<agentId>/memory/`.
-   * Rejects:
-   *   - Paths not starting with `/memories`
-   *   - URL-encoded traversal sequences (`%2e%2e%2f`, etc.)
-   *   - Resolved paths that escape the per-agent root
+   * Translate a tool-supplied path to an absolute filesystem path under
+   * `<agentsDir>/<agentId>/memory/`. Paths are **bare relative names**
+   * keyed off the agent's memory dir: `MEMORY.md`, `notes.md`,
+   * `peers/coder.md`. They match the link targets shown in `MEMORY.md`
+   * verbatim, so the agent never has to translate between what it reads
+   * in the index and what it passes to the tool.
    *
-   * Returns the absolute path on success, or an error string in the
-   * same wording Anthropic uses for "path does not exist" so the model
-   * sees a familiar shape.
+   * Rejects:
+   *   - Non-string inputs
+   *   - Leading slash (looks like an absolute filesystem path; the model
+   *     reaches for shell tools and gets confused)
+   *   - URL-encoded traversal sequences (`%2e%2e%2f`, etc.)
+   *   - Resolved paths that escape the per-agent root (defense in depth
+   *     against `..`)
+   *
+   * The empty-string case is special: `""` means "the memory dir root",
+   * used by `view` to list entries. All other ops require a non-empty path.
    */
   private translatePath(
     agentId: string,
     virtualPath: string
   ): { ok: true; abs: string } | { ok: false; error: string } {
-    if (typeof virtualPath !== "string" || virtualPath.length === 0) {
+    if (typeof virtualPath !== "string") {
       return {
         ok: false,
-        error: `The path ${virtualPath} does not exist. Please provide a valid path.`,
+        error: `Invalid path. Pass a bare relative name like 'MEMORY.md' or 'peers/coder.md'.`,
+      };
+    }
+    if (virtualPath.startsWith("/")) {
+      return {
+        ok: false,
+        error: `Memory paths are relative to the memory dir — drop the leading '/'. Pass '${virtualPath.replace(/^\/+(memories\/)?/, "")}' instead.`,
       };
     }
     // Reject URL-encoded traversal before any normalization
@@ -181,43 +196,25 @@ export class MemoryStore {
     if (lowered.includes("%2e") || lowered.includes("%2f") || lowered.includes("%5c")) {
       return {
         ok: false,
-        error: `The path ${virtualPath} does not exist. Please provide a valid path.`,
-      };
-    }
-    if (!virtualPath.startsWith(MEMORIES_ROOT)) {
-      return {
-        ok: false,
-        error: `The path ${virtualPath} does not exist. Please provide a valid path.`,
-      };
-    }
-    // Strip /memories prefix; remainder may be "" (root), "/foo", "/foo/bar.md"
-    const remainder = virtualPath.slice(MEMORIES_ROOT.length);
-    if (remainder.length > 0 && !remainder.startsWith("/")) {
-      // e.g. /memoriesfoo — not actually under /memories
-      return {
-        ok: false,
-        error: `The path ${virtualPath} does not exist. Please provide a valid path.`,
+        error: `Invalid path '${virtualPath}'.`,
       };
     }
     const root = this.dirPath(agentId);
-    const abs = path.resolve(root, "." + remainder);
+    const abs = path.resolve(root, virtualPath);
     // Defense in depth: ensure the resolved path is still under root.
     const rel = path.relative(root, abs);
     if (rel.startsWith("..") || path.isAbsolute(rel)) {
       return {
         ok: false,
-        error: `The path ${virtualPath} does not exist. Please provide a valid path.`,
+        error: `Path '${virtualPath}' escapes the memory dir.`,
       };
     }
     return { ok: true, abs };
   }
 
-  /** True if the virtual path points at the index file specifically. */
+  /** True if the path points at the index file specifically. */
   private isIndexPath(virtualPath: string): boolean {
-    return (
-      virtualPath === `${MEMORIES_ROOT}/${INDEX_FILE}` ||
-      virtualPath === `${MEMORIES_ROOT}/${INDEX_FILE}/`
-    );
+    return virtualPath === INDEX_FILE || virtualPath === `${INDEX_FILE}/`;
   }
 
   // ── Index accessor (for prompt builder) ──────────────────────────────
@@ -276,12 +273,10 @@ export class MemoryStore {
     if (!t.ok) return t.error;
     const abs = t.abs;
 
-    // Special case: viewing the root `/memories` of an agent that hasn't
-    // touched memory yet. Return the empty-listing form rather than
-    // "does not exist" — matches Anthropic's example (the header is
-    // emitted even for empty memory dirs) and matches the agent's
-    // mental model that the dir always exists.
-    const isRoot = virtualPath === MEMORIES_ROOT || virtualPath === `${MEMORIES_ROOT}/`;
+    // Special case: viewing the root (empty string or `.`) of an agent
+    // that hasn't touched memory yet. Return the empty-listing form
+    // rather than "does not exist" so the dir always reads as existing.
+    const isRoot = virtualPath === "" || virtualPath === "." || virtualPath === "./";
 
     let stat: fs.Stats;
     try {
@@ -352,8 +347,14 @@ export class MemoryStore {
     virtualPath: string,
     absRoot: string
   ): string {
+    // Strip trailing slash for display + child-key composition. Empty
+    // string (the dir root) renders as "(memory)" so the listing header
+    // doesn't read awkwardly.
+    const trimmed = virtualPath.replace(/\/$/, "");
+    const displayRoot = trimmed === "" ? "(memory)" : trimmed;
+
     const lines: string[] = [
-      `Here're the files and directories up to 2 levels deep in ${virtualPath}, excluding hidden items:`,
+      `Here're the files and directories up to 2 levels deep in ${displayRoot}, excluding hidden items:`,
     ];
 
     // Root entry — total size of contents at depth ≤ 2.
@@ -373,7 +374,7 @@ export class MemoryStore {
       for (const d of dirents) {
         if (d.name.startsWith(".")) continue;
         const childAbs = path.join(currentAbs, d.name);
-        const childVirtual = `${currentVirtual}/${d.name}`;
+        const childVirtual = currentVirtual === "" ? d.name : `${currentVirtual}/${d.name}`;
         if (d.isDirectory()) {
           out.push({ virtual: childVirtual, bytes: 0 });
           collect(childAbs, childVirtual, depth + 1);
@@ -391,13 +392,12 @@ export class MemoryStore {
     };
 
     // Ensure the dir exists; if not, fabricate an empty listing rather
-    // than erroring (Anthropic's example shows the root header even when
-    // there are no children — empty memory dir is normal).
+    // than erroring — empty memory dir is normal for fresh agents.
     if (fs.existsSync(absRoot)) {
-      collect(absRoot, virtualPath.replace(/\/$/, ""), 1);
+      collect(absRoot, trimmed, 1);
     }
 
-    lines.push(`${formatBytes(rootBytes)}\t${virtualPath.replace(/\/$/, "")}`);
+    lines.push(`${formatBytes(rootBytes)}\t${displayRoot}`);
     for (const e of out) {
       lines.push(`${formatBytes(e.bytes)}\t${e.virtual}`);
     }

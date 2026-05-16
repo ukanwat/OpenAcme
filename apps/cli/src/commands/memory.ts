@@ -99,11 +99,9 @@ export async function memoryShowEntryCommand(
   }
   const memory = new MemoryStore(agentsDir);
   // Use store.view so we get the freshness wrapper for old entries.
-  // Normalize the entry name to a /memories/ path.
-  const virtualPath = entryName.startsWith("/memories/")
-    ? entryName
-    : `/memories/${entryName.replace(/^\//, "")}`;
-  const out = memory.view(agentId, virtualPath);
+  // Strip any leading slash the user typed; the store wants bare relative paths.
+  const relPath = entryName.replace(/^\/+(memories\/)?/, "");
+  const out = memory.view(agentId, relPath);
   p.note(out, `Memory entry — ${agentId}: ${entryName}`);
 }
 
@@ -153,6 +151,6 @@ export async function memoryLsCommand(
     return;
   }
   const memory = new MemoryStore(agentsDir);
-  const out = memory.view(agentId, "/memories");
+  const out = memory.view(agentId, "");
   p.note(out, `Memory ls — ${agentId}`);
 }

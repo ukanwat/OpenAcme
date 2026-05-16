@@ -57,7 +57,7 @@ function truncateNote(
     content:
       head +
       `\n\n> Peer note truncated. Use the \`memory\` tool's \`view\` ` +
-      `command to read the full file at \`/memories/peers/${peerId}.md\`.`,
+      `command to read the full file at \`peers/${peerId}.md\`.`,
     truncated: true,
   };
 }
@@ -76,7 +76,7 @@ const TOOL_DESCRIPTION =
   "carries the peer's stable `id`, their display `name`, and their " +
   "`role` (a paragraph the peer's creator wrote describing what they " +
   "do, what they own, and where they redirect work). If you have a " +
-  "peer note saved at `/memories/peers/<id>.md`, its body is returned " +
+  "peer note saved at `peers/<id>.md`, its body is returned " +
   "inline as `peer_note` — that's your lived experience with this " +
   "coworker (from prior delegations), distinct from the canonical role. " +
   "Use this tool when you're about to delegate a task and aren't sure " +
