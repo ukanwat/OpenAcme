@@ -35,7 +35,8 @@ export const sessions = sqliteTable(
       .default(sql`(unixepoch())`),
     updatedAt: integer("updated_at")
       .notNull()
-      .default(sql`(unixepoch())`),
+      .default(sql`(unixepoch())`)
+      .$onUpdate(() => sql`(unixepoch())`),
     // One-shot "skip routine spawns until this time" set by the agent
     // via `defer_session(duration)`. Cleared when the dispatcher next
     // spawns the session (defer is one-shot, not sticky). New inbox

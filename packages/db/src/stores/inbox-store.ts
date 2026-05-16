@@ -1,6 +1,6 @@
 import type Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, count, eq, inArray } from "drizzle-orm";
 import { agentInbox, type AgentInboxRow } from "../schema.js";
 
 import type { InboxKind, InboxSource } from "@openacme/tasks";
@@ -141,11 +141,11 @@ export function createInboxStore(db: Database.Database) {
      *  load N rows just to take their length. */
     countFor(agentId: string): number {
       const row = orm
-        .select({ count: sql<number>`count(*)` })
+        .select({ count: count() })
         .from(agentInbox)
         .where(eq(agentInbox.agentId, agentId))
         .get();
-      return Number(row?.count ?? 0);
+      return row?.count ?? 0;
     },
 
     /** Bulk count across agents — for dispatcher tick efficiency.
@@ -155,14 +155,14 @@ export function createInboxStore(db: Database.Database) {
       const rows = orm
         .select({
           agentId: agentInbox.agentId,
-          count: sql<number>`count(*)`,
+          count: count(),
         })
         .from(agentInbox)
         .where(inArray(agentInbox.agentId, agentIds))
         .groupBy(agentInbox.agentId)
         .all();
       const counts = new Map<string, number>();
-      for (const r of rows) counts.set(r.agentId, Number(r.count));
+      for (const r of rows) counts.set(r.agentId, r.count);
       return counts;
     },
   };

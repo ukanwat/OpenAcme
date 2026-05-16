@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, notExists, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/sqlite-core";
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -101,13 +102,19 @@ export function createSessionStore(
      * themselves remain visible — they ARE the live session.
      */
     listActive(agentId: string): Session[] {
+      const child = alias(sessions, "c");
       return orm
         .select()
         .from(sessions)
         .where(
           and(
             eq(sessions.agentId, agentId),
-            sql`NOT EXISTS (SELECT 1 FROM ${sessions} c WHERE c.parent_session_id = ${sessions.id})`
+            notExists(
+              orm
+                .select({ one: sql`1` })
+                .from(child)
+                .where(eq(child.parentSessionId, sessions.id))
+            )
           )
         )
         .orderBy(desc(sessions.updatedAt))
@@ -121,11 +128,17 @@ export function createSessionStore(
      * regardless of which agent owns it.
      */
     listAllActive(): Session[] {
+      const child = alias(sessions, "c");
       return orm
         .select()
         .from(sessions)
         .where(
-          sql`NOT EXISTS (SELECT 1 FROM ${sessions} c WHERE c.parent_session_id = ${sessions.id})`
+          notExists(
+            orm
+              .select({ one: sql`1` })
+              .from(child)
+              .where(eq(child.parentSessionId, sessions.id))
+          )
         )
         .orderBy(desc(sessions.updatedAt))
         .all();
@@ -172,7 +185,7 @@ export function createSessionStore(
     updateTitle(id: string, title: string): void {
       orm
         .update(sessions)
-        .set({ title, updatedAt: sql`(unixepoch())` })
+        .set({ title })
         .where(eq(sessions.id, id))
         .run();
     },
@@ -180,7 +193,7 @@ export function createSessionStore(
     updateSystemPrompt(id: string, systemPrompt: string): void {
       orm
         .update(sessions)
-        .set({ systemPrompt, updatedAt: sql`(unixepoch())` })
+        .set({ systemPrompt })
         .where(eq(sessions.id, id))
         .run();
     },
