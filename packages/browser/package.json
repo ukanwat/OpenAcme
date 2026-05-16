@@ -36,6 +36,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "camoufox-js": "^0.10.2",
     "playwright-core": "^1.50.0"
   },
   "devDependencies": {

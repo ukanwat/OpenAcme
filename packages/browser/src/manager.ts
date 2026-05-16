@@ -43,8 +43,10 @@ const MAX_CONSOLE_PER_PAGE = 200;
 
 interface PerAgentTabs {
   next: number;
-  byTargetId: Map<string, TabId>;
-  byTabId: Map<TabId, string>;
+  /** Stable map from agent-visible tab id (t1, t2, …) to live Page. */
+  byTabId: Map<TabId, Page>;
+  /** Reverse — lets us resolve a page we already see to its existing alias. */
+  byPage: Map<Page, TabId>;
 }
 
 interface PageState {
@@ -54,9 +56,14 @@ interface PageState {
 
 interface AgentBrowserInstance {
   acquired: AcquiredBrowser;
-  browser: Browser;
+  /** CDP-attached browser. Null when the provider supplied a pre-built
+   *  BrowserContext (Camoufox path). */
+  browser: Browser | null;
+  /** The agent's working BrowserContext — either contexts[0] of `browser`
+   *  or the context the provider handed us. */
+  context: BrowserContext;
   agentTabs: PerAgentTabs;
-  activeTargetId: string | null;
+  activeTabId: TabId | null;
   pageState: WeakMap<Page, PageState>;
 }
 
@@ -88,7 +95,7 @@ export class BrowserManager {
   private async getInstance(agentId: string): Promise<AgentBrowserInstance> {
     if (!agentId) throw new Error("BrowserManager calls require an agentId");
     const existing = this.instances.get(agentId);
-    if (existing && existing.browser.isConnected()) return existing;
+    if (existing && this.isInstanceAlive(existing)) return existing;
     if (existing) {
       this.instances.delete(agentId);
       try {
@@ -104,20 +111,37 @@ export class BrowserManager {
     return p;
   }
 
+  private isInstanceAlive(inst: AgentBrowserInstance): boolean {
+    // CDP path: rely on the underlying Browser's connection state.
+    // Pre-built context path: by construction, the provider/manager's
+    // close listener already drops the entry.
+    if (inst.browser) return inst.browser.isConnected();
+    return true;
+  }
+
   private async connectFor(agentId: string): Promise<AgentBrowserInstance> {
     const acquired = await this.provider.acquire(agentId);
-    let browser;
+    let browser: Browser | null = null;
+    let context: BrowserContext;
     try {
-      browser = await connectOverCdp({
-        wsUrl: acquired.cdpUrl,
-        onDisconnected: (b) => {
-          const inst = this.instances.get(agentId);
-          if (inst && inst.browser === b) this.instances.delete(agentId);
-        },
-      });
+      if (acquired.preBuiltContext) {
+        context = acquired.preBuiltContext;
+      } else if (acquired.cdpUrl) {
+        browser = await connectOverCdp({
+          wsUrl: acquired.cdpUrl,
+          onDisconnected: (b) => {
+            const inst = this.instances.get(agentId);
+            if (inst && inst.browser === b) this.instances.delete(agentId);
+          },
+        });
+        const ctxs = browser.contexts();
+        if (ctxs.length === 0) throw new Error("CDP browser has no contexts");
+        context = ctxs[0]!;
+      } else {
+        throw new Error("Provider returned neither cdpUrl nor preBuiltContext");
+      }
     } catch (e) {
-      // Avoid leaking the upstream session (Chrome process, cloud billing
-      // window) when the initial CDP attach fails.
+      // Avoid leaking the upstream session when the initial attach fails.
       try {
         await acquired.release();
       } catch {
@@ -128,21 +152,25 @@ export class BrowserManager {
     const instance: AgentBrowserInstance = {
       acquired,
       browser,
-      agentTabs: { next: 1, byTargetId: new Map(), byTabId: new Map() },
-      activeTargetId: null,
+      context,
+      agentTabs: { next: 1, byTabId: new Map(), byPage: new Map() },
+      activeTabId: null,
       pageState: new WeakMap(),
     };
+    // For pre-built contexts, mirror what the CDP `disconnected` listener
+    // does — drop the cache when the context closes.
+    if (!browser) {
+      context.once("close", () => {
+        if (this.instances.get(agentId) === instance) this.instances.delete(agentId);
+      });
+    }
     this.instances.set(agentId, instance);
     return instance;
   }
 
   private async contextFor(agentId: string): Promise<{ inst: AgentBrowserInstance; ctx: BrowserContext }> {
     const inst = await this.getInstance(agentId);
-    const contexts = inst.browser.contexts();
-    if (contexts.length === 0) {
-      throw new Error("No BrowserContext available on this agent's Chrome.");
-    }
-    return { inst, ctx: contexts[0]! };
+    return { inst, ctx: inst.context };
   }
 
   /** Release one agent's browser session. Idempotent. */
@@ -151,7 +179,9 @@ export class BrowserManager {
     if (inst) {
       this.instances.delete(agentId);
       try {
-        await inst.browser.close();
+        if (inst.browser) await inst.browser.close();
+        // Pre-built context lifetime is owned by the provider; releaseAgent
+        // below closes it.
       } catch {
         // best-effort
       }
@@ -201,87 +231,76 @@ export class BrowserManager {
 
   // ───────────────────────── tab tracking ─────────────────────────
 
-  private assignTabAlias(inst: AgentBrowserInstance, targetId: string): TabId {
-    const existing = inst.agentTabs.byTargetId.get(targetId);
-    if (existing) return existing;
-    const id: TabId = `t${inst.agentTabs.next}`;
-    inst.agentTabs.next += 1;
-    inst.agentTabs.byTargetId.set(targetId, id);
-    inst.agentTabs.byTabId.set(id, targetId);
-    return id;
-  }
-
-  private trackPage(inst: AgentBrowserInstance, page: Page, targetId: string): TabId {
+  /**
+   * Tab identity is the Page object itself — stable for the page's
+   * lifetime in Playwright. Avoids CDP-specific calls (`newCDPSession`)
+   * so Firefox-based backends (Camoufox) work the same as Chromium.
+   */
+  private trackPage(inst: AgentBrowserInstance, page: Page): TabId {
+    const existing = inst.agentTabs.byPage.get(page);
+    if (existing) {
+      this.observePage(inst, page);
+      inst.activeTabId = existing;
+      return existing;
+    }
     this.observePage(inst, page);
-    const tabId = this.assignTabAlias(inst, targetId);
-    inst.activeTargetId = targetId;
+    const tabId: TabId = `t${inst.agentTabs.next}`;
+    inst.agentTabs.next += 1;
+    inst.agentTabs.byTabId.set(tabId, page);
+    inst.agentTabs.byPage.set(page, tabId);
+    inst.activeTabId = tabId;
     page.once("close", () => {
-      inst.agentTabs.byTargetId.delete(targetId);
       inst.agentTabs.byTabId.delete(tabId);
-      if (inst.activeTargetId === targetId) inst.activeTargetId = null;
+      inst.agentTabs.byPage.delete(page);
+      if (inst.activeTabId === tabId) inst.activeTabId = null;
     });
     return tabId;
-  }
-
-  private async targetIdOf(page: Page): Promise<string> {
-    const session = await page.context().newCDPSession(page);
-    try {
-      const info = (await session.send("Target.getTargetInfo")) as {
-        targetInfo?: { targetId?: string };
-      };
-      const id = info.targetInfo?.targetId;
-      if (!id) throw new Error("Target.getTargetInfo returned no targetId");
-      return id;
-    } finally {
-      await session.detach().catch(() => {});
-    }
-  }
-
-  private async findPageByTargetId(ctx: BrowserContext, targetId: string): Promise<Page | null> {
-    for (const p of ctx.pages()) {
-      try {
-        const tid = await this.targetIdOf(p);
-        if (tid === targetId) return p;
-      } catch {
-        // page may have closed mid-iteration
-      }
-    }
-    return null;
   }
 
   private async resolvePage(
     agentId: string,
     tabId: TabId | undefined,
     opts: { createIfNone: boolean }
-  ): Promise<{ inst: AgentBrowserInstance; page: Page; tabId: TabId; targetId: string }> {
+  ): Promise<{ inst: AgentBrowserInstance; page: Page; tabId: TabId }> {
     const { inst, ctx } = await this.contextFor(agentId);
-    let targetId: string | null | undefined;
+    let page: Page | null = null;
+    let resolvedTabId: TabId | null = null;
+
     if (tabId) {
-      targetId = inst.agentTabs.byTabId.get(tabId);
-      if (!targetId) throw new Error(`Tab ${tabId} not found for this agent.`);
-    } else {
-      targetId = inst.activeTargetId;
-    }
-
-    if (targetId) {
-      const page = await this.findPageByTargetId(ctx, targetId);
-      if (page) {
-        this.observePage(inst, page);
-        const resolvedTabId = inst.agentTabs.byTargetId.get(targetId)!;
-        return { inst, page, tabId: resolvedTabId, targetId };
+      const candidate = inst.agentTabs.byTabId.get(tabId);
+      if (!candidate) throw new Error(`Tab ${tabId} not found for this agent.`);
+      if (candidate.isClosed()) {
+        inst.agentTabs.byTabId.delete(tabId);
+        inst.agentTabs.byPage.delete(candidate);
+        if (inst.activeTabId === tabId) inst.activeTabId = null;
+        throw new Error(`Tab ${tabId} is no longer open.`);
       }
-      inst.agentTabs.byTargetId.delete(targetId);
-      if (inst.activeTargetId === targetId) inst.activeTargetId = null;
-      targetId = null;
+      page = candidate;
+      resolvedTabId = tabId;
+    } else if (inst.activeTabId) {
+      const candidate = inst.agentTabs.byTabId.get(inst.activeTabId);
+      if (candidate && !candidate.isClosed()) {
+        page = candidate;
+        resolvedTabId = inst.activeTabId;
+      } else {
+        if (candidate) {
+          inst.agentTabs.byTabId.delete(inst.activeTabId);
+          inst.agentTabs.byPage.delete(candidate);
+        }
+        inst.activeTabId = null;
+      }
     }
 
-    if (!opts.createIfNone) {
-      throw new Error("No tabs open for this agent. Call browser_navigate first to open one.");
+    if (!page) {
+      if (!opts.createIfNone) {
+        throw new Error("No tabs open for this agent. Call browser_navigate first to open one.");
+      }
+      page = await ctx.newPage();
+      resolvedTabId = this.trackPage(inst, page);
     }
-    const page = await ctx.newPage();
-    const newTargetId = await this.targetIdOf(page);
-    const newTabId = this.trackPage(inst, page, newTargetId);
-    return { inst, page, tabId: newTabId, targetId: newTargetId };
+
+    this.observePage(inst, page);
+    return { inst, page, tabId: resolvedTabId! };
   }
 
   /**
@@ -293,16 +312,16 @@ export class BrowserManager {
     agentId: string,
     tabId: TabId | undefined,
     opts: { createIfNone: boolean },
-    fn: (page: Page, ids: { tabId: TabId; targetId: string }) => Promise<T>
+    fn: (page: Page, ids: { tabId: TabId }) => Promise<T>
   ): Promise<T> {
     try {
       const r = await this.resolvePage(agentId, tabId, opts);
-      return await fn(r.page, { tabId: r.tabId, targetId: r.targetId });
+      return await fn(r.page, { tabId: r.tabId });
     } catch (e) {
       if (!isRecoverableDisconnect(e)) throw e;
       await this.closeAgent(agentId);
       const r = await this.resolvePage(agentId, tabId, opts);
-      return await fn(r.page, { tabId: r.tabId, targetId: r.targetId });
+      return await fn(r.page, { tabId: r.tabId });
     }
   }
 
@@ -400,22 +419,15 @@ export class BrowserManager {
   // ── tabs ──
 
   async tabsList(agentId: string): Promise<TabInfo[]> {
-    const { inst, ctx } = await this.contextFor(agentId);
+    const { inst } = await this.contextFor(agentId);
     const out: TabInfo[] = [];
-    for (const page of ctx.pages()) {
-      let targetId: string;
-      try {
-        targetId = await this.targetIdOf(page);
-      } catch {
-        continue;
-      }
-      const tabId = inst.agentTabs.byTargetId.get(targetId);
-      if (!tabId) continue;
+    for (const [tabId, page] of inst.agentTabs.byTabId) {
+      if (page.isClosed()) continue;
       out.push({
         tabId,
         url: page.url(),
         title: await page.title().catch(() => ""),
-        active: targetId === inst.activeTargetId,
+        active: tabId === inst.activeTabId,
       });
     }
     out.sort((a, b) => {
@@ -430,8 +442,7 @@ export class BrowserManager {
     const { inst, ctx } = await this.contextFor(agentId);
     const page = await ctx.newPage();
     if (p.url) await page.goto(p.url, { waitUntil: "domcontentloaded" });
-    const targetId = await this.targetIdOf(page);
-    const tabId = this.trackPage(inst, page, targetId);
+    const tabId = this.trackPage(inst, page);
     return {
       tabId,
       url: page.url(),
@@ -441,32 +452,30 @@ export class BrowserManager {
   }
 
   async tabsClose(agentId: string, p: { tabId: TabId }): Promise<void> {
-    const { inst, ctx } = await this.contextFor(agentId);
-    const targetId = inst.agentTabs.byTabId.get(p.tabId);
-    if (!targetId) throw new Error(`Tab ${p.tabId} not found for this agent.`);
-    const page = await this.findPageByTargetId(ctx, targetId);
-    if (page) {
-      // page.close() fires the page.once("close") handler from trackPage,
-      // which drops the alias maps + activeTargetId for us.
+    const { inst } = await this.contextFor(agentId);
+    const page = inst.agentTabs.byTabId.get(p.tabId);
+    if (!page) throw new Error(`Tab ${p.tabId} not found for this agent.`);
+    if (!page.isClosed()) {
+      // page.close() fires the trackPage close handler which drops the maps.
       await page.close();
     } else {
-      inst.agentTabs.byTargetId.delete(targetId);
       inst.agentTabs.byTabId.delete(p.tabId);
-      if (inst.activeTargetId === targetId) inst.activeTargetId = null;
+      inst.agentTabs.byPage.delete(page);
+      if (inst.activeTabId === p.tabId) inst.activeTabId = null;
     }
   }
 
   async tabsSelect(agentId: string, p: { tabId: TabId }): Promise<TabInfo> {
-    const { inst, ctx } = await this.contextFor(agentId);
-    const targetId = inst.agentTabs.byTabId.get(p.tabId);
-    if (!targetId) throw new Error(`Tab ${p.tabId} not found for this agent.`);
-    const page = await this.findPageByTargetId(ctx, targetId);
-    if (!page) {
-      inst.agentTabs.byTargetId.delete(targetId);
+    const { inst } = await this.contextFor(agentId);
+    const page = inst.agentTabs.byTabId.get(p.tabId);
+    if (!page) throw new Error(`Tab ${p.tabId} not found for this agent.`);
+    if (page.isClosed()) {
       inst.agentTabs.byTabId.delete(p.tabId);
+      inst.agentTabs.byPage.delete(page);
+      if (inst.activeTabId === p.tabId) inst.activeTabId = null;
       throw new Error(`Tab ${p.tabId} is no longer open.`);
     }
-    inst.activeTargetId = targetId;
+    inst.activeTabId = p.tabId;
     await page.bringToFront().catch(() => {});
     return {
       tabId: p.tabId,

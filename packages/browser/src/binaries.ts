@@ -1,66 +1,168 @@
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import { chromium } from "playwright-core";
+import type { BrowserContext } from "playwright-core";
 import { findChromeExecutable } from "./chrome.js";
+
+interface CamoufoxJs {
+  launchOptions?: (opts: Record<string, unknown>) => Promise<Record<string, unknown>>;
+  /** Returns the cache dir Camoufox uses on the current platform. */
+  getCacheDir?: () => string;
+}
+
+let cachedCamoufoxMod: CamoufoxJs | null = null;
+async function loadCamoufoxJs(): Promise<CamoufoxJs> {
+  if (cachedCamoufoxMod) return cachedCamoufoxMod;
+  try {
+    cachedCamoufoxMod = (await import("camoufox-js" as string)) as CamoufoxJs;
+    return cachedCamoufoxMod;
+  } catch {
+    throw new Error(
+      "Camoufox not installed. The host environment is missing the `camoufox-js` package."
+    );
+  }
+}
 
 /**
  * The local-browser kind. "chromium" prefers a system Chrome / Brave /
  * Edge / Chromium install; if none is found, falls back to Playwright's
- * bundled Chromium (auto-downloaded on demand). "cloakbrowser" uses the
- * `cloakbrowser` npm package's binary — must be installed separately
- * because we don't ship its ~200MB binary by default.
+ * bundled Chromium (auto-downloaded on demand). "camoufox" uses the
+ * `camoufox-js` package's Firefox-based stealth browser via Playwright's
+ * launchPersistentContext API.
  */
-export type LocalBrowserKind = "chromium" | "cloakbrowser";
+export type LocalBrowserKind = "chromium" | "camoufox";
 
 /**
- * Resolve the local browser binary to spawn. Caller is the
- * LocalChromeProvider; this stays pure (no spawning, no caching beyond
- * filesystem checks) so the provider keeps lifecycle control.
- *
- * `executablePathOverride` always wins so power users can point at any
- * Chromium-family binary regardless of the kind selection.
+ * Resolved Chromium-family binary spawnable directly via launchChrome.
+ * Used for the "chromium" kind and the executablePath override.
  */
+export interface SpawnableBinary {
+  kind: "spawn";
+  exe: string;
+  /** Extra CLI args required by the binary (none for stock Chromium). */
+  extraArgs: string[];
+}
+
+/**
+ * A factory that produces a Playwright-managed BrowserContext. Used for
+ * Camoufox, whose Firefox-based binary doesn't speak CDP at all — we go
+ * through Playwright's firefox.launchPersistentContext path. Bypassing the
+ * manager's CDP attach is also what makes this resilient to the macOS
+ * hardened-runtime traps that block bare-child-process spawns of
+ * adhoc-signed browsers.
+ */
+export interface ContextLaunchable {
+  kind: "context";
+  launch(opts: { userDataDir: string; headless: boolean }): Promise<BrowserContext>;
+}
+
+export type ResolvedLocalBinary = SpawnableBinary | ContextLaunchable;
+
 export async function resolveLocalBinary(opts: {
   kind: LocalBrowserKind;
   executablePathOverride?: string;
   onProgress?: (msg: string) => void;
-}): Promise<string> {
+}): Promise<ResolvedLocalBinary> {
   if (opts.executablePathOverride) {
     if (!fs.existsSync(opts.executablePathOverride)) {
       throw new Error(`browser.executablePath does not exist: ${opts.executablePathOverride}`);
     }
-    return opts.executablePathOverride;
+    return { kind: "spawn", exe: opts.executablePathOverride, extraArgs: [] };
   }
-  if (opts.kind === "cloakbrowser") {
-    return resolveCloakBrowserBinary();
+  if (opts.kind === "camoufox") {
+    return resolveCamoufoxLauncher(opts.onProgress);
   }
-  return resolveChromiumBinary(opts.onProgress);
+  return resolveChromiumSpawnable(opts.onProgress);
 }
 
-async function resolveChromiumBinary(onProgress?: (msg: string) => void): Promise<string> {
-  // System install wins — user already paid the cost, and accounts they
-  // logged into are reusable per agent profile.
+async function resolveChromiumSpawnable(
+  onProgress?: (msg: string) => void
+): Promise<SpawnableBinary> {
   const systemPath = findChromeExecutable();
-  if (systemPath) return systemPath;
+  if (systemPath) return { kind: "spawn", exe: systemPath, extraArgs: [] };
 
-  // Fall back to Playwright's bundled Chromium. `executablePath()` returns
-  // the path Playwright EXPECTS even when the binary isn't downloaded yet.
   const pwPath = chromium.executablePath();
-  if (pwPath && fs.existsSync(pwPath)) return pwPath;
+  if (pwPath && fs.existsSync(pwPath)) return { kind: "spawn", exe: pwPath, extraArgs: [] };
 
   onProgress?.("Installing Chromium (one-time, ~120MB)…");
-  await installPlaywrightChromium();
+  await runNpx(["--no-install", "playwright", "install", "chromium"]);
   const installedPath = chromium.executablePath();
-  if (installedPath && fs.existsSync(installedPath)) return installedPath;
-
+  if (installedPath && fs.existsSync(installedPath)) {
+    return { kind: "spawn", exe: installedPath, extraArgs: [] };
+  }
   throw new Error(
     "Failed to install Chromium. Run `npx playwright install chromium` manually, or set browser.executablePath."
   );
 }
 
-async function installPlaywrightChromium(): Promise<void> {
+async function resolveCamoufoxLauncher(
+  onProgress?: (msg: string) => void
+): Promise<ContextLaunchable> {
+  const m = await loadCamoufoxJs();
+  if (typeof m.launchOptions !== "function") {
+    throw new Error(
+      "camoufox-js does not expose launchOptions(); package version is unsupported."
+    );
+  }
+  if (!isCamoufoxInstalled(m)) {
+    onProgress?.("Installing Camoufox (one-time, ~300MB)…");
+    await runNpx(["--no-install", "camoufox-js", "fetch"]);
+  }
+  return {
+    kind: "context",
+    async launch({ userDataDir, headless }) {
+      const { firefox } = await import("playwright-core");
+      const options = await m.launchOptions!({ headless });
+      return firefox.launchPersistentContext(userDataDir, options);
+    },
+  };
+}
+
+/**
+ * True when the Camoufox binary is already fetched. Cheap (file stat).
+ * Uses camoufox-js's own cache-dir resolver so the path stays correct on
+ * Linux / Windows where the platform default differs. If the package
+ * isn't importable yet, treat as not-installed so callers can decide
+ * whether to attempt a fetch.
+ */
+export function isCamoufoxInstalled(mod?: CamoufoxJs): boolean {
+  const m = mod ?? cachedCamoufoxMod;
+  if (!m || typeof m.getCacheDir !== "function") return false;
+  return fs.existsSync(`${m.getCacheDir()}/version.json`);
+}
+
+let camoufoxPrefetchInFlight: Promise<void> | null = null;
+
+/**
+ * Kick off a Camoufox binary download if not already installed. Idempotent —
+ * concurrent callers share one in-flight promise. Fire-and-forget from the
+ * caller's perspective; errors are swallowed so a failed prefetch doesn't
+ * crash the server (the binary just downloads later on first agent use).
+ */
+export async function prefetchCamoufox(): Promise<void> {
+  // loadCamoufoxJs is idempotent and cached; needed so isCamoufoxInstalled
+  // can ask the package for its own cache dir.
+  await loadCamoufoxJs().catch(() => {});
+  if (isCamoufoxInstalled()) return;
+  if (camoufoxPrefetchInFlight) return camoufoxPrefetchInFlight;
+  camoufoxPrefetchInFlight = runNpx(["--no-install", "camoufox-js", "fetch"])
+    .catch(() => {
+      // best-effort; agent's first browser_navigate will retry
+    })
+    .finally(() => {
+      camoufoxPrefetchInFlight = null;
+    });
+  return camoufoxPrefetchInFlight;
+}
+
+/** True while a prefetch is running — surfaced in /api/browser. */
+export function isCamoufoxPrefetching(): boolean {
+  return camoufoxPrefetchInFlight !== null;
+}
+
+async function runNpx(args: string[]): Promise<void> {
   return new Promise<void>((resolve, reject) => {
-    const proc = spawn("npx", ["--no-install", "playwright", "install", "chromium"], {
+    const proc = spawn("npx", args, {
       stdio: ["ignore", "ignore", "pipe"],
       env: process.env,
     });
@@ -71,39 +173,7 @@ async function installPlaywrightChromium(): Promise<void> {
     proc.once("error", reject);
     proc.once("exit", (code) => {
       if (code === 0) return resolve();
-      reject(
-        new Error(
-          `playwright install chromium failed (exit ${code}): ${stderr.slice(-500)}`
-        )
-      );
+      reject(new Error(`npx ${args.join(" ")} failed (exit ${code}): ${stderr.slice(-500)}`));
     });
   });
-}
-
-async function resolveCloakBrowserBinary(): Promise<string> {
-  // Dynamic import so cloakbrowser stays optional — users who never pick
-  // this kind don't pay the install / disk cost.
-  let mod: unknown;
-  try {
-    mod = await import("cloakbrowser" as string);
-  } catch {
-    throw new Error(
-      "CloakBrowser not installed. Run `pnpm add cloakbrowser` in the workspace, " +
-        "then restart the daemon. The binary downloads (~200MB) on first import."
-    );
-  }
-  const m = mod as { executablePath?: () => string | Promise<string> };
-  if (typeof m.executablePath === "function") {
-    const p = await m.executablePath();
-    if (!p || !fs.existsSync(p)) {
-      throw new Error(
-        "CloakBrowser package is installed but its binary is missing. " +
-          "Try `pnpm rebuild cloakbrowser` to trigger the download."
-      );
-    }
-    return p;
-  }
-  throw new Error(
-    "cloakbrowser package does not expose executablePath(). Check the version (need >=X) or set browser.executablePath manually."
-  );
 }

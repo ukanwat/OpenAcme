@@ -384,10 +384,10 @@ export const BrowserConfigSchema = z.object({
       "Which backend supplies each agent's browser. 'local' spawns Chrome per agent; the cloud providers create one remote session per agent."
     ),
   localBrowser: z
-    .enum(["chromium", "cloakbrowser"])
+    .enum(["chromium", "camoufox"])
     .default("chromium")
     .describe(
-      "Local provider only: which Chromium-family browser to run. 'chromium' prefers a system Chrome/Brave/Edge install and falls back to Playwright's auto-installed Chromium. 'cloakbrowser' uses the stealth Chromium fork (requires `pnpm add cloakbrowser` first; the binary downloads on first use)."
+      "Local provider only: which browser to run. 'chromium' prefers a system Chrome/Brave/Edge install and falls back to Playwright's auto-installed Chromium. 'camoufox' uses the Firefox-based stealth browser; the binary auto-downloads on first use."
     ),
   executablePath: z
     .string()

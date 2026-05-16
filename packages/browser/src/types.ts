@@ -4,7 +4,7 @@ export type TabId = string;
 export interface BrowserConfig {
   enabled: boolean;
   provider: "local" | "browserbase" | "browser-use" | "firecrawl";
-  localBrowser: "chromium" | "cloakbrowser";
+  localBrowser: "chromium" | "camoufox";
   executablePath?: string;
   headless: boolean;
   noSandbox: boolean;

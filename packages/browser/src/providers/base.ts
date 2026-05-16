@@ -6,9 +6,21 @@
  */
 
 export interface AcquiredBrowser {
-  /** CDP websocket URL that playwright-core can `connectOverCDP` to. */
-  readonly cdpUrl: string;
-  /** Release this agent's session. Must not throw — called from shutdown paths. */
+  /**
+   * CDP websocket URL the manager can `connectOverCDP` to. Set by
+   * providers that spawn or rent a Chromium with a remote-debugging port
+   * (local Chrome, cloud providers).
+   */
+  readonly cdpUrl?: string;
+  /**
+   * Pre-built BrowserContext. Set by providers that drive the underlying
+   * Chromium via Playwright's launch APIs directly (e.g. CloakBrowser,
+   * whose adhoc-signed binary is launched via Playwright's pipe-based CDP
+   * to avoid macOS hardened-runtime traps on bare spawn). The manager
+   * uses this context as-is — no CDP attach.
+   */
+  readonly preBuiltContext?: import("playwright-core").BrowserContext;
+  /** Release the underlying session. Must not throw — called from shutdown paths. */
   release(): Promise<void>;
 }
 

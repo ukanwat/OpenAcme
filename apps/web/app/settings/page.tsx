@@ -199,9 +199,12 @@ export default function SettingsPage() {
     headless: boolean;
     noSandbox: boolean;
     configured: Record<string, boolean>;
+    localBrowserReady?: Record<string, boolean>;
+    localBrowserFetching?: Record<string, boolean>;
   }
   const [browserCfg, setBrowserCfg] = useState<BrowserStatus | null>(null);
   const [browserExePath, setBrowserExePath] = useState("");
+  const [browserShowCustom, setBrowserShowCustom] = useState(false);
   const [browserAdvancedOpen, setBrowserAdvancedOpen] = useState(false);
   const [browserKeyInputs, setBrowserKeyInputs] = useState<Record<string, string>>({});
   const [browserProjectIdInput, setBrowserProjectIdInput] = useState("");
@@ -221,6 +224,20 @@ export default function SettingsPage() {
     // loadMcp is useCallback-stabilized; intentionally run-once at mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Poll /api/browser while a local-browser binary is downloading so the
+  // status banner clears as soon as it finishes. Quietly idle otherwise.
+  useEffect(() => {
+    const fetching = browserCfg?.localBrowserFetching;
+    if (!fetching) return;
+    const anyFetching = Object.values(fetching).some(Boolean);
+    if (!anyFetching) return;
+    const id = setInterval(() => {
+      loadBrowser().catch(() => {});
+    }, 2000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [browserCfg?.localBrowserFetching]);
 
   // Poll MCP status while the MCP tab is visible — connection states change
   // as servers reconnect or hit OAuth flows. 4s is fast enough that the UI
@@ -500,6 +517,7 @@ export default function SettingsPage() {
         const data = (await res.json()) as BrowserStatus;
         setBrowserCfg(data);
         setBrowserExePath(data.executablePath ?? "");
+        setBrowserShowCustom(!!data.executablePath);
       }
     } catch (e) {
       if ((e as Error).name === "AbortError") return;
@@ -1238,13 +1256,7 @@ export default function SettingsPage() {
                   <CardHeader>
                     <CardTitle>Web search</CardTitle>
                     <CardDescription>
-                      Powers the <code className="border border-paper-rule bg-paper-sunk px-1 py-0.5 font-mono text-[11px] text-ink">web_search</code> tool. Works
-                      zero-config via Exa&apos;s free tier (150/day, IP-rate-limited). Add a key
-                      below for higher limits or to switch providers. Keys are saved to{" "}
-                      <code className="border border-paper-rule bg-paper-sunk px-1 py-0.5 font-mono text-[11px] text-ink">
-                        {config?.dataDir || "~/.openacme"}/.env
-                      </code>
-                      .
+                      Provider used by the web search tool. Add a key to use a higher-limit provider or switch.
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-5">
@@ -1381,19 +1393,7 @@ export default function SettingsPage() {
                   <CardHeader>
                     <CardTitle>Browser</CardTitle>
                     <CardDescription>
-                      Backs every <code className="border border-paper-rule bg-paper-sunk px-1 py-0.5 font-mono text-[11px] text-ink">browser_*</code> tool.
-                      Each agent gets its own session — separate Chrome process for{" "}
-                      <code className="border border-paper-rule bg-paper-sunk px-1 py-0.5 font-mono text-[11px] text-ink">local</code>,
-                      separate cloud session for the others. Provider + local
-                      flags live in{" "}
-                      <code className="border border-paper-rule bg-paper-sunk px-1 py-0.5 font-mono text-[11px] text-ink">
-                        {config?.dataDir || "~/.openacme"}/config.yaml
-                      </code>{" "}
-                      (daemon restart required); cloud keys go to{" "}
-                      <code className="border border-paper-rule bg-paper-sunk px-1 py-0.5 font-mono text-[11px] text-ink">
-                        {config?.dataDir || "~/.openacme"}/.env
-                      </code>
-                      .
+                      One browser session per agent.
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-5">
@@ -1403,77 +1403,105 @@ export default function SettingsPage() {
                       <>
                         {browserPendingRestart && (
                           <div className="rounded border border-paper-rule bg-paper-sunk px-3 py-2 font-mono text-[11px] text-ink">
-                            Restart the daemon (or run{" "}
-                            <code className="text-ink">pnpm agent restart</code>)
-                            to apply the new browser settings.
+                            Restart OpenAcme to apply the new browser settings.
                           </div>
                         )}
 
                         <div className="grid gap-2">
-                          <Label>Active provider</Label>
-                          <div className="flex items-center gap-3">
-                            <Select
-                              value={browserCfg.active}
-                              onValueChange={(v) =>
-                                saveBrowserConfig({ provider: v }, "provider")
-                              }
-                              disabled={browserSaving === "provider"}
-                            >
-                              <SelectTrigger className="w-56">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="local">Local (per-agent Chrome)</SelectItem>
-                                <SelectItem value="browserbase">Browserbase (cloud)</SelectItem>
-                                <SelectItem value="browser-use">Browser Use (cloud)</SelectItem>
-                                <SelectItem value="firecrawl">Firecrawl (cloud)</SelectItem>
-                              </SelectContent>
-                            </Select>
-                            <span className="font-mono text-[11px] text-ink-faint">
-                              browser.provider
-                            </span>
-                          </div>
-                          <p className="font-mono text-[11px] text-ink-faint">
-                            Cloud providers create one remote session per agent and bill per browser-hour.
-                          </p>
+                          <Label>Provider</Label>
+                          <Select
+                            value={browserCfg.active}
+                            onValueChange={(v) =>
+                              saveBrowserConfig({ provider: v }, "provider")
+                            }
+                            disabled={browserSaving === "provider"}
+                          >
+                            <SelectTrigger className="w-56">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="local">Local</SelectItem>
+                              <SelectItem value="browserbase">Browserbase</SelectItem>
+                              <SelectItem value="browser-use">Browser Use</SelectItem>
+                              <SelectItem value="firecrawl">Firecrawl</SelectItem>
+                            </SelectContent>
+                          </Select>
                         </div>
 
                         {browserCfg.active === "local" && (
                           <div className="space-y-4 rounded border border-paper-rule bg-paper-sunk/40 p-4">
                             <div className="grid gap-2">
                               <Label>Browser</Label>
-                              <div className="flex items-center gap-3">
-                                <Select
-                                  value={browserCfg.localBrowser}
-                                  onValueChange={(v) =>
-                                    saveBrowserConfig({ localBrowser: v }, "localBrowser")
+                              <Select
+                                value={browserShowCustom ? "custom" : browserCfg.localBrowser}
+                                onValueChange={(v) => {
+                                  if (v === "custom") {
+                                    setBrowserShowCustom(true);
+                                    return;
                                   }
-                                  disabled={browserSaving === "localBrowser"}
-                                >
-                                  <SelectTrigger className="w-72">
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="chromium">
-                                      Chromium (system Chrome, else auto-install)
-                                    </SelectItem>
-                                    <SelectItem value="cloakbrowser">
-                                      CloakBrowser (stealth, ~200MB on first use)
-                                    </SelectItem>
-                                  </SelectContent>
-                                </Select>
-                                <span className="font-mono text-[11px] text-ink-faint">
-                                  browser.localBrowser
-                                </span>
-                              </div>
-                              <p className="font-mono text-[11px] text-ink-faint">
-                                {browserCfg.localBrowser === "cloakbrowser"
-                                  ? "Requires `pnpm add cloakbrowser` in the workspace once. Binary downloads on first agent use."
-                                  : "Falls back to Playwright's bundled Chromium (~120MB, auto-downloaded once) if no system Chrome / Brave / Edge is found. Profile dirs are reusable if you later switch among Chromium-family browsers."}
-                              </p>
+                                  setBrowserShowCustom(false);
+                                  saveBrowserConfig(
+                                    { localBrowser: v, executablePath: "" },
+                                    "localBrowser"
+                                  );
+                                }}
+                                disabled={browserSaving === "localBrowser"}
+                              >
+                                <SelectTrigger className="w-72">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="chromium">Chromium</SelectItem>
+                                  <SelectItem value="camoufox">Camoufox (stealth)</SelectItem>
+                                  <SelectItem value="custom">Custom binary…</SelectItem>
+                                </SelectContent>
+                              </Select>
+                              {!browserShowCustom &&
+                                browserCfg.localBrowserFetching?.[browserCfg.localBrowser] && (
+                                  <p className="font-mono text-[11px] text-ink-faint">
+                                    Downloading {browserCfg.localBrowser}…
+                                  </p>
+                                )}
+                              {!browserShowCustom &&
+                                browserCfg.localBrowserReady?.[browserCfg.localBrowser] === false &&
+                                !browserCfg.localBrowserFetching?.[browserCfg.localBrowser] && (
+                                  <p className="font-mono text-[11px] text-ink-faint">
+                                    Will download on first use.
+                                  </p>
+                                )}
                             </div>
 
-                            <div className="flex items-center gap-3">
+                            {browserShowCustom && (
+                              <div className="grid gap-2">
+                                <Label htmlFor="browser-exe">Path to a Chromium-family binary</Label>
+                                <div className="flex gap-2">
+                                  <Input
+                                    id="browser-exe"
+                                    type="text"
+                                    placeholder="/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"
+                                    value={browserExePath}
+                                    onChange={(e) => setBrowserExePath(e.target.value)}
+                                    className="flex-1"
+                                  />
+                                  <Button
+                                    onClick={() =>
+                                      saveBrowserConfig(
+                                        { executablePath: browserExePath },
+                                        "exe"
+                                      )
+                                    }
+                                    disabled={browserSaving === "exe"}
+                                  >
+                                    {browserSaving === "exe" && (
+                                      <LoadingHairline inline />
+                                    )}
+                                    Save
+                                  </Button>
+                                </div>
+                              </div>
+                            )}
+
+                            <div className="flex items-center gap-2">
                               <input
                                 id="browser-headless"
                                 type="checkbox"
@@ -1488,26 +1516,7 @@ export default function SettingsPage() {
                               />
                               <Label htmlFor="browser-headless">Headless</Label>
                               <span className="font-mono text-[11px] text-ink-faint">
-                                Skip the visible window. Most users want this off so they can log in per agent.
-                              </span>
-                            </div>
-
-                            <div className="flex items-center gap-3">
-                              <input
-                                id="browser-nosandbox"
-                                type="checkbox"
-                                checked={browserCfg.noSandbox}
-                                onChange={(e) =>
-                                  saveBrowserConfig(
-                                    { noSandbox: e.target.checked },
-                                    "nosandbox"
-                                  )
-                                }
-                                disabled={browserSaving === "nosandbox"}
-                              />
-                              <Label htmlFor="browser-nosandbox">--no-sandbox</Label>
-                              <span className="font-mono text-[11px] text-ink-faint">
-                                Required only for running as root inside Docker / certain CI images.
+                                Don&apos;t show a window. Off so you can log in per agent.
                               </span>
                             </div>
 
@@ -1517,43 +1526,26 @@ export default function SettingsPage() {
                                 onClick={() => setBrowserAdvancedOpen(!browserAdvancedOpen)}
                                 className="font-mono text-[11px] text-ink-faint hover:text-ink"
                               >
-                                {browserAdvancedOpen ? "Hide advanced" : "Advanced (custom binary path)"}
+                                {browserAdvancedOpen ? "Hide advanced" : "Advanced"}
                               </button>
                               {browserAdvancedOpen && (
-                                <div className="mt-3 grid gap-2">
-                                  <Label htmlFor="browser-exe">
-                                    Executable path{" "}
-                                    <span className="font-mono text-[10px] text-muted-foreground">
-                                      browser.executablePath — overrides Browser selection
-                                    </span>
-                                  </Label>
-                                  <div className="flex gap-2">
-                                    <Input
-                                      id="browser-exe"
-                                      type="text"
-                                      placeholder="(leave blank to use Browser selection above)"
-                                      value={browserExePath}
-                                      onChange={(e) => setBrowserExePath(e.target.value)}
-                                      className="flex-1"
-                                    />
-                                    <Button
-                                      onClick={() =>
-                                        saveBrowserConfig(
-                                          { executablePath: browserExePath },
-                                          "exe"
-                                        )
-                                      }
-                                      disabled={browserSaving === "exe"}
-                                    >
-                                      {browserSaving === "exe" && (
-                                        <LoadingHairline inline />
-                                      )}
-                                      Save
-                                    </Button>
-                                  </div>
-                                  <p className="font-mono text-[11px] text-ink-faint">
-                                    Path to any Chromium-family binary (Brave, Edge, patched Chromium, custom build). When set, wins over the dropdown above.
-                                  </p>
+                                <div className="mt-3 flex items-center gap-2">
+                                  <input
+                                    id="browser-nosandbox"
+                                    type="checkbox"
+                                    checked={browserCfg.noSandbox}
+                                    onChange={(e) =>
+                                      saveBrowserConfig(
+                                        { noSandbox: e.target.checked },
+                                        "nosandbox"
+                                      )
+                                    }
+                                    disabled={browserSaving === "nosandbox"}
+                                  />
+                                  <Label htmlFor="browser-nosandbox">No sandbox</Label>
+                                  <span className="font-mono text-[11px] text-ink-faint">
+                                    Only when running as root in Docker.
+                                  </span>
                                 </div>
                               )}
                             </div>

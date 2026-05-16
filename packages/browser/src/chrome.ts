@@ -126,6 +126,8 @@ export function buildLaunchArgs(opts: {
   userDataDir: string;
   headless: boolean;
   noSandbox: boolean;
+  /** Extra args from the binary's wrapper (e.g. CloakBrowser stealth flags). */
+  extraArgs?: string[];
 }): string[] {
   // Port 0 → Chrome picks an ephemeral one and writes it to
   // <userDataDir>/DevToolsActivePort. Lets us run N agents in parallel
@@ -152,6 +154,18 @@ export function buildLaunchArgs(opts: {
   }
   if (process.platform === "linux") {
     args.push("--disable-dev-shm-usage");
+  }
+  if (opts.extraArgs?.length) {
+    // Append + dedupe by flag-name (everything before the first `=`). Later
+    // entries (extra args) win — wrapper-specific flags can override our
+    // generic defaults.
+    const seen = new Map<string, string>(
+      args.map((a) => [a.split("=")[0] ?? a, a])
+    );
+    for (const a of opts.extraArgs) {
+      seen.set(a.split("=")[0] ?? a, a);
+    }
+    return Array.from(seen.values());
   }
   return args;
 }
@@ -216,11 +230,43 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+/**
+ * Strip env vars that confuse a child Chromium's launch on macOS:
+ *   - `__CFBundleIdentifier` is inherited from the parent .app bundle and
+ *     trips the hardened-runtime check on adhoc-signed Chromium forks
+ *     (CloakBrowser, patched Chromium). The child aborts with SIGTRAP at
+ *     dyld init time. macOS expects the child to own its bundle ID.
+ *   - `DYLD_*` are stripped by the loader for hardened binaries anyway,
+ *     but a few Apple-internal variants can still cause warnings or
+ *     unexpected behavior; cleanest to drop them here.
+ *   - `MallocNanoZone=0` disables the Nano malloc zone — some allocators
+ *     in patched Chromium builds assume it's enabled and abort otherwise.
+ */
+function sanitizeChromeEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  if (process.platform !== "darwin") return env;
+  // Strip env vars that confuse a child Chromium on macOS:
+  //   - `__CFBundleIdentifier` inherited from a parent .app bundle confuses
+  //     Launch Services about who the child is.
+  //   - `DYLD_*` is stripped by the loader for hardened binaries anyway;
+  //     dropping it here avoids inherited overrides from dev tooling.
+  //   - `MallocNanoZone=0` disables the Nano malloc some Chromium builds
+  //     assume is on.
+  const cleaned: NodeJS.ProcessEnv = {};
+  for (const [k, v] of Object.entries(env)) {
+    if (k === "__CFBundleIdentifier") continue;
+    if (k.startsWith("DYLD_")) continue;
+    if (k === "MallocNanoZone" && v === "0") continue;
+    cleaned[k] = v;
+  }
+  return cleaned;
+}
+
 export async function launchChrome(opts: {
   exe: string;
   userDataDir: string;
   headless: boolean;
   noSandbox: boolean;
+  extraArgs?: string[];
 }): Promise<RunningChrome> {
   fs.mkdirSync(opts.userDataDir, { recursive: true });
   clearStaleSingletonLocks(opts.userDataDir);
@@ -234,9 +280,19 @@ export async function launchChrome(opts: {
 
   const args = buildLaunchArgs(opts);
   const proc = spawn(opts.exe, args, {
+    // Piped stderr WITH a drain — without the drain, the 64KB OS buffer
+    // fills and chatty Chromium builds (CloakBrowser, patched forks) block
+    // on stderr writes and stop servicing CDP.
     stdio: ["ignore", "ignore", "pipe"],
-    detached: false,
-    env: process.env,
+    // Own process group — keeps Chromium alive across our parent's signal
+    // handling. unref below; BrowserManager owns shutdown via killChrome().
+    detached: true,
+    env: sanitizeChromeEnv(process.env),
+  });
+  proc.unref();
+  proc.stderr?.on("data", () => {
+    // Drain only — without a reader the 64KB OS buffer fills and Chrome
+    // blocks on writes (some patched forks log heavily on startup).
   });
 
   let earlyExit: { code: number | null; signal: NodeJS.Signals | null } | null = null;

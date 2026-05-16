@@ -1,5 +1,10 @@
 export { BrowserManager } from "./manager.js";
-export { resolveLocalBinary } from "./binaries.js";
+export {
+  resolveLocalBinary,
+  isCamoufoxInstalled,
+  prefetchCamoufox,
+  isCamoufoxPrefetching,
+} from "./binaries.js";
 export type { LocalBrowserKind } from "./binaries.js";
 export {
   createBrowserProvider,

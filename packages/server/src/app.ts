@@ -3,6 +3,11 @@ import { cors } from "hono/cors";
 import * as crypto from "node:crypto";
 import { createLogger } from "@openacme/config/logger";
 import { readRawConfig, writeRawConfig } from "@openacme/config";
+import {
+  isCamoufoxInstalled,
+  isCamoufoxPrefetching,
+  prefetchCamoufox,
+} from "@openacme/browser";
 
 const log = createLogger("server.app");
 
@@ -1169,7 +1174,7 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
     return typeof v === "string" && (BROWSER_PROVIDERS as readonly string[]).includes(v);
   }
 
-  const LOCAL_BROWSERS = ["chromium", "cloakbrowser"] as const;
+  const LOCAL_BROWSERS = ["chromium", "camoufox"] as const;
   type LocalBrowserId = (typeof LOCAL_BROWSERS)[number];
   const isLocalBrowserId = (v: unknown): v is LocalBrowserId =>
     typeof v === "string" && (LOCAL_BROWSERS as readonly string[]).includes(v);
@@ -1190,6 +1195,24 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
     const exePath = typeof rawBrowser.executablePath === "string" ? rawBrowser.executablePath : (config.browser.executablePath ?? "");
     const headless = typeof rawBrowser.headless === "boolean" ? rawBrowser.headless : config.browser.headless;
     const noSandbox = typeof rawBrowser.noSandbox === "boolean" ? rawBrowser.noSandbox : config.browser.noSandbox;
+    // Per-local-browser readiness — currently only Camoufox needs an
+    // out-of-band binary fetch; Chromium auto-installs via Playwright on
+    // first acquire and reports through normal channels. Anything not
+    // explicitly tracked is treated as ready by default.
+    const localBrowserReady: Record<string, boolean> = {};
+    const localBrowserFetching: Record<string, boolean> = {};
+    for (const lb of LOCAL_BROWSERS) {
+      switch (lb) {
+        case "camoufox":
+          localBrowserReady[lb] = isCamoufoxInstalled();
+          localBrowserFetching[lb] = isCamoufoxPrefetching();
+          break;
+        case "chromium":
+          localBrowserReady[lb] = true;
+          localBrowserFetching[lb] = false;
+          break;
+      }
+    }
     return c.json({
       providers: BROWSER_PROVIDERS,
       localBrowsers: LOCAL_BROWSERS,
@@ -1199,6 +1222,8 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
       headless,
       noSandbox,
       configured,
+      localBrowserReady,
+      localBrowserFetching,
     });
   });
 
@@ -1228,12 +1253,49 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
     if (body.localBrowser !== undefined) next.localBrowser = body.localBrowser;
     if (body.executablePath !== undefined) {
       const trimmed = body.executablePath.trim();
-      if (trimmed) next.executablePath = trimmed;
-      else delete next.executablePath;
+      if (trimmed) {
+        // Validate at save time — silent acceptance + late failure at first
+        // browser call is a worse UX than a clear 400.
+        if (!fs.existsSync(trimmed)) {
+          return c.json(
+            { error: `Path does not exist on disk: ${trimmed}` },
+            400
+          );
+        }
+        try {
+          const stat = fs.statSync(trimmed);
+          if (stat.isDirectory()) {
+            return c.json(
+              { error: `Path is a directory, not a binary: ${trimmed}` },
+              400
+            );
+          }
+          // X-bit check on POSIX; permission-mode check is moot on Windows.
+          if (process.platform !== "win32" && !(stat.mode & 0o111)) {
+            return c.json(
+              { error: `Path is not executable (chmod +x first): ${trimmed}` },
+              400
+            );
+          }
+        } catch (e) {
+          return c.json(
+            { error: `Could not stat ${trimmed}: ${(e as Error).message}` },
+            400
+          );
+        }
+        next.executablePath = trimmed;
+      } else {
+        delete next.executablePath;
+      }
     }
     if (body.headless !== undefined) next.headless = !!body.headless;
     if (body.noSandbox !== undefined) next.noSandbox = !!body.noSandbox;
     writeRawConfig(config.dataDir, { ...raw, browser: next });
+    // Fire-and-forget binary prefetch on the heavy choice so the user's
+    // first browser_navigate isn't a silent ~60s download.
+    if (body.localBrowser === "camoufox" && !isCamoufoxInstalled()) {
+      void prefetchCamoufox();
+    }
     return c.json({ success: true, needsRestart: true });
   });
 
