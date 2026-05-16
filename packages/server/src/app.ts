@@ -1035,6 +1035,121 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
     return c.json({ success: true, envVar });
   });
 
+  // ── Web search (Tavily / Exa / Brave) ──
+  // Same .env-file mechanism as /api/keys; separate routes because these
+  // aren't LLM providers and shouldn't pollute listProviders(). The
+  // `web_search` tool reads these env vars at call time via
+  // resolveSearchProvider() in @openacme/tools.
+  const WEB_SEARCH_PROVIDERS: Record<string, string> = {
+    tavily: "TAVILY_API_KEY",
+    exa: "EXA_API_KEY",
+    brave: "BRAVE_API_KEY",
+  };
+  const WEB_SEARCH_OVERRIDE_VAR = "OPENACME_SEARCH_PROVIDER";
+
+  function readDotenv(): Record<string, string> {
+    if (!fs.existsSync(envPath)) return {};
+    return dotenv.parse(fs.readFileSync(envPath, "utf-8"));
+  }
+  function writeDotenv(vars: Record<string, string>) {
+    if (!fs.existsSync(config.dataDir)) {
+      fs.mkdirSync(config.dataDir, { recursive: true });
+    }
+    const content =
+      Object.entries(vars)
+        .map(([k, v]) => `${k}=${v}`)
+        .join("\n") + "\n";
+    fs.writeFileSync(envPath, content);
+  }
+
+  app.get("/api/web", (c) => {
+    const envVars = readDotenv();
+    const configured: Record<string, boolean> = {};
+    for (const [pid, varName] of Object.entries(WEB_SEARCH_PROVIDERS)) {
+      configured[pid] = !!process.env[varName] || !!envVars[varName];
+    }
+    const overrideRaw =
+      process.env[WEB_SEARCH_OVERRIDE_VAR] ||
+      envVars[WEB_SEARCH_OVERRIDE_VAR] ||
+      null;
+    const override =
+      overrideRaw && overrideRaw in WEB_SEARCH_PROVIDERS ? overrideRaw : null;
+    // Mirror resolveSearchProvider's resolution order so the UI shows what
+    // would actually be used right now.
+    let active: string;
+    if (override) active = override;
+    else if (configured.tavily) active = "tavily";
+    else if (configured.brave) active = "brave";
+    else active = "exa";
+    return c.json({
+      providers: Object.keys(WEB_SEARCH_PROVIDERS),
+      configured,
+      override,
+      active,
+    });
+  });
+
+  app.post("/api/web/keys", async (c) => {
+    let body: { provider?: string; apiKey?: string };
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "Invalid JSON" }, 400);
+    }
+    const { provider, apiKey } = body;
+    if (!provider || !(provider in WEB_SEARCH_PROVIDERS)) {
+      return c.json(
+        { error: "Unknown web search provider (use tavily, exa, or brave)" },
+        400
+      );
+    }
+    if (!apiKey || !apiKey.trim()) {
+      return c.json({ error: "apiKey is required" }, 400);
+    }
+    const envVar = WEB_SEARCH_PROVIDERS[provider]!;
+    const envVars = readDotenv();
+    envVars[envVar] = apiKey.trim();
+    writeDotenv(envVars);
+    process.env[envVar] = apiKey.trim();
+    return c.json({ success: true, envVar });
+  });
+
+  app.delete("/api/web/keys/:provider", (c) => {
+    const provider = c.req.param("provider");
+    if (!(provider in WEB_SEARCH_PROVIDERS)) {
+      return c.json({ error: "Unknown web search provider" }, 400);
+    }
+    const envVar = WEB_SEARCH_PROVIDERS[provider]!;
+    const envVars = readDotenv();
+    delete envVars[envVar];
+    writeDotenv(envVars);
+    delete process.env[envVar];
+    return c.json({ success: true });
+  });
+
+  app.post("/api/web/provider", async (c) => {
+    let body: { provider?: string | null };
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "Invalid JSON" }, 400);
+    }
+    const { provider } = body;
+    const envVars = readDotenv();
+    if (provider === null || provider === undefined || provider === "") {
+      delete envVars[WEB_SEARCH_OVERRIDE_VAR];
+      delete process.env[WEB_SEARCH_OVERRIDE_VAR];
+    } else {
+      if (!(provider in WEB_SEARCH_PROVIDERS)) {
+        return c.json({ error: "Unknown web search provider" }, 400);
+      }
+      envVars[WEB_SEARCH_OVERRIDE_VAR] = provider;
+      process.env[WEB_SEARCH_OVERRIDE_VAR] = provider;
+    }
+    writeDotenv(envVars);
+    return c.json({ success: true });
+  });
+
   // ── Static Web UI ──
   // Skipped entirely under the dev proxy — the proxy handles non-API. Otherwise
   // prefer the bundled path (published install, filled by prepack) and fall

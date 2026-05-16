@@ -14,6 +14,7 @@ import {
   Plus,
   FileJson,
   FileText,
+  Search,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Sidebar } from "../components/Sidebar";
@@ -50,6 +51,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/app/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/app/components/ui/select";
 
 interface ServerConfig {
   dataDir: string;
@@ -168,6 +176,18 @@ export default function SettingsPage() {
   const [agentsMdDraft, setAgentsMdDraft] = useState("");
   const [agentsMdSaving, setAgentsMdSaving] = useState(false);
 
+  // Web search — Tavily / Exa / Brave keys + active-provider override.
+  interface WebSearchStatus {
+    providers: string[];
+    configured: Record<string, boolean>;
+    override: string | null;
+    active: string;
+  }
+  const [webSearch, setWebSearch] = useState<WebSearchStatus | null>(null);
+  const [webKeyInputs, setWebKeyInputs] = useState<Record<string, string>>({});
+  const [webSaving, setWebSaving] = useState<string | null>(null);
+  const [webOverrideSaving, setWebOverrideSaving] = useState(false);
+
   useEffect(() => {
     const ctrl = new AbortController();
     loadConfig(ctrl.signal);
@@ -175,6 +195,7 @@ export default function SettingsPage() {
     loadConfiguredKeys(ctrl.signal);
     loadMcp(ctrl.signal);
     loadAgentsMd(ctrl.signal);
+    loadWebSearch(ctrl.signal);
     return () => ctrl.abort();
     // loadMcp is useCallback-stabilized; intentionally run-once at mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -360,6 +381,92 @@ export default function SettingsPage() {
       toast.error("Failed to save API key");
     } finally {
       setSaving(null);
+    }
+  };
+
+  // ── Web search ──
+
+  const loadWebSearch = async (signal?: AbortSignal) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/web`, { signal });
+      if (res.ok) setWebSearch(await res.json());
+    } catch (e) {
+      if ((e as Error).name === "AbortError") return;
+      // older servers may not have this endpoint — fail silently
+    }
+  };
+
+  const saveWebKey = async (provider: string) => {
+    const apiKey = webKeyInputs[provider];
+    if (!apiKey?.trim()) {
+      toast.error("Please enter an API key");
+      return;
+    }
+    setWebSaving(provider);
+    try {
+      const res = await fetch(`${API_BASE}/api/web/keys`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider, apiKey: apiKey.trim() }),
+      });
+      if (res.ok) {
+        toast.success(`${provider} key saved`);
+        setWebKeyInputs({ ...webKeyInputs, [provider]: "" });
+        await loadWebSearch();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        toast.error("Failed to save key", { description: data.error });
+      }
+    } catch (e) {
+      toast.error("Failed to save key", { description: (e as Error).message });
+    } finally {
+      setWebSaving(null);
+    }
+  };
+
+  const removeWebKey = async (provider: string) => {
+    if (!confirm(`Remove the ${provider} API key?`)) return;
+    try {
+      const res = await fetch(
+        `${API_BASE}/api/web/keys/${encodeURIComponent(provider)}`,
+        { method: "DELETE" }
+      );
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast.error("Failed to remove key", { description: data.error });
+        return;
+      }
+      toast.success(`${provider} key removed`);
+      await loadWebSearch();
+    } catch (e) {
+      toast.error("Failed to remove key", { description: (e as Error).message });
+    }
+  };
+
+  const saveWebOverride = async (next: string) => {
+    setWebOverrideSaving(true);
+    try {
+      const provider = next === "auto" ? null : next;
+      const res = await fetch(`${API_BASE}/api/web/provider`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast.error("Failed to update provider", { description: data.error });
+        return;
+      }
+      toast.success(
+        provider ? `Provider set to ${provider}` : "Provider set to auto"
+      );
+      await loadWebSearch();
+    } catch (e) {
+      toast.error("Failed to update provider", {
+        description: (e as Error).message,
+      });
+    } finally {
+      setWebOverrideSaving(false);
     }
   };
 
@@ -571,6 +678,10 @@ export default function SettingsPage() {
                 <TabsTrigger value="mcp">
                   <Boxes className="size-3.5" />
                   MCP
+                </TabsTrigger>
+                <TabsTrigger value="web-search">
+                  <Search className="size-3.5" />
+                  Web Search
                 </TabsTrigger>
                 <TabsTrigger value="context">
                   <FileText className="size-3.5" />
@@ -997,6 +1108,149 @@ export default function SettingsPage() {
                     </DialogBody>
                   </DialogContent>
                 </Dialog>
+              </TabsContent>
+
+              <TabsContent value="web-search">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Web search</CardTitle>
+                    <CardDescription>
+                      Powers the <code className="border border-paper-rule bg-paper-sunk px-1 py-0.5 font-mono text-[11px] text-ink">web_search</code> tool. Works
+                      zero-config via Exa&apos;s free tier (150/day, IP-rate-limited). Add a key
+                      below for higher limits or to switch providers. Keys are saved to{" "}
+                      <code className="border border-paper-rule bg-paper-sunk px-1 py-0.5 font-mono text-[11px] text-ink">
+                        {config?.dataDir || "~/.openacme"}/.env
+                      </code>
+                      .
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-5">
+                    {!webSearch ? (
+                      <p className="font-mono text-[12px] text-ink-faint">
+                        Loading…
+                      </p>
+                    ) : (
+                      <>
+                        <div className="grid gap-2">
+                          <Label>Active provider</Label>
+                          <div className="flex items-center gap-3">
+                            <Select
+                              value={webSearch.override ?? "auto"}
+                              onValueChange={saveWebOverride}
+                              disabled={webOverrideSaving}
+                            >
+                              <SelectTrigger className="w-48">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="auto">
+                                  Auto ({webSearch.active})
+                                </SelectItem>
+                                <SelectItem value="tavily">Tavily</SelectItem>
+                                <SelectItem value="exa">Exa</SelectItem>
+                                <SelectItem value="brave">Brave</SelectItem>
+                              </SelectContent>
+                            </Select>
+                            <span className="font-mono text-[11px] text-ink-faint">
+                              OPENACME_SEARCH_PROVIDER
+                            </span>
+                          </div>
+                          <p className="font-mono text-[11px] text-ink-faint">
+                            Auto picks the first configured provider in order:
+                            Tavily → Brave → Exa.
+                          </p>
+                        </div>
+
+                        {[
+                          {
+                            id: "tavily",
+                            name: "Tavily",
+                            envVar: "TAVILY_API_KEY",
+                            blurb: "1000 free searches/month — tavily.com",
+                          },
+                          {
+                            id: "exa",
+                            name: "Exa",
+                            envVar: "EXA_API_KEY",
+                            blurb:
+                              "1000 free searches/month — exa.ai · key optional (free tier is unauthenticated, 150/day)",
+                          },
+                          {
+                            id: "brave",
+                            name: "Brave",
+                            envVar: "BRAVE_API_KEY",
+                            blurb: "brave.com/search/api",
+                          },
+                        ].map((p) => {
+                          const isConfigured = !!webSearch.configured[p.id];
+                          return (
+                            <div key={p.id} className="grid gap-2">
+                              <div className="flex items-center gap-2">
+                                <Label htmlFor={`web-key-${p.id}`}>
+                                  {p.name}
+                                </Label>
+                                <span className="font-mono text-[10px] text-muted-foreground">
+                                  {p.envVar}
+                                </span>
+                                {isConfigured && (
+                                  <Badge
+                                    variant="secondary"
+                                    className="ml-auto gap-1"
+                                  >
+                                    <Check className="size-3" />
+                                    Configured
+                                  </Badge>
+                                )}
+                              </div>
+                              <div className="flex gap-2">
+                                <Input
+                                  id={`web-key-${p.id}`}
+                                  type="password"
+                                  value={webKeyInputs[p.id] || ""}
+                                  onChange={(e) =>
+                                    setWebKeyInputs({
+                                      ...webKeyInputs,
+                                      [p.id]: e.target.value,
+                                    })
+                                  }
+                                  placeholder={
+                                    isConfigured
+                                      ? "Enter new key to update"
+                                      : `Enter ${p.envVar}`
+                                  }
+                                />
+                                <Button
+                                  onClick={() => saveWebKey(p.id)}
+                                  disabled={
+                                    webSaving === p.id ||
+                                    !webKeyInputs[p.id]?.trim()
+                                  }
+                                >
+                                  {webSaving === p.id && (
+                                    <LoadingHairline inline />
+                                  )}
+                                  Save
+                                </Button>
+                                {isConfigured && (
+                                  <Button
+                                    variant="ghost"
+                                    onClick={() => removeWebKey(p.id)}
+                                    title="Remove key"
+                                  >
+                                    <Trash2 className="size-4" />
+                                  </Button>
+                                )}
+                              </div>
+                              <p className="font-mono text-[11px] text-ink-faint">
+                                {p.blurb}
+                              </p>
+                            </div>
+                          );
+                        })}
+                      </>
+                    )}
+                  </CardContent>
+                </Card>
               </TabsContent>
 
               <TabsContent value="context">
