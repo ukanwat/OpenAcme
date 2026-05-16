@@ -897,7 +897,9 @@ function FileDiffBlock({ file }: { file: DiffFile }) {
             : file.path}
         </code>
         <span className="ml-auto flex shrink-0 items-center gap-2 font-mono text-[11px] tabular-nums">
-          {file.added > 0 && <span className="text-plot-red">+{file.added}</span>}
+          {file.added > 0 && (
+            <span className="text-signal-green">+{file.added}</span>
+          )}
           {file.removed > 0 && (
             <span className="text-destructive">−{file.removed}</span>
           )}
@@ -930,14 +932,16 @@ function HunksView({ hunks, gutter }: { hunks: DiffHunk[]; gutter: number }) {
             }
             const rowCls =
               line.type === "+"
-                ? "bg-plot-red/[0.06] text-ink"
+                ? "bg-signal-green/[0.08] text-ink"
                 : line.type === "-"
-                  ? "bg-destructive/[0.06] text-ink"
+                  ? "bg-destructive/[0.08] text-ink"
                   : "text-ink-soft";
-            // Color is on background only — sigil stays muted so plot-red
-            // doesn't double-up as both "accent" and "added" foreground.
             const sigilCls =
-              line.type === "-" ? "text-destructive" : "text-ink-faint";
+              line.type === "+"
+                ? "text-signal-green"
+                : line.type === "-"
+                  ? "text-destructive"
+                  : "text-ink-faint";
             return (
               <div key={li} className={cn("flex whitespace-pre", rowCls)}>
                 <Gutter n={oldShown} width={gutter} />
@@ -1016,7 +1020,7 @@ function DiffStat({ added, removed }: { added: number; removed: number }) {
   if (added === 0 && removed === 0) return null;
   return (
     <span className="flex shrink-0 items-center gap-2 font-mono text-[11px] tabular-nums">
-      {added > 0 && <span className="text-plot-red">+{added}</span>}
+      {added > 0 && <span className="text-signal-green">+{added}</span>}
       {removed > 0 && <span className="text-destructive">−{removed}</span>}
     </span>
   );
