@@ -200,7 +200,7 @@ export function MultilineInput({
 
   return (
     <Box>
-      <Text color="green" bold>{"› "}</Text>
+      <Text dimColor>{"› "}</Text>
       <Box flexDirection="column" flexGrow={1}>
         <Text>{body}</Text>
       </Box>

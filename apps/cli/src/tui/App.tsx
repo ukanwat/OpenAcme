@@ -832,11 +832,38 @@ export function App({
       )}
 
       {state.view === "chat" && (
-        <>
+        <Box flexDirection="column" marginTop={1}>
           <PendingAttachmentsBar
             attachments={state.pendingAttachments}
             notice={state.attachNotice}
           />
+
+          <Box
+            borderStyle="round"
+            borderColor={
+              state.status === "streaming"
+                ? "cyan"
+                : state.status === "error"
+                  ? "red"
+                  : "gray"
+            }
+            borderDimColor={state.status === "idle"}
+            paddingX={1}
+          >
+            <MultilineInput
+              value={input}
+              onChange={setInput}
+              onSubmit={handleSubmit}
+              disabled={inputDisabled}
+              placeholder={
+                state.status === "streaming"
+                  ? "streaming…"
+                  : "Type a message · drop a file · @path · /commands · esc"
+              }
+              onSpecialKey={handleSpecialKey}
+              onPastePath={(rawPath) => tryAttachPath(rawPath)}
+            />
+          </Box>
 
           <StatusLine
             modelLabel={state.modelLabel}
@@ -844,21 +871,7 @@ export function App({
             totalTokens={state.totalTokens}
             status={state.status}
           />
-
-          <MultilineInput
-            value={input}
-            onChange={setInput}
-            onSubmit={handleSubmit}
-            disabled={inputDisabled}
-            placeholder={
-              state.status === "streaming"
-                ? "(streaming…)"
-                : "Send a message · drop a file · @path · / for commands · esc to list"
-            }
-            onSpecialKey={handleSpecialKey}
-            onPastePath={(rawPath) => tryAttachPath(rawPath)}
-          />
-        </>
+        </Box>
       )}
     </Box>
   );
