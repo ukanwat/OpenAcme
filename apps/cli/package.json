@@ -1,6 +1,6 @@
 {
   "name": "@openacme/cli",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "CLI for the OpenAcme AI agent platform — install globally to get the `openacme` command.",
   "license": "MIT",
   "author": "Utkarsh Kanwat",
@@ -67,5 +67,13 @@
     "@types/node": "^22.15.3",
     "@types/react": "19.2.2",
     "typescript": "5.9.2"
+  },
+  "//pnpm": "pnpm 10+ refuses to run package install scripts by default. better-sqlite3 needs `node-gyp-build` to fetch its prebuilt native binary, otherwise @openacme/db throws on import. Listing it here whitelists the build at install time so `pnpm add -g @openacme/cli` produces a working daemon without `pnpm approve-builds -g`. impit + protobufjs are belt-and-suspenders for transitive native bindings.",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "impit",
+      "protobufjs"
+    ]
   }
 }

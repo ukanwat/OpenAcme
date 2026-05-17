@@ -1,5 +1,17 @@
 # @openacme/browser
 
+## 0.5.1
+
+### Patch Changes
+
+- Make `camoufox-js` an optional dependency and whitelist native builds for pnpm 10+.
+
+  Two install-blocking bugs in 0.5.0:
+  1. **`camoufox-js → impit@0.13.1` carries `"preinstall": "npx only-allow pnpm"`**, which breaks every npm-based global install of `@openacme/cli`. Camoufox is one of several browser providers (chromium / browserbase / browser-use / firecrawl all work without it) and the browser code already lazy-imports `camoufox-js` with a try/catch (`packages/browser/src/binaries.ts`). Moved to `optionalDependencies` so failed installs don't fail the whole tree.
+  2. **pnpm 10's strict build-script policy** silently skips native module builds, so `better-sqlite3` never compiles → `@openacme/db` crashes on import. Added `pnpm.onlyBuiltDependencies: ["better-sqlite3", "impit", "protobufjs"]` to `@openacme/cli`'s manifest so pnpm honors the build at install time without `pnpm approve-builds -g`.
+
+  After this release, both `npm install -g @openacme/cli` and `pnpm add -g @openacme/cli` produce a working daemon.
+
 ## 0.5.0
 
 ## 0.4.0

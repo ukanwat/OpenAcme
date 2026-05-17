@@ -1,5 +1,12 @@
 # @openacme/tasks
 
+## 0.5.1
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @openacme/config@0.5.1
+
 ## 0.5.0
 
 ### Patch Changes

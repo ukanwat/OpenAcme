@@ -1,5 +1,17 @@
 # @openacme/agent-core
 
+## 0.5.1
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @openacme/tools@0.5.1
+  - @openacme/config@0.5.1
+  - @openacme/db@0.5.1
+  - @openacme/llm-provider@0.5.1
+  - @openacme/memory@0.5.1
+  - @openacme/tasks@0.5.1
+
 ## 0.5.0
 
 ### Minor Changes
