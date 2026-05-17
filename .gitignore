@@ -43,3 +43,4 @@ yarn-error.log*
 # Claude Code worktrees + runtime artifacts
 .claude/worktrees/
 .claude/scheduled_tasks.lock
+.envrc
