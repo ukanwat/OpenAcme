@@ -1,6 +1,6 @@
 {
   "name": "@openacme/agent-catalog",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Built-in agent templates for OpenAcme — opinionated workforce starters (Coder, …) that import as fresh agent folders.",
   "license": "MIT",
   "author": "Utkarsh Kanwat",

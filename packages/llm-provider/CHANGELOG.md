@@ -1,5 +1,17 @@
 # @openacme/llm-provider
 
+## 0.5.0
+
+### Minor Changes
+
+- Add `cacheTtl: "5m" | "1h"` to model config so callers can opt into Anthropic's 1-hour prompt-cache tier. Threaded into both Anthropic-cache code paths (native Anthropic via `applyAnthropicCacheControl(messages, ttl)` and OpenRouter+Claude via `injectAnthropicCacheControl(body, ttl)`). Per-agent UI in the agents page; workforce-wide default in Settings → Providers backed by new `GET /api/config` (extended) + `PUT /api/config/model`.
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @openacme/config@0.5.0
+  - @openacme/auth@0.5.0
+
 ## 0.4.0
 
 ### Minor Changes
