@@ -212,8 +212,8 @@ export function App({
     [manager, state.agentId, exit]
   );
   const skillCommands: CommandDef[] = useMemo(
-    () => buildSkillCommands(manager),
-    [manager]
+    () => buildSkillCommands(manager, state.agentId),
+    [manager, state.agentId]
   );
 
   const configuredProviders = useMemo(

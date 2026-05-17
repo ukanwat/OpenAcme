@@ -20,14 +20,26 @@ export interface CommandDef {
   handler: (ctx: CommandCtx, args: string) => void | Promise<void>;
 }
 
-/** Dynamic skill commands — built per chat session from the manager's
- *  skill registry. Each skill becomes a `/<skill-name>` command whose
- *  handler inlines the SKILL.md body into the next user turn so the
- *  agent has no choice but to apply it. Optional trailing text after
- *  the command name becomes the user's actual ask appended below the
- *  skill body. */
-export function buildSkillCommands(manager: AgentManager): CommandDef[] {
-  return manager.skillRegistry.getIndex().map((entry) => ({
+/** Dynamic skill commands — only skills attached to the active agent
+ *  are exposed. Each becomes a `/<skill-name>` command whose handler
+ *  inlines the SKILL.md body into the next user turn so the agent has
+ *  no choice but to apply it. Optional trailing text after the command
+ *  name becomes the user's actual ask appended below the skill body.
+ *
+ *  Mirrors the web's attached-only rule: skills must be explicitly
+ *  added to the agent before they show up here.
+ */
+export function buildSkillCommands(
+  manager: AgentManager,
+  agentId: string
+): CommandDef[] {
+  const def = manager.getAgentDef(agentId);
+  const attached = new Set(def?.skills ?? []);
+  if (attached.size === 0) return [];
+  return manager.skillRegistry
+    .getIndex()
+    .filter((entry) => attached.has(entry.name))
+    .map((entry) => ({
     name: entry.name,
     description: entry.description,
     category: "skill" as const,

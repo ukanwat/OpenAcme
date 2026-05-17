@@ -887,12 +887,12 @@ export class AgentManager {
     this.agents.delete(id);
   }
 
-  /** Drop every cached `Agent`. Use after skill-registry mutations (install,
-   *  uninstall, import, hub update) — those affect `skillsIndex` for every
-   *  agent (especially ones with `skills: []` meaning "see all"), and the
-   *  index is baked into `AgentConfig` + the cached system prompt at
-   *  construction time. Without this, agents keep referencing a stale
-   *  skills list and never see newly-installed skills until restart.
+  /** Drop every cached `Agent`. Use after skill-registry mutations
+   *  (install, uninstall, hub update) — the skill body / description may
+   *  have changed for any agent that has the name in its allowlist, and
+   *  `skillsIndex` is baked into `AgentConfig` + the cached system prompt
+   *  at construction time. Cheaper to evict broadly than to track which
+   *  agents reference which name.
    */
   evictAllAgents(): void {
     this.agents.clear();
@@ -1208,10 +1208,12 @@ export class AgentManager {
       }
     }
 
-    // Compute skills index for system prompt injection
+    // Compute skills index for system prompt injection. Skills must be
+    // explicitly attached — an empty `def.skills` produces no index, so
+    // the agent has no skills in scope until the user attaches them via
+    // the edit page or the chat palette's "+ Add" action.
     let skillsIndex: string | undefined;
     if (def.skills && def.skills.length > 0) {
-      // Filter to agent-specified skills only
       const filtered = this.skillRegistry
         .getIndex()
         .filter((s: SkillIndexEntry) => def.skills.includes(s.name));
@@ -1223,9 +1225,6 @@ export class AgentManager {
           )
           .join("\n");
       }
-    } else if (this.skillRegistry.size > 0) {
-      // No filter specified — include all skills
-      skillsIndex = this.skillRegistry.getIndexAsString();
     }
 
     const b = this.config.behavior;

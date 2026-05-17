@@ -52,6 +52,10 @@ interface Agent {
   model: { provider: string; model: string };
   persona: string;
   tools: string[];
+  /** Skills explicitly attached to this agent. Empty means no skills in
+   *  scope — the agent can't use a skill until it's added here (via the
+   *  edit page or the chat palette's "+ Add" action). */
+  skills?: string[];
 }
 
 interface ModelOption {
@@ -318,6 +322,72 @@ function ChatPageInner() {
       .catch(() => {});
     return () => ctrl.abort();
   }, []);
+
+  // PUT the active agent with `skills: [...existing, skillName]` so the
+  // skill becomes part of the agent's persistent allowlist. Server-side
+  // updateAgent evicts the cached Agent, so the next turn rebuilds the
+  // system prompt with the new skill included.
+  const addSkillToActiveAgent = useCallback(
+    async (skillName: string) => {
+      const agent = agents.find((a) => a.id === activeAgentId);
+      if (!agent) return;
+      // Empty/undefined `skills` means "see everything" — adding one
+      // would shrink the visible set. The button isn't rendered in
+      // that case, but guard here too.
+      const current = agent.skills ?? [];
+      if (current.includes(skillName)) return;
+      const next = [...current, skillName];
+      // Optimistic update so the palette badge flips to "Attached"
+      // immediately. Roll back on PUT failure.
+      setAgents((prev) =>
+        prev.map((a) => (a.id === agent.id ? { ...a, skills: next } : a))
+      );
+      try {
+        const res = await fetch(
+          `${API_BASE}/api/agents/${encodeURIComponent(agent.id)}`,
+          {
+            method: "PUT",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ skills: next }),
+          }
+        );
+        if (!res.ok) {
+          const err = (await res.json().catch(() => ({}))) as { error?: string };
+          throw new Error(err.error ?? res.statusText);
+        }
+        const updated = (await res.json()) as Agent;
+        setAgents((prev) =>
+          prev.map((a) => (a.id === updated.id ? updated : a))
+        );
+        toast.success(`Added /${skillName} to ${agent.name}`);
+      } catch (e) {
+        setAgents((prev) =>
+          prev.map((a) => (a.id === agent.id ? { ...a, skills: current } : a))
+        );
+        toast.error("Failed to add skill", {
+          description: e instanceof Error ? e.message : String(e),
+        });
+      }
+    },
+    [agents, activeAgentId]
+  );
+
+  /** Insert `/name ` into the input at the current `/<partial>` token AND
+   *  attach the skill to the active agent (fire-and-forget). Called from
+   *  Tab, Enter, and click in the palette — selection is implicit attach. */
+  const selectSkill = useCallback(
+    (name: string) => {
+      setInput((prev) =>
+        prev.replace(
+          /(?:(^|[\s(\[{]))\/([a-zA-Z][\w-]*)?$/,
+          `$1/${name} `
+        )
+      );
+      void addSkillToActiveAgent(name);
+      inputRef.current?.focus();
+    },
+    [addSkillToActiveAgent]
+  );
 
   useEffect(() => {
     const ctrl = new AbortController();
@@ -645,24 +715,36 @@ function ChatPageInner() {
       (p) => p.status === "ready" && p.url
     );
 
-    // Scan the input for `/skill-name` tokens at any word boundary. Each
-    // unique referenced skill that exists in the registry gets its full
-    // SKILL.md body prepended to the message as a `[Skill: name] ... ---`
-    // block. The user text stays intact (the `/skill-name` tokens remain
-    // inline). The bubble renderer strips the leading blocks but keeps
-    // the inline tokens as bold links.
+    // Scan the input for `/skill-name` tokens at any word boundary. Only
+    // skills attached to the active agent are inlined; unattached ones
+    // are blocked with a toast telling the user to "+ Add" first. This
+    // matches the broader rule: a skill cannot be used by an agent
+    // unless explicitly attached.
     let text = input.trim();
     const skillTokenRe = /(?:^|[\s(\[{])\/([a-zA-Z][\w-]*)\b/g;
     const referenced: string[] = [];
     const seen = new Set<string>();
     const known = new Set(skills.map((s) => s.name));
+    const attached = new Set(activeAgent?.skills ?? []);
+    const unattached: string[] = [];
     let tm: RegExpExecArray | null;
     while ((tm = skillTokenRe.exec(text)) !== null) {
       const name = tm[1];
-      if (name && known.has(name) && !seen.has(name)) {
-        seen.add(name);
-        referenced.push(name);
-      }
+      if (!name || !known.has(name) || seen.has(name)) continue;
+      seen.add(name);
+      if (attached.has(name)) referenced.push(name);
+      else unattached.push(name);
+    }
+    if (unattached.length > 0) {
+      toast.error(
+        `Skill${unattached.length > 1 ? "s" : ""} not attached: ${unattached
+          .map((n) => `/${n}`)
+          .join(", ")}`,
+        {
+          description: `Use "+ Add to ${activeAgent?.name ?? "agent"}" in the slash palette first, or attach via the agent edit page.`,
+        }
+      );
+      return;
     }
     if (referenced.length > 0) {
       try {
@@ -774,7 +856,7 @@ function ChatPageInner() {
     } finally {
       setSubmitting(false);
     }
-  }, [input, isStreaming, activeAgentId, pendingAttachments, messages, liveSession, skills]);
+  }, [input, isStreaming, activeAgentId, agents, pendingAttachments, messages, liveSession, skills]);
 
   // When the canonical version of a queued message lands in `messages`
   // (server persisted it during the autonomous follow-up turn and
@@ -802,11 +884,7 @@ function ChatPageInner() {
       if (e.key === "Tab") {
         e.preventDefault();
         const chosen = skillMatches[Math.min(skillPaletteIndex, skillMatches.length - 1)];
-        if (chosen) {
-          setInput((prev) =>
-            prev.replace(/(?:(^|[\s(\[{]))\/([a-zA-Z][\w-]*)?$/, `$1/${chosen.name} `)
-          );
-        }
+        if (chosen) selectSkill(chosen.name);
         return;
       }
       if (e.key === "Escape") {
@@ -820,9 +898,7 @@ function ChatPageInner() {
       if (skillPaletteOpen) {
         const chosen = skillMatches[Math.min(skillPaletteIndex, skillMatches.length - 1)];
         if (chosen) {
-          setInput((prev) =>
-            prev.replace(/(?:(^|[\s(\[{]))\/([a-zA-Z][\w-]*)?$/, `$1/${chosen.name} `)
-          );
+          selectSkill(chosen.name);
           return;
         }
       }
@@ -1107,32 +1183,40 @@ function ChatPageInner() {
                   Skill — Tab/Enter to insert
                 </div>
                 <ul>
-                  {skillMatches.map((s, idx) => (
-                    <li
-                      key={s.name}
-                      className={cn(
-                        "cursor-pointer px-3 py-2 text-sm",
-                        idx === skillPaletteIndex
-                          ? "bg-paper-sunk"
-                          : "hover:bg-paper-sunk"
-                      )}
-                      onMouseEnter={() => setSkillPaletteIndex(idx)}
-                      onClick={() => {
-                        setInput((prev) =>
-                          prev.replace(
-                            /(?:(^|[\s(\[{]))\/([a-zA-Z][\w-]*)?$/,
-                            `$1/${s.name} `
-                          )
-                        );
-                        inputRef.current?.focus();
-                      }}
-                    >
-                      <div className="font-mono text-xs">/{s.name}</div>
-                      <div className="text-ink-faint text-xs line-clamp-1">
-                        {s.description}
-                      </div>
-                    </li>
-                  ))}
+                  {skillMatches.map((s, idx) => {
+                    // Selecting any row attaches the skill (if not already)
+                    // and inserts the token. The badge on the right is
+                    // purely informational: "Attached" when this agent
+                    // already has it in its allowlist.
+                    const attached = (activeAgent?.skills ?? []).includes(
+                      s.name
+                    );
+                    return (
+                      <li
+                        key={s.name}
+                        className={cn(
+                          "flex items-center gap-2 px-3 py-2 text-sm cursor-pointer",
+                          idx === skillPaletteIndex
+                            ? "bg-paper-sunk"
+                            : "hover:bg-paper-sunk"
+                        )}
+                        onMouseEnter={() => setSkillPaletteIndex(idx)}
+                        onClick={() => selectSkill(s.name)}
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="font-mono text-xs">/{s.name}</div>
+                          <div className="text-ink-faint text-xs line-clamp-1">
+                            {s.description}
+                          </div>
+                        </div>
+                        {attached && (
+                          <span className="shrink-0 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
+                            Attached
+                          </span>
+                        )}
+                      </li>
+                    );
+                  })}
                 </ul>
               </div>
             )}
