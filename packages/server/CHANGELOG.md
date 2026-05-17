@@ -1,5 +1,25 @@
 # @openacme/server
 
+## 0.5.3
+
+### Patch Changes
+
+- Ship the web UI's static export in the published `@openacme/server` tarball. The package's `prepack` script already copied `apps/web/out` → `packages/server/web`, but the `files` allowlist excluded `web/`, so the static files were silently dropped from the publish. Result: every `npm install -g @openacme/cli` install loaded the API on :3210 but returned 404 on `/`. Adding `"web"` to `files` makes the published Hono daemon serve the bundled UI as documented.
+
+- Updated dependencies []:
+  - @openacme/agent-catalog@0.5.3
+  - @openacme/agent-core@0.5.3
+  - @openacme/auth@0.5.3
+  - @openacme/browser@0.5.3
+  - @openacme/config@0.5.3
+  - @openacme/db@0.5.3
+  - @openacme/llm-provider@0.5.3
+  - @openacme/mcp-client@0.5.3
+  - @openacme/memory@0.5.3
+  - @openacme/skills@0.5.3
+  - @openacme/tasks@0.5.3
+  - @openacme/tools@0.5.3
+
 ## 0.5.2
 
 ### Patch Changes

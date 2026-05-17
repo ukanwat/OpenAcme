@@ -1,5 +1,22 @@
 # @openacme/cli
 
+## 0.5.3
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @openacme/server@0.5.3
+  - @openacme/agent-core@0.5.3
+  - @openacme/auth@0.5.3
+  - @openacme/config@0.5.3
+  - @openacme/db@0.5.3
+  - @openacme/llm-provider@0.5.3
+  - @openacme/mcp-client@0.5.3
+  - @openacme/memory@0.5.3
+  - @openacme/skills@0.5.3
+  - @openacme/tasks@0.5.3
+  - @openacme/tools@0.5.3
+
 ## 0.5.2
 
 ### Patch Changes

@@ -1,6 +1,6 @@
 {
   "name": "@openacme/cli",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "CLI for the OpenAcme AI agent platform — install globally to get the `openacme` command.",
   "license": "MIT",
   "author": "Utkarsh Kanwat",

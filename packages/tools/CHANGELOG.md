@@ -1,5 +1,16 @@
 # @openacme/tools
 
+## 0.5.3
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @openacme/browser@0.5.3
+  - @openacme/config@0.5.3
+  - @openacme/db@0.5.3
+  - @openacme/memory@0.5.3
+  - @openacme/tasks@0.5.3
+
 ## 0.5.2
 
 ### Patch Changes

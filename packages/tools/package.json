@@ -1,6 +1,6 @@
 {
   "name": "@openacme/tools",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "Tool definitions and helpers for OpenAcme agents.",
   "license": "MIT",
   "author": "Utkarsh Kanwat",
