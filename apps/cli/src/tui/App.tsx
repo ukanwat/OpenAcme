@@ -11,7 +11,7 @@ import {
   type UIMessage,
 } from "@openacme/agent-core";
 import { reducer, initState, type PendingAttachment } from "./state.js";
-import { COMMANDS, findCommand, filterCommands, type CommandCtx } from "./commands.js";
+import { COMMANDS, findCommand, filterCommands, buildSkillCommands, type CommandCtx, type CommandDef } from "./commands.js";
 import { MessageList } from "./components/MessageList.js";
 import { StatusLine } from "./components/StatusLine.js";
 import { MultilineInput } from "./components/MultilineInput.js";
@@ -198,9 +198,22 @@ export function App({
     state.modelLabel,
   ]);
 
+  const sendTurnRef = useRef<(text: string, attachments: PendingAttachment[]) => Promise<void>>(
+    async () => {}
+  );
   const ctx: CommandCtx = useMemo(
-    () => ({ dispatch, manager, agentId: state.agentId, exit }),
+    () => ({
+      dispatch,
+      manager,
+      agentId: state.agentId,
+      exit,
+      sendTurn: (text: string) => void sendTurnRef.current(text, []),
+    }),
     [manager, state.agentId, exit]
+  );
+  const skillCommands: CommandDef[] = useMemo(
+    () => buildSkillCommands(manager, state.agentId),
+    [manager, state.agentId]
   );
 
   const configuredProviders = useMemo(
@@ -425,6 +438,11 @@ export function App({
     },
     [manager, state.agentId, state.sessionId, state.committed]
   );
+  // Keep the ref pointed at the latest closure so command handlers
+  // (which capture ctx once) always invoke the current sendTurn.
+  useEffect(() => {
+    sendTurnRef.current = sendTurn;
+  }, [sendTurn]);
 
   // Resolve a raw path (drag-drop or @<path>) to an attachment and stage
   // it in pendingAttachments. Surfaces a one-shot notice on failure.
@@ -475,7 +493,7 @@ export function App({
   // ── Slash command dispatch ─────────────────────────────────────────────
   const runSlashCommand = useCallback(
     async (raw: string) => {
-      const cmd = findCommand(raw);
+      const cmd = findCommand(raw, skillCommands);
       if (!cmd) {
         // Unknown command; surface as an inline error notice.
         dispatch({
@@ -487,7 +505,7 @@ export function App({
       const args = raw.replace(/^\s*\/\S+\s*/, "");
       await cmd.handler(ctx, args);
     },
-    [ctx]
+    [ctx, skillCommands]
   );
 
   // ── Palette state ──────────────────────────────────────────────────────
@@ -498,7 +516,7 @@ export function App({
     !state.skillsOverlayOpen &&
     !state.mcpOverlayOpen &&
     !state.tasksOverlayOpen;
-  const matches = paletteOpen ? filterCommands(input) : [];
+  const matches = paletteOpen ? filterCommands(input, skillCommands) : [];
 
   // ── @-fuzzy file picker state ──────────────────────────────────────────
   // File index is built once at mount via globby (respects .gitignore).
@@ -757,6 +775,7 @@ export function App({
             modelLabel={state.modelLabel}
             committed={state.committed}
             inflight={state.inflight}
+            skillNames={skillCommands.map((c) => c.name)}
           />
         </>
       )}

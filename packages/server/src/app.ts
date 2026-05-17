@@ -847,6 +847,7 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
         tags || [],
         skillBody || ""
       );
+      manager.evictAllAgents();
       return c.json(skill, 201);
     } catch (e) {
       return c.json({ error: (e as Error).message }, 500);
@@ -868,6 +869,7 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
     } catch {
       // best-effort cleanup; legacy delete already succeeded
     }
+    manager.evictAllAgents();
     return c.json({ success: true });
   });
 
@@ -935,6 +937,7 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
       try {
         const result = await hub.install(staging, { source: "local" });
         const skill = manager.skillRegistry.getSkill(result.name);
+        manager.evictAllAgents();
         return c.json({ success: true, name: result.name, skill }, 201);
       } catch (err) {
         if (err instanceof HubError) {

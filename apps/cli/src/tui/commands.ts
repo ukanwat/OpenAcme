@@ -6,15 +6,59 @@ export interface CommandCtx {
   manager: AgentManager;
   agentId: string;
   exit: () => void;
+  /** Submit a user message turn (post-expansion). Used by skill commands
+   *  to send the inlined SKILL.md body as the next turn's user text. */
+  sendTurn: (text: string) => void;
 }
 
 export interface CommandDef {
   name: string;
   description: string;
-  category: "session" | "agent" | "system" | "view";
+  category: "session" | "agent" | "system" | "view" | "skill";
   aliases?: string[];
   argsHint?: string;
   handler: (ctx: CommandCtx, args: string) => void | Promise<void>;
+}
+
+/** Dynamic skill commands — only skills attached to the active agent
+ *  are exposed. Each becomes a `/<skill-name>` command whose handler
+ *  inlines the SKILL.md body into the next user turn so the agent has
+ *  no choice but to apply it. Optional trailing text after the command
+ *  name becomes the user's actual ask appended below the skill body.
+ *
+ *  Mirrors the web's attached-only rule: skills must be explicitly
+ *  added to the agent before they show up here.
+ */
+export function buildSkillCommands(
+  manager: AgentManager,
+  agentId: string
+): CommandDef[] {
+  const def = manager.getAgentDef(agentId);
+  const attached = new Set(def?.skills ?? []);
+  if (attached.size === 0) return [];
+  return manager.skillRegistry
+    .getIndex()
+    .filter((entry) => attached.has(entry.name))
+    .map((entry) => ({
+    name: entry.name,
+    description: entry.description,
+    category: "skill" as const,
+    handler: (c, args) => {
+      const skill = c.manager.skillRegistry.getSkill(entry.name);
+      if (!skill) {
+        c.dispatch({
+          type: "stream-error",
+          error: `Skill '${entry.name}' not found in registry`,
+        });
+        return;
+      }
+      const rest = args.trim();
+      const text =
+        `[Skill: ${entry.name}]\n\n${skill.body}\n\n---\n\n` +
+        (rest || "Apply this skill.");
+      c.sendTurn(text);
+    },
+  }));
 }
 
 export const COMMANDS: CommandDef[] = [
@@ -81,18 +125,24 @@ export const COMMANDS: CommandDef[] = [
   },
 ];
 
-export function findCommand(input: string): CommandDef | undefined {
+export function findCommand(
+  input: string,
+  extra: CommandDef[] = []
+): CommandDef | undefined {
   const trimmed = input.trim().replace(/^\//, "").split(/\s+/)[0]?.toLowerCase();
   if (!trimmed) return undefined;
-  return COMMANDS.find(
-    (c) => c.name === trimmed || c.aliases?.includes(trimmed)
-  );
+  const all = [...COMMANDS, ...extra];
+  return all.find((c) => c.name === trimmed || c.aliases?.includes(trimmed));
 }
 
-export function filterCommands(query: string): CommandDef[] {
+export function filterCommands(
+  query: string,
+  extra: CommandDef[] = []
+): CommandDef[] {
+  const all = [...COMMANDS, ...extra];
   const q = query.replace(/^\//, "").toLowerCase();
-  if (!q) return COMMANDS;
-  return COMMANDS.filter(
+  if (!q) return all;
+  return all.filter(
     (c) =>
       c.name.startsWith(q) ||
       c.aliases?.some((a) => a.startsWith(q))

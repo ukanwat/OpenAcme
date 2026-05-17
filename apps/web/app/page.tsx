@@ -7,6 +7,7 @@ import {
   useEffect,
   useCallback,
   useMemo,
+  type ReactNode,
 } from "react";
 import { ArrowUp, Square, Paperclip } from "lucide-react";
 import { toast } from "sonner";
@@ -51,6 +52,10 @@ interface Agent {
   model: { provider: string; model: string };
   persona: string;
   tools: string[];
+  /** Skills explicitly attached to this agent. Empty means no skills in
+   *  scope — the agent can't use a skill until it's added here (via the
+   *  edit page or the chat palette's "+ Add" action). */
+  skills?: string[];
 }
 
 interface ModelOption {
@@ -117,6 +122,8 @@ function ChatPageInner() {
     null
   );
   const [input, setInput] = useState("");
+  const [skills, setSkills] = useState<{ name: string; description: string }[]>([]);
+  const [skillPaletteIndex, setSkillPaletteIndex] = useState(0);
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [modelCatalog, setModelCatalog] = useState<{
@@ -304,6 +311,83 @@ function ChatPageInner() {
       );
     return () => ctrl.abort();
   }, [loadAgents]);
+
+  // Skills index for the `/skill-name` slash command. Fetched once;
+  // mid-session installs won't show up in autocomplete until reload.
+  useEffect(() => {
+    const ctrl = new AbortController();
+    fetch(`${API_BASE}/api/skills`, { signal: ctrl.signal })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(r.statusText))))
+      .then((list: { name: string; description: string }[]) => setSkills(list))
+      .catch(() => {});
+    return () => ctrl.abort();
+  }, []);
+
+  // PUT the active agent with `skills: [...existing, skillName]` so the
+  // skill becomes part of the agent's persistent allowlist. Server-side
+  // updateAgent evicts the cached Agent, so the next turn rebuilds the
+  // system prompt with the new skill included.
+  const addSkillToActiveAgent = useCallback(
+    async (skillName: string) => {
+      const agent = agents.find((a) => a.id === activeAgentId);
+      if (!agent) return;
+      // Empty/undefined `skills` means "see everything" — adding one
+      // would shrink the visible set. The button isn't rendered in
+      // that case, but guard here too.
+      const current = agent.skills ?? [];
+      if (current.includes(skillName)) return;
+      const next = [...current, skillName];
+      // Optimistic update so the palette badge flips to "Attached"
+      // immediately. Roll back on PUT failure.
+      setAgents((prev) =>
+        prev.map((a) => (a.id === agent.id ? { ...a, skills: next } : a))
+      );
+      try {
+        const res = await fetch(
+          `${API_BASE}/api/agents/${encodeURIComponent(agent.id)}`,
+          {
+            method: "PUT",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ skills: next }),
+          }
+        );
+        if (!res.ok) {
+          const err = (await res.json().catch(() => ({}))) as { error?: string };
+          throw new Error(err.error ?? res.statusText);
+        }
+        const updated = (await res.json()) as Agent;
+        setAgents((prev) =>
+          prev.map((a) => (a.id === updated.id ? updated : a))
+        );
+        toast.success(`Added /${skillName} to ${agent.name}`);
+      } catch (e) {
+        setAgents((prev) =>
+          prev.map((a) => (a.id === agent.id ? { ...a, skills: current } : a))
+        );
+        toast.error("Failed to add skill", {
+          description: e instanceof Error ? e.message : String(e),
+        });
+      }
+    },
+    [agents, activeAgentId]
+  );
+
+  /** Insert `/name ` into the input at the current `/<partial>` token AND
+   *  attach the skill to the active agent (fire-and-forget). Called from
+   *  Tab, Enter, and click in the palette — selection is implicit attach. */
+  const selectSkill = useCallback(
+    (name: string) => {
+      setInput((prev) =>
+        prev.replace(
+          /(?:(^|[\s(\[{]))\/([a-zA-Z][\w-]*)?$/,
+          `$1/${name} `
+        )
+      );
+      void addSkillToActiveAgent(name);
+      inputRef.current?.focus();
+    },
+    [addSkillToActiveAgent]
+  );
 
   useEffect(() => {
     const ctrl = new AbortController();
@@ -597,6 +681,25 @@ function ChatPageInner() {
     [uploadFiles, acceptsAttachments]
   );
 
+  // Slash-skill autocomplete: opens when input is `/<query>` with no spaces
+  // typed yet. On send, a leading `/skillname [rest]` is expanded to inline
+  // the SKILL.md body so the agent has no choice but to apply it.
+  // Open the palette when the input ends with a `/<partial>` token at a
+  // word boundary (start of input or after whitespace/punctuation). Lets
+  // the user fire autocomplete mid-message, not just at the start.
+  const skillPaletteQuery = useMemo(() => {
+    const m = input.match(/(?:^|[\s(\[{])\/([a-zA-Z][\w-]*)?$/);
+    return m ? (m[1] ?? "").toLowerCase() : null;
+  }, [input]);
+  const skillMatches = useMemo(() => {
+    if (skillPaletteQuery === null) return [];
+    return skills.filter((s) => s.name.toLowerCase().startsWith(skillPaletteQuery));
+  }, [skills, skillPaletteQuery]);
+  const skillPaletteOpen = skillPaletteQuery !== null && skillMatches.length > 0;
+  useEffect(() => {
+    setSkillPaletteIndex(0);
+  }, [skillPaletteQuery]);
+
   const send = useCallback(async () => {
     if (!input.trim() && pendingAttachments.length === 0) return;
     if (!activeAgentId) return;
@@ -611,7 +714,61 @@ function ChatPageInner() {
     const ready = pendingAttachments.filter(
       (p) => p.status === "ready" && p.url
     );
-    const text = input.trim();
+
+    // Scan the input for `/skill-name` tokens at any word boundary. Only
+    // skills attached to the active agent are inlined; unattached ones
+    // are blocked with a toast telling the user to "+ Add" first. This
+    // matches the broader rule: a skill cannot be used by an agent
+    // unless explicitly attached.
+    let text = input.trim();
+    const skillTokenRe = /(?:^|[\s(\[{])\/([a-zA-Z][\w-]*)\b/g;
+    const referenced: string[] = [];
+    const seen = new Set<string>();
+    const known = new Set(skills.map((s) => s.name));
+    const attached = new Set(activeAgent?.skills ?? []);
+    const unattached: string[] = [];
+    let tm: RegExpExecArray | null;
+    while ((tm = skillTokenRe.exec(text)) !== null) {
+      const name = tm[1];
+      if (!name || !known.has(name) || seen.has(name)) continue;
+      seen.add(name);
+      if (attached.has(name)) referenced.push(name);
+      else unattached.push(name);
+    }
+    if (unattached.length > 0) {
+      toast.error(
+        `Skill${unattached.length > 1 ? "s" : ""} not attached: ${unattached
+          .map((n) => `/${n}`)
+          .join(", ")}`,
+        {
+          description: `Use "+ Add to ${activeAgent?.name ?? "agent"}" in the slash palette first, or attach via the agent edit page.`,
+        }
+      );
+      return;
+    }
+    if (referenced.length > 0) {
+      try {
+        const bodies = await Promise.all(
+          referenced.map(async (name) => {
+            const r = await fetch(
+              `${API_BASE}/api/skills/${encodeURIComponent(name)}`
+            );
+            if (!r.ok) throw new Error(`Skill '${name}' fetch failed`);
+            const s = (await r.json()) as { body: string };
+            return { name, body: s.body };
+          })
+        );
+        const header = bodies
+          .map((b) => `[Skill: ${b.name}]\n\n${b.body}\n\n---`)
+          .join("\n\n");
+        text = `${header}\n\n${text}`;
+      } catch (e) {
+        toast.error("Failed to load skill", {
+          description: e instanceof Error ? e.message : String(e),
+        });
+        return;
+      }
+    }
     atBottomRef.current = true;
     justSentRef.current = true;
     setInput("");
@@ -699,7 +856,7 @@ function ChatPageInner() {
     } finally {
       setSubmitting(false);
     }
-  }, [input, isStreaming, activeAgentId, pendingAttachments, messages, liveSession]);
+  }, [input, isStreaming, activeAgentId, agents, pendingAttachments, messages, liveSession, skills]);
 
   // When the canonical version of a queued message lands in `messages`
   // (server persisted it during the autonomous follow-up turn and
@@ -713,8 +870,38 @@ function ChatPageInner() {
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.nativeEvent.isComposing) return;
+    if (skillPaletteOpen) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setSkillPaletteIndex((i) => Math.min(i + 1, skillMatches.length - 1));
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setSkillPaletteIndex((i) => Math.max(i - 1, 0));
+        return;
+      }
+      if (e.key === "Tab") {
+        e.preventDefault();
+        const chosen = skillMatches[Math.min(skillPaletteIndex, skillMatches.length - 1)];
+        if (chosen) selectSkill(chosen.name);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setInput("");
+        return;
+      }
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
+      if (skillPaletteOpen) {
+        const chosen = skillMatches[Math.min(skillPaletteIndex, skillMatches.length - 1)];
+        if (chosen) {
+          selectSkill(chosen.name);
+          return;
+        }
+      }
       void send();
     }
   };
@@ -896,6 +1083,7 @@ function ChatPageInner() {
                   key={msg.id}
                   message={msg}
                   agent={activeAgent}
+                  skillNames={skills.map((s) => s.name)}
                   isStreaming={
                     isStreaming &&
                     msg.role === "assistant" &&
@@ -988,6 +1176,50 @@ function ChatPageInner() {
                 newline
               </span>
             </div>
+            <div className="relative">
+            {skillPaletteOpen && (
+              <div className="absolute bottom-full left-0 right-0 mb-1 z-10 max-h-56 overflow-y-auto border border-paper-rule bg-paper shadow-md">
+                <div className="px-3 py-1.5 border-b border-paper-rule font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
+                  Skill — Tab/Enter to insert
+                </div>
+                <ul>
+                  {skillMatches.map((s, idx) => {
+                    // Selecting any row attaches the skill (if not already)
+                    // and inserts the token. The badge on the right is
+                    // purely informational: "Attached" when this agent
+                    // already has it in its allowlist.
+                    const attached = (activeAgent?.skills ?? []).includes(
+                      s.name
+                    );
+                    return (
+                      <li
+                        key={s.name}
+                        className={cn(
+                          "flex items-center gap-2 px-3 py-2 text-sm cursor-pointer",
+                          idx === skillPaletteIndex
+                            ? "bg-paper-sunk"
+                            : "hover:bg-paper-sunk"
+                        )}
+                        onMouseEnter={() => setSkillPaletteIndex(idx)}
+                        onClick={() => selectSkill(s.name)}
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="font-mono text-xs">/{s.name}</div>
+                          <div className="text-ink-faint text-xs line-clamp-1">
+                            {s.description}
+                          </div>
+                        </div>
+                        {attached && (
+                          <span className="shrink-0 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
+                            Attached
+                          </span>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            )}
             <div
               className={cn(
                 "border border-paper-rule bg-paper transition-colors focus-within:border-plot-red",
@@ -1045,22 +1277,65 @@ function ChatPageInner() {
                 >
                   <Paperclip className="size-4" />
                 </Button>
-                <Textarea
-                  ref={inputRef}
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  placeholder={
-                    activeAgent
-                      ? isStreaming
-                        ? `Queue next message for ${activeAgent.name}…`
-                        : `Message ${activeAgent.name}`
-                      : "Select an agent"
-                  }
-                  disabled={!activeAgentId}
-                  rows={1}
-                  className="min-h-[44px] max-h-48 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 focus-visible:outline-none font-sans text-sm"
-                />
+                <div className="relative flex-1 min-w-0">
+                  {/* Overlay renders the same value with a recognized leading
+                      `/skill-name` in bold. Textarea text is transparent so
+                      only the overlay's styled copy is visible. Caret stays
+                      colored via `caret-ink`. The two must share font, size,
+                      padding, line-height, and wrap behavior or the overlay
+                      glyphs drift off the caret. */}
+                  {(() => {
+                    const knownSet = new Set(skills.map((s) => s.name));
+                    const re = /(^|[\s(\[{])\/([a-zA-Z][\w-]*)\b/g;
+                    const out: ReactNode[] = [];
+                    let last = 0;
+                    let k = 0;
+                    let mm: RegExpExecArray | null;
+                    while ((mm = re.exec(input)) !== null) {
+                      const name = mm[2];
+                      if (!name || !knownSet.has(name)) continue;
+                      const tokenStart = mm.index + (mm[1] ? mm[1].length : 0);
+                      if (tokenStart > last) out.push(input.slice(last, tokenStart));
+                      // Color-only, no weight change. Bold widens glyphs and
+                      // drifts the caret off the overlay text; tinting with
+                      // signal-blue (on-palette, not plot-red which means
+                      // "streaming/active") keeps glyph metrics identical.
+                      out.push(
+                        <span key={k++} className="text-signal-blue">
+                          /{name}
+                        </span>
+                      );
+                      last = tokenStart + name.length + 1;
+                    }
+                    if (last < input.length) out.push(input.slice(last));
+                    return (
+                      <div
+                        aria-hidden
+                        className="pointer-events-none absolute inset-0 px-3 py-2 font-sans text-sm whitespace-pre-wrap break-words text-ink"
+                        style={{ wordBreak: "break-word" }}
+                      >
+                        {out.length > 0 ? out : input}
+                        {"​"}
+                      </div>
+                    );
+                  })()}
+                  <Textarea
+                    ref={inputRef}
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    placeholder={
+                      activeAgent
+                        ? isStreaming
+                          ? `Queue next message for ${activeAgent.name}…`
+                          : `Message ${activeAgent.name}`
+                        : "Select an agent"
+                    }
+                    disabled={!activeAgentId}
+                    rows={1}
+                    className="relative min-h-[44px] max-h-48 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 focus-visible:outline-none font-sans text-sm text-transparent caret-ink selection:bg-paper-rule"
+                  />
+                </div>
                 {/* When the agent is mid-turn we show BOTH Stop and Send.
                     Send queues the message (server writes it to chat + to
                     the inbox; the running turn keeps going, the new
@@ -1101,6 +1376,7 @@ function ChatPageInner() {
                   </span>
                 </Button>
               </div>
+            </div>
             </div>
           </div>
         </div>
@@ -1179,14 +1455,46 @@ function MessageHeader({
   );
 }
 
+function renderUserTextWithSkills(
+  text: string,
+  knownSkills: ReadonlySet<string>
+): ReactNode[] {
+  const re = /(^|[\s(\[{])\/([a-zA-Z][\w-]*)\b/g;
+  const out: ReactNode[] = [];
+  let last = 0;
+  let key = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const name = m[2];
+    if (!name || !knownSkills.has(name)) continue;
+    const tokenStart = m.index + (m[1] ? m[1].length : 0);
+    if (tokenStart > last) out.push(text.slice(last, tokenStart));
+    out.push(
+      <Link
+        key={key++}
+        href={`/skills?name=${encodeURIComponent(name)}`}
+        className="text-signal-blue hover:underline"
+        title="Open skill"
+      >
+        /{name}
+      </Link>
+    );
+    last = tokenStart + name.length + 1;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
+
 function MessageBubble({
   message,
   agent,
   isStreaming,
+  skillNames = [],
 }: {
   message: UIMessage;
   agent?: Agent;
   isStreaming: boolean;
+  skillNames?: string[];
 }) {
   if (message.role === "system") return null;
 
@@ -1204,6 +1512,20 @@ function MessageBubble({
       )
       .map((p) => (p as { text: string }).text)
       .join("\n");
+    // `/skill-name`-expanded messages prepend one or more `[Skill: <name>]`
+    // blocks (each ending in `---`) before the user's actual text. Strip
+    // them from the rendered bubble — the body still lives in the persisted
+    // text part so the model sees it — and render the remainder with any
+    // `/skill-name` tokens inside it as bold links.
+    let displayText = text;
+    while (true) {
+      const m = displayText.match(
+        /^\[Skill: ([^\]]+)\]\n\n([\s\S]*?)\n\n---\n\n([\s\S]*)$/
+      );
+      if (!m) break;
+      displayText = m[3] ?? "";
+    }
+    const knownSkills = new Set(skillNames);
     const files = message.parts.filter(
       (p): p is Extract<Part, { type: "file" }> =>
         (p as { type?: unknown }).type === "file"
@@ -1220,9 +1542,9 @@ function MessageBubble({
           role="user"
           createdAt={(message as { createdAt?: number }).createdAt}
         />
-        {text && (
+        {displayText && (
           <div className="text-sm leading-relaxed text-ink whitespace-pre-wrap break-words">
-            {text}
+            {renderUserTextWithSkills(displayText, knownSkills)}
           </div>
         )}
         {images.length > 0 && (

@@ -236,9 +236,9 @@ export const AgentDefinitionSchema = z.object({
   // Names of global mcp.json servers this agent should NOT receive.
   // Empty (default) = inherit everything.
   mcpDisabled: z.array(z.string()).default([]),
-  // Per-agent skills allowlist. `[]` (default) means the agent sees every
-  // installed skill in the workforce. Non-empty restricts to just those
-  // names. Edit-form picker, not exposed in the catalog import form.
+  // Per-agent skills allowlist. Skills MUST be explicitly attached to be
+  // usable — empty (default) means no skills in scope. Attach via the
+  // agent edit page or the chat slash-palette "+ Add" action.
   skills: z.array(z.string()).default([]),
   // Heartbeat / failsafe probe cadence (milliseconds). When an
   // autonomous turn ends with eligible non-terminal work AND the agent

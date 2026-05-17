@@ -888,6 +888,17 @@ export class AgentManager {
     this.agents.delete(id);
   }
 
+  /** Drop every cached `Agent`. Use after skill-registry mutations
+   *  (install, uninstall, hub update) — the skill body / description may
+   *  have changed for any agent that has the name in its allowlist, and
+   *  `skillsIndex` is baked into `AgentConfig` + the cached system prompt
+   *  at construction time. Cheaper to evict broadly than to track which
+   *  agents reference which name.
+   */
+  evictAllAgents(): void {
+    this.agents.clear();
+  }
+
   /** For events emitted by TaskStore before the new sessionId column
    *  was always populated, derive the session from the task's current
    *  binding so SSE fan-out still routes correctly. New emits in the
@@ -930,6 +941,7 @@ export class AgentManager {
     const deps = await this.installTemplateDependencies(template);
     manifest.workforce.skills = deps.skills;
     manifest.workforce.mcpServers = deps.mcpServers;
+    const skillsRegistryMutated = deps.skills.some((s) => s.action === "installed");
 
     // Stage 2 — materialize the agent folder
     const existingIds = new Set(this.agentStore.list().map((d) => d.id));
@@ -948,7 +960,14 @@ export class AgentManager {
     manifest.agent.resourceFiles = this.copyTemplateResources(template, def.id);
     manifest.agent.id = def.id;
     // Resources changed after createAgent ran; rebuild prompt on next chat.
-    this.evictAgent(def.id);
+    // If we installed new skills, every cached agent has a stale skillsIndex
+    // (agents with `skills: []` see all of the registry) — evict them all
+    // so the next chat across the workforce rebuilds with the new entries.
+    if (skillsRegistryMutated) {
+      this.evictAllAgents();
+    } else {
+      this.evictAgent(def.id);
+    }
 
     return { agent: def, manifest };
   }
@@ -1190,10 +1209,12 @@ export class AgentManager {
       }
     }
 
-    // Compute skills index for system prompt injection
+    // Compute skills index for system prompt injection. Skills must be
+    // explicitly attached — an empty `def.skills` produces no index, so
+    // the agent has no skills in scope until the user attaches them via
+    // the edit page or the chat palette's "+ Add" action.
     let skillsIndex: string | undefined;
     if (def.skills && def.skills.length > 0) {
-      // Filter to agent-specified skills only
       const filtered = this.skillRegistry
         .getIndex()
         .filter((s: SkillIndexEntry) => def.skills.includes(s.name));
@@ -1205,9 +1226,6 @@ export class AgentManager {
           )
           .join("\n");
       }
-    } else if (this.skillRegistry.size > 0) {
-      // No filter specified — include all skills
-      skillsIndex = this.skillRegistry.getIndexAsString();
     }
 
     const b = this.config.behavior;
