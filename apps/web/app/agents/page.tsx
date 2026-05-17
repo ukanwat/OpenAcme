@@ -57,11 +57,13 @@ import { cn } from "@/app/lib/utils";
 import { Markdown } from "@/app/components/Markdown";
 import { AgentResourcesPanel } from "@/app/components/AgentResourcesPanel";
 
+type CacheTtl = "5m" | "1h";
+
 interface Agent {
   id: string;
   name: string;
   role: string;
-  model: { provider: string; model: string };
+  model: { provider: string; model: string; cacheTtl?: CacheTtl };
   persona: string;
   tools: string[];
   skills: string[];
@@ -93,7 +95,7 @@ interface CatalogTemplate {
     persona: string;
     tools: string[];
     skills: string[];
-    model?: { provider: string; model: string };
+    model?: { provider: string; model: string; cacheTtl?: CacheTtl };
     mcpServers?: Record<string, MCPServerConfigDto>;
     mcpDisabled?: string[];
   };
@@ -121,6 +123,7 @@ interface FormState {
   role: string;
   provider: string;
   model: string;
+  cacheTtl: CacheTtl;
   persona: string;
   tools: string[];
   skills: string[];
@@ -136,6 +139,7 @@ const FALLBACK_FORM: FormState = {
   role: "",
   provider: "openrouter",
   model: "",
+  cacheTtl: "5m",
   persona: "You are a helpful AI assistant.",
   tools: [],
   skills: [],
@@ -258,6 +262,19 @@ function AgentsPageInner() {
 
   const presets: ModelPreset[] = currentProvider?.models ?? [];
 
+  // Mirrors `anthropicCachePolicy` in @openacme/agent-core. The OR is
+  // load-bearing, not defensive: OpenRouter ships floating aliases under the
+  // `~anthropic/claude-*-latest` prefix (tilde, not slash) which `startsWith
+  // ("anthropic/")` misses but `includes("claude")` catches. Keep both.
+  const isClaudeModel = useMemo(() => {
+    if (formData.provider === "anthropic") return true;
+    if (formData.provider === "openrouter") {
+      const m = formData.model.toLowerCase();
+      return m.startsWith("anthropic/") || m.includes("claude");
+    }
+    return false;
+  }, [formData.provider, formData.model]);
+
   const toolsByToolset = useMemo(() => {
     const map = new Map<string, ToolInfo[]>();
     for (const t of tools) {
@@ -312,7 +329,11 @@ function AgentsPageInner() {
   const buildAgentBody = () => ({
     name: formData.name,
     role: formData.role,
-    model: { provider: formData.provider, model: formData.model },
+    model: {
+      provider: formData.provider,
+      model: formData.model,
+      cacheTtl: formData.cacheTtl,
+    },
     persona: formData.persona,
     tools: formData.tools,
     skills: formData.skills,
@@ -512,6 +533,7 @@ function AgentsPageInner() {
       role: selectedAgent.role ?? "",
       provider: selectedAgent.model.provider,
       model: selectedAgent.model.model,
+      cacheTtl: selectedAgent.model.cacheTtl ?? "5m",
       persona: selectedAgent.persona,
       tools: selectedAgent.tools,
       skills: selectedAgent.skills ?? [],
@@ -600,6 +622,7 @@ function AgentsPageInner() {
             role: tpl.agentFields.role ?? "",
             provider,
             model,
+            cacheTtl: tpl.agentFields.model?.cacheTtl ?? "5m",
             persona: tpl.agentFields.persona,
             tools: tpl.agentFields.tools,
             // Imported agent's skills allowlist starts empty (sees all
@@ -662,6 +685,7 @@ function AgentsPageInner() {
           role: found.role ?? "",
           provider: found.model.provider,
           model: found.model.model,
+          cacheTtl: found.model.cacheTtl ?? "5m",
           persona: found.persona,
           tools: found.tools,
           skills: found.skills ?? [],
@@ -903,6 +927,32 @@ function AgentsPageInner() {
                           />
                         )}
                       </div>
+
+                      {isClaudeModel && (
+                        <div className="grid gap-2 md:col-span-2">
+                          <Label htmlFor="cacheTtl">Prompt cache TTL</Label>
+                          <Select
+                            value={formData.cacheTtl}
+                            onValueChange={(v) =>
+                              setFormData({
+                                ...formData,
+                                cacheTtl: v as CacheTtl,
+                              })
+                            }
+                          >
+                            <SelectTrigger
+                              id="cacheTtl"
+                              className="md:max-w-xs"
+                            >
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="5m">5 minutes (default)</SelectItem>
+                              <SelectItem value="1h">1 hour</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      )}
                     </div>
 
                     <div className="grid gap-2">

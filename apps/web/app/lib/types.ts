@@ -150,3 +150,17 @@ export const UPLOAD_LIMITS = {
   perRequestBytes: 25 * 1024 * 1024,
   perRequestFiles: 10,
 } as const;
+
+// Mirror of `ConfigResponse.model` from @openacme/server/src/app.ts. Workforce
+// default — every agent without its own `model:` block inherits this.
+export interface ModelDefaultsView {
+  provider?: string;
+  model?: string;
+  baseUrl?: string;
+  headers?: Record<string, string>;
+  auth: "api_key" | "oauth";
+  cacheTtl: "5m" | "1h";
+}
+
+// Mirror of `ModelDefaultsUpdate` — body shape for PUT /api/config/model.
+export type ModelDefaultsUpdate = Partial<ModelDefaultsView>;

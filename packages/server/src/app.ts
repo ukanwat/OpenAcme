@@ -37,6 +37,7 @@ import { SkillHub, HubError } from "@openacme/skills";
 import {
   AgentDefinitionSchema,
   MCPServerConfigSchema,
+  ModelConfigSchema,
   loadGlobalMcpServers,
   saveGlobalMcpServers,
   readSecret,
@@ -44,6 +45,7 @@ import {
   type Config,
   type AgentDefinition,
   type MCPServerConfig,
+  type ModelConfig,
   type Provider,
 } from "@openacme/config";
 import {
@@ -74,6 +76,32 @@ const PKG_VERSION: string = (() => {
     return "0.0.0";
   }
 })();
+
+// Wire shapes for `/api/config` + `PUT /api/config/model`. Derived from the
+// existing `ModelConfig` so there's no parallel definition to drift —
+// strip `apiKey` (lives in .env, never on the wire) and surface the two
+// fields the schema guarantees as defaults (`auth`, `cacheTtl`) as
+// non-optional on the GET response.
+type ModelDefaultsView = Omit<ModelConfig, "apiKey"> &
+  Required<Pick<ModelConfig, "auth" | "cacheTtl">>;
+export type ModelDefaultsUpdate = Omit<Partial<ModelConfig>, "apiKey">;
+
+const ModelDefaultsUpdateSchema = ModelConfigSchema.partial().omit({
+  apiKey: true,
+});
+
+export interface ConfigResponse {
+  dataDir: string;
+  model: ModelDefaultsView;
+  server: Config["server"];
+  behavior: Config["behavior"];
+  skills: Config["skills"];
+}
+
+export interface ConfigModelUpdateResponse {
+  ok: true;
+  requiresRestart: boolean;
+}
 
 /**
  * Create the Hono HTTP app with all API routes.
@@ -594,6 +622,7 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
             provider: p.id,
             model: m.id,
             auth: "api_key",
+            cacheTtl: "5m",
           });
           return {
             ...m,
@@ -983,18 +1012,60 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
   });
 
   // ── Config ──
+  // Returns the workforce-wide root config (no API keys). The `model` block
+  // is the default inherited by every agent without its own `model:`
+  // override; reads fresh from disk via `readRawConfig` so the UI shows what
+  // will apply on next restart, not the in-memory snapshot the running
+  // daemon booted with.
   app.get("/api/config", (c) => {
-    // Return safe subset (no API keys)
-    return c.json({
+    const raw = readRawConfig(config.dataDir);
+    const rawModel = (raw.model as Partial<ModelConfig> | undefined) ?? {};
+    const body: ConfigResponse = {
       dataDir: config.dataDir,
       model: {
-        provider: config.model.provider,
-        model: config.model.model,
+        provider: rawModel.provider ?? config.model.provider,
+        model: rawModel.model ?? config.model.model,
+        baseUrl: rawModel.baseUrl,
+        headers: rawModel.headers,
+        auth: rawModel.auth ?? "api_key",
+        cacheTtl: rawModel.cacheTtl ?? "5m",
       },
       server: config.server,
       behavior: config.behavior,
       skills: config.skills,
-    });
+    };
+    return c.json(body);
+  });
+
+  // Partial update of the root `model:` block. Mirrors /api/browser/config:
+  // readRawConfig + spread-merge + writeRawConfig. The setup-wizard feedback
+  // memory enforces this pattern — parsing into ConfigSchema and re-saving
+  // would re-materialize every Zod default and clobber unset user fields.
+  // Never accepts `apiKey` — keys live in .env via /api/keys.
+  app.put("/api/config/model", async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "Invalid JSON" }, 400);
+    }
+    const parsed = ModelDefaultsUpdateSchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json(
+        { error: "Invalid model config", issues: parsed.error.issues },
+        400
+      );
+    }
+    const raw = readRawConfig(config.dataDir);
+    const existing = (raw.model as Record<string, unknown> | undefined) ?? {};
+    const next: Record<string, unknown> = { ...existing };
+    for (const [k, v] of Object.entries(parsed.data)) {
+      if (v === undefined) continue;
+      next[k] = v;
+    }
+    writeRawConfig(config.dataDir, { ...raw, model: next });
+    const ok: ConfigModelUpdateResponse = { ok: true, requiresRestart: true };
+    return c.json(ok);
   });
 
   // ── API Keys ──

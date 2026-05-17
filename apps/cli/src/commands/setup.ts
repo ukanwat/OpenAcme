@@ -276,6 +276,7 @@ async function configureProviderAndCreateAgent(
     model: modelId,
     baseUrl: provider.defaultBaseUrl,
     auth: auth.mode as AuthMode,
+    cacheTtl: "5m" as const,
   };
 
   // 4. Replace-vs-add when an agent with a different provider exists.

@@ -70,6 +70,11 @@ export const ModelConfigSchema = z.object({
   apiKey: z.string().optional(),
   auth: AuthModeSchema.default("api_key"),
   headers: z.record(z.string(), z.string()).optional(),
+  // Anthropic prompt-cache breakpoint TTL. Honored on the native Anthropic
+  // path and on OpenRouter+Claude; ignored on other providers. 1h costs 2×
+  // input on writes vs 5m's 1.25×, but pays back across long agentic turns
+  // where the prefix outlives the 5-minute window.
+  cacheTtl: z.enum(["5m", "1h"]).default("5m"),
 });
 export type ModelConfig = z.infer<typeof ModelConfigSchema>;
 

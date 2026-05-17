@@ -23,9 +23,17 @@ type ChatBody = {
   [k: string]: unknown;
 };
 
-const MARKER = { type: "ephemeral" as const };
+type CacheTtl = "5m" | "1h";
 
-export function injectAnthropicCacheControl(body: unknown): unknown {
+// 5m is OpenRouter's default when `ttl` is absent; only emit the field for 1h.
+function buildMarker(ttl: CacheTtl): { type: "ephemeral"; ttl?: "1h" } {
+  return ttl === "1h" ? { type: "ephemeral", ttl: "1h" } : { type: "ephemeral" };
+}
+
+export function injectAnthropicCacheControl(
+  body: unknown,
+  ttl: CacheTtl = "5m",
+): unknown {
   if (typeof body !== "string") return body;
   let parsed: ChatBody;
   try {
@@ -35,11 +43,12 @@ export function injectAnthropicCacheControl(body: unknown): unknown {
   }
   if (!Array.isArray(parsed.messages) || parsed.messages.length === 0) return body;
 
+  const marker = buildMarker(ttl);
   let used = 0;
   const messages = parsed.messages;
 
   if (messages[0]!.role === "system") {
-    markContentCacheable(messages[0]!);
+    markContentCacheable(messages[0]!, marker);
     used += 1;
   }
 
@@ -49,21 +58,24 @@ export function injectAnthropicCacheControl(body: unknown): unknown {
     if (messages[i]!.role !== "system") nonSystem.push(i);
   }
   for (const i of nonSystem.slice(-remaining)) {
-    markContentCacheable(messages[i]!);
+    markContentCacheable(messages[i]!, marker);
   }
 
   return JSON.stringify(parsed);
 }
 
-function markContentCacheable(msg: ChatMessage): void {
+function markContentCacheable(
+  msg: ChatMessage,
+  marker: { type: "ephemeral"; ttl?: "1h" },
+): void {
   const content = msg.content;
   if (typeof content === "string") {
     if (!content) return;
-    msg.content = [{ type: "text", text: content, cache_control: { ...MARKER } }];
+    msg.content = [{ type: "text", text: content, cache_control: { ...marker } }];
     return;
   }
   if (Array.isArray(content) && content.length > 0) {
     const last = content[content.length - 1]!;
-    last.cache_control = { ...MARKER };
+    last.cache_control = { ...marker };
   }
 }

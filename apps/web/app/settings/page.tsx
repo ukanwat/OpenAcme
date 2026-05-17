@@ -20,6 +20,7 @@ import {
 import { toast } from "sonner";
 import { Sidebar } from "../components/Sidebar";
 import { API_BASE } from "../lib/api";
+import type { ModelDefaultsView, ModelDefaultsUpdate } from "../lib/types";
 import {
   MCPServerForm,
   type MCPServerConfigDto,
@@ -62,6 +63,9 @@ import {
 
 interface ServerConfig {
   dataDir: string;
+  // Mirrors `ConfigResponse.model` in @openacme/server/src/app.ts. Workforce
+  // default — every agent without its own `model:` block inherits this.
+  model: ModelDefaultsView;
   server: { port: number; host: string };
   behavior: { maxSteps: number };
   skills: { directory: string; autoGenerate: boolean };
@@ -73,6 +77,7 @@ interface Provider {
   requiresApiKey: boolean;
   envVar?: string;
   defaultBaseUrl?: string;
+  models?: Array<{ id: string; label: string; hint?: string }>;
 }
 
 interface McpServerStatus {
@@ -149,6 +154,13 @@ export default function SettingsPage() {
   const [configuredKeys, setConfiguredKeys] = useState<Record<string, boolean>>({});
   const [apiKeyInputs, setApiKeyInputs] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState<string | null>(null);
+
+  // Default-model editor — workforce-wide root config.yaml#model. `draft` is
+  // hydrated from the loaded `config.model` and pushed via PUT
+  // /api/config/model. Takes effect on next daemon restart (in-memory
+  // AgentManager snapshot doesn't refresh) — surfaced as inline hint.
+  const [modelDraft, setModelDraft] = useState<ModelDefaultsView | null>(null);
+  const [modelSaving, setModelSaving] = useState(false);
 
   // Subscription paths: state shared by Anthropic Claude Code import + OpenAI
   // ChatGPT OAuth (both surfaced inline with the API-key field, below).
@@ -254,10 +266,38 @@ export default function SettingsPage() {
   const loadConfig = async (signal?: AbortSignal) => {
     try {
       const res = await fetch(`${API_BASE}/api/config`, { signal });
-      if (res.ok) setConfig(await res.json());
+      if (res.ok) {
+        const cfg = (await res.json()) as ServerConfig;
+        setConfig(cfg);
+        setModelDraft(cfg.model);
+      }
     } catch (e) {
       if ((e as Error).name === "AbortError") return;
       toast.error("Failed to load server config");
+    }
+  };
+
+  const saveModelDefaults = async (next: ModelDefaultsUpdate) => {
+    setModelSaving(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/config/model`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(next),
+      });
+      if (!res.ok) {
+        const err = (await res.json().catch(() => null)) as
+          | { error?: string }
+          | null;
+        toast.error(err?.error ?? "Failed to save default model");
+        return;
+      }
+      toast.success("Default model saved (restart to apply)");
+      // Re-fetch so the editor reflects disk truth (handles server-side
+      // schema-strip of fields like apiKey that we never persist).
+      await loadConfig();
+    } finally {
+      setModelSaving(false);
     }
   };
 
@@ -980,7 +1020,167 @@ export default function SettingsPage() {
                 </Card>
               </TabsContent>
 
-              <TabsContent value="providers">
+              <TabsContent value="providers" className="space-y-6">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Default model</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {modelDraft === null ? (
+                      <p className="font-mono text-[12px] text-ink-faint">
+                        Loading…
+                      </p>
+                    ) : (
+                      <div className="space-y-5">
+                        <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+                          <div className="grid gap-2">
+                            <Label htmlFor="default-provider">Provider</Label>
+                            <Select
+                              value={modelDraft.provider ?? ""}
+                              onValueChange={(v) => {
+                                const newPresets =
+                                  providers.find((p) => p.id === v)?.models ??
+                                  [];
+                                const stillValid = newPresets.some(
+                                  (m) => m.id === modelDraft.model
+                                );
+                                setModelDraft({
+                                  ...modelDraft,
+                                  provider: v,
+                                  model: stillValid
+                                    ? modelDraft.model
+                                    : newPresets[0]?.id ?? "",
+                                });
+                              }}
+                            >
+                              <SelectTrigger id="default-provider">
+                                <SelectValue placeholder="Select a provider" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {providers.map((p) => (
+                                  <SelectItem key={p.id} value={p.id}>
+                                    {p.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+
+                          <div className="grid gap-2">
+                            <Label htmlFor="default-model">Model</Label>
+                            {(() => {
+                              const presets =
+                                providers.find(
+                                  (p) => p.id === modelDraft.provider
+                                )?.models ?? [];
+                              if (presets.length === 0) {
+                                return (
+                                  <Input
+                                    id="default-model"
+                                    value={modelDraft.model ?? ""}
+                                    onChange={(e) =>
+                                      setModelDraft({
+                                        ...modelDraft,
+                                        model: e.target.value,
+                                      })
+                                    }
+                                    placeholder="Enter model id"
+                                    className="font-mono text-xs"
+                                  />
+                                );
+                              }
+                              return (
+                                <Select
+                                  value={modelDraft.model ?? ""}
+                                  onValueChange={(v) =>
+                                    setModelDraft({ ...modelDraft, model: v })
+                                  }
+                                >
+                                  <SelectTrigger id="default-model">
+                                    <SelectValue placeholder="Select a model" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {presets.map((m) => (
+                                      <SelectItem key={m.id} value={m.id}>
+                                        {m.label}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              );
+                            })()}
+                          </div>
+                        </div>
+
+                        {/* Cache TTL — Anthropic-only. Same gating as the per-agent form. */}
+                        {(() => {
+                          const m = (modelDraft.model ?? "").toLowerCase();
+                          const isClaude =
+                            modelDraft.provider === "anthropic" ||
+                            (modelDraft.provider === "openrouter" &&
+                              (m.startsWith("anthropic/") ||
+                                m.includes("claude")));
+                          if (!isClaude) return null;
+                          return (
+                            <div className="grid gap-2">
+                              <Label htmlFor="default-cache-ttl">
+                                Prompt cache TTL
+                              </Label>
+                              <Select
+                                value={modelDraft.cacheTtl}
+                                onValueChange={(v) =>
+                                  setModelDraft({
+                                    ...modelDraft,
+                                    cacheTtl: v as "5m" | "1h",
+                                  })
+                                }
+                              >
+                                <SelectTrigger
+                                  id="default-cache-ttl"
+                                  className="md:max-w-xs"
+                                >
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="5m">
+                                    5 minutes (default)
+                                  </SelectItem>
+                                  <SelectItem value="1h">1 hour</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          );
+                        })()}
+
+                        <div className="flex items-center gap-3">
+                          <Button
+                            type="button"
+                            disabled={
+                              modelSaving ||
+                              !modelDraft.provider ||
+                              !modelDraft.model
+                            }
+                            onClick={() =>
+                              saveModelDefaults({
+                                provider: modelDraft.provider,
+                                model: modelDraft.model,
+                                cacheTtl: modelDraft.cacheTtl,
+                                auth: modelDraft.auth,
+                              })
+                            }
+                          >
+                            {modelSaving ? "Saving…" : "Save default model"}
+                          </Button>
+                          <span className="text-[11px] text-ink-faint">
+                            Restart the daemon for changes to take effect on
+                            running agents.
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+
                 <Card>
                   <CardHeader>
                     <CardTitle>Available providers</CardTitle>

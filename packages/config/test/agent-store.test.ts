@@ -23,6 +23,7 @@ function makeAgent(
       provider: provider as AgentDefinition["model"]["provider"],
       model: "test-model",
       auth: "api_key",
+      cacheTtl: "5m",
     },
     persona,
     tools: ["shell"],

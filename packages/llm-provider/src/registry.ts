@@ -432,7 +432,7 @@ const providerFactories: Record<
       ...(isClaudeModel
         ? {
             fetch: async (url, init) => {
-              const newBody = injectAnthropicCacheControl(init?.body);
+              const newBody = injectAnthropicCacheControl(init?.body, config.cacheTtl);
               const rewritten =
                 init && newBody !== init.body
                   ? { ...init, body: newBody as RequestInit["body"] }

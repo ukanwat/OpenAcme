@@ -356,7 +356,7 @@ export class Agent {
     ];
     return {
       system: undefined,
-      messages: applyAnthropicCacheControl(withSystem),
+      messages: applyAnthropicCacheControl(withSystem, this.config.model.cacheTtl),
     };
   }
 
