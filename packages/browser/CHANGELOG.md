@@ -1,5 +1,11 @@
 # @openacme/browser
 
+## 0.5.2
+
+### Patch Changes
+
+- Pin `camoufox-js` to 0.9.3 (regular dep, no longer optional). camoufox-js@0.10.x bumped its `impit` dep to ^0.13.0, and impit@0.13.1+ ships a `preinstall: npx only-allow pnpm` hook that blocks every npm-based install. 0.9.3 → impit@^0.11.0 (no preinstall) and exposes the same `launchOptions` / `CamoufoxFetcher` / `installedVerStr` API our `binaries.ts` consumes. `npm install -g @openacme/cli` now produces a daemon with the Camoufox provider working out of the box.
+
 ## 0.5.1
 
 ### Patch Changes

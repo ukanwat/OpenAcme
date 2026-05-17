@@ -1,6 +1,6 @@
 {
   "name": "@openacme/agent-core",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Agent runtime for the OpenAcme AI agent platform.",
   "license": "MIT",
   "author": "Utkarsh Kanwat",

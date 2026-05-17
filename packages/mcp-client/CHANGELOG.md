@@ -1,5 +1,13 @@
 # @openacme/mcp-client
 
+## 0.5.2
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @openacme/tools@0.5.2
+  - @openacme/config@0.5.2
+
 ## 0.5.1
 
 ### Patch Changes

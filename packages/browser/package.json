@@ -1,6 +1,6 @@
 {
   "name": "@openacme/browser",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Per-agent browser sessions for OpenAcme — pluggable provider (local Chrome / Browserbase / Browser-Use / Firecrawl), per-agent profile dirs, transparent CDP reconnect.",
   "license": "MIT",
   "author": "Utkarsh Kanwat",
@@ -36,11 +36,8 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "camoufox-js": "0.9.3",
     "playwright-core": "^1.50.0"
-  },
-  "//optionalDependencies": "camoufox-js carries a transitive `impit` that pins itself to pnpm via a `preinstall: npx only-allow pnpm` hook, which breaks npm-based global installs of @openacme/cli. Camoufox is one of several browser providers — chromium, browserbase, browser-use, and firecrawl all work without it — so we ship it as optional. The provider code already lazy-imports `camoufox-js` and surfaces a clear runtime error if it isn't available. Users who want Camoufox can `pnpm add -g camoufox-js` themselves.",
-  "optionalDependencies": {
-    "camoufox-js": "^0.10.2"
   },
   "devDependencies": {
     "@repo/typescript-config": "workspace:*",

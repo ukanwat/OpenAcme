@@ -1,6 +1,6 @@
 {
   "name": "@openacme/db",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "SQLite-backed persistence layer (drizzle-orm) for OpenAcme.",
   "license": "MIT",
   "author": "Utkarsh Kanwat",

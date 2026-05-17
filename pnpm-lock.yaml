@@ -392,13 +392,12 @@ importers:
 
   packages/browser:
     dependencies:
+      camoufox-js:
+        specifier: 0.9.3
+        version: 0.9.3(playwright-core@1.59.1)
       playwright-core:
         specifier: ^1.50.0
         version: 1.59.1
-    optionalDependencies:
-      camoufox-js:
-        specifier: ^0.10.2
-        version: 0.10.2(playwright-core@1.59.1)
     devDependencies:
       '@repo/typescript-config':
         specifier: workspace:*
@@ -3933,8 +3932,8 @@ packages:
     resolution: {integrity: sha512-P8BjAsXvZS+VIDUI11hHCQEv74YT67YUi5JJFNWIqL235sBmjX4+qx9Muvls5ivyNENctx46xQLQ3aTuE7ssaQ==}
     engines: {node: '>=6'}
 
-  camoufox-js@0.10.2:
-    resolution: {integrity: sha512-rmOQsSGexkZyNPs7Gj91lxsp6USlmMcDWUKZNYh2Uh54Dg49CWL1nBps2dZhPuxUoECKk6Tw0H4al3o1a6WE1Q==}
+  camoufox-js@0.9.3:
+    resolution: {integrity: sha512-HKdCaUudkgJBzZZ9HxDu0JVmRFKWySnQrhhsqBGnEEuGHzsCs+Bon0bCrEePZ4Ax0BlycMOr/zxKq6kSu516sw==}
     engines: {node: '>= 20'}
     hasBin: true
     peerDependencies:
@@ -4893,56 +4892,56 @@ packages:
     resolution: {integrity: sha512-Hs59xBNfUIunMFgWAbGX5cq6893IbWg4KnrjbYwX3tx0ztorVgTDA6B2sxf8ejHJ4wz8BqGUMYlnzNBer5NvGg==}
     engines: {node: '>= 4'}
 
-  impit-darwin-arm64@0.13.1:
-    resolution: {integrity: sha512-ZjIbzorKMe5uwEfryFE5GUNpFXlJPlTslLvO67f8rmt48nWu1JDJdSdnEhvselEgyD6Y1tXwYWFFATMWeOX6zQ==}
+  impit-darwin-arm64@0.11.0:
+    resolution: {integrity: sha512-XZcgJQ49hVGoa+bXmXqkvSucyo99X13zggMjqg5lU1SYChpgtsmDG2OyhmKt+if07Y+HtB6EAlCBLl6HPPlbbQ==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [darwin]
 
-  impit-darwin-x64@0.13.1:
-    resolution: {integrity: sha512-2NY+2nH+qcU4sSGbb4J9MS5CS3lDZYiVRrQXC+1uXAG6cGQuMSsfbf/VVxhMlW8F2bk7vdpKaaUJRQOJT8gyFQ==}
+  impit-darwin-x64@0.11.0:
+    resolution: {integrity: sha512-lyz/HnElBkr/e13pTrBWDocfjVVR6eKrOZmnVeCEPxYlNuPCOslhHp2p+1BdgIQO/8s2X2MVeS0zVSXq3hNp+w==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [darwin]
 
-  impit-linux-arm64-gnu@0.13.1:
-    resolution: {integrity: sha512-druR0r2yu9pi26ErMdIE95pnJ+6GO0DKdHfifzr1acE+xKAHYMin4nW65bXLpIVLSLZSBMz+L7lP4vEZ1msC5Q==}
+  impit-linux-arm64-gnu@0.11.0:
+    resolution: {integrity: sha512-xdvbpoPnrAHDtetZjfD6/zqswhg9CRAd7f3YyBFzzNg3aoBRhgMFrdD2BLEWAvaq1PZkj+/emCaPZfJZJfPuJg==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [linux]
 
-  impit-linux-arm64-musl@0.13.1:
-    resolution: {integrity: sha512-k1YA4szvgTvNnNPrqcqPCRzx7OxCal/jrAnUl06VBI3bsGvLklib1maIRp6lDSbge12k7h0DKVQmtyihPt2GDg==}
+  impit-linux-arm64-musl@0.11.0:
+    resolution: {integrity: sha512-w7isVF4RfVynopjGSP+a3/6KJmL7MzdEw2niIi9YjRnCRDPi4XEmxDm9XScB7vUE8E4s7LT8QKa/SIb3MEpvFQ==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [linux]
 
-  impit-linux-x64-gnu@0.13.1:
-    resolution: {integrity: sha512-DUy/dZxDd5L9XQVL0pUrILQLtj4eMfExnpdZyQE2qSIe1pmqTndUyJW4UmjRfBkxBHY/sbQGcs0KYRbOWYsIrQ==}
+  impit-linux-x64-gnu@0.11.0:
+    resolution: {integrity: sha512-Y0NBSiFn79G2CXUx2J+a8W2e53ZS7smohsZX18XY8i9LxLf2FQ6pt7e1eWVDHEdo298r5w4EFPc46Gdg6npw+A==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
 
-  impit-linux-x64-musl@0.13.1:
-    resolution: {integrity: sha512-qoCFYpH1HzPgt5LyPKGxdexwlhuf85/CWYZ35UNjE5TILT8qHW7szHt7CZ2EzDIRS0jkOxL4iZS7AxhFtv7c3g==}
+  impit-linux-x64-musl@0.11.0:
+    resolution: {integrity: sha512-UmahyHiqcNTCYnAgW+SjQwfyqfALYxXeN3Likuf/aS/tzlTP/CPmtNu1O+Vl7G8dZaWRlBNtAwvLeKlkUKBL5A==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
 
-  impit-win32-arm64-msvc@0.13.1:
-    resolution: {integrity: sha512-w0Y4Rssf9KOAyqtExtFD+He7aG1KPYRw4U0VktZyguDtZHCETbl/ODuddvh3GP4aToRZTpkBuMsDKSogggQbMA==}
+  impit-win32-arm64-msvc@0.11.0:
+    resolution: {integrity: sha512-LppsL30N+EgVx1tsBNsYz2vf8aM+RXpin/9Szzs8G82PD5QmOnrhJE6JTpzyfVYebjn/UdJcIqFzfcZRCciLOg==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [win32]
 
-  impit-win32-x64-msvc@0.13.1:
-    resolution: {integrity: sha512-MAfYan7e+OK0JI70aHc2Qz92O4EaMXAsI1awQcwN0hGIFgbhf8z3q/XIbyy6h67aV1+L8DZYoITxvHoba1CEhg==}
+  impit-win32-x64-msvc@0.11.0:
+    resolution: {integrity: sha512-fXIrgD8EdxDBic90DvcJ350lbeHYTQGybNEQNW7zQrSMEht0A/r7mm9yI1VhhSOiT7glCl96CAvG3mTSGqAipA==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [win32]
 
-  impit@0.13.1:
-    resolution: {integrity: sha512-nlqkHwotE4OCngPhkgLKPc+CiUSVbpFVfdDr/jWISalB9Mzf9Frw18pJ98rr73G94tEPnkL8Chx9skR11ogguw==}
+  impit@0.11.0:
+    resolution: {integrity: sha512-968YrfzZN5CCgHs/n/yAbPgetq+bOreQOI9UQXmHK3srRs24g+m9CNGL8tRWUIZCK0tnc+baBJ0nw+8saHz0qw==}
     engines: {node: '>= 20'}
 
   import-fresh@3.3.1:
@@ -9963,13 +9962,11 @@ snapshots:
 
   balanced-match@1.0.2: {}
 
-  balanced-match@4.0.4:
-    optional: true
+  balanced-match@4.0.4: {}
 
   base64-js@1.5.1: {}
 
-  baseline-browser-mapping@2.10.30:
-    optional: true
+  baseline-browser-mapping@2.10.30: {}
 
   baseline-browser-mapping@2.10.8: {}
 
@@ -9986,7 +9983,6 @@ snapshots:
     dependencies:
       bindings: 1.5.0
       prebuild-install: 7.1.3
-    optional: true
 
   bignumber.js@9.3.1: {}
 
@@ -10026,7 +10022,6 @@ snapshots:
   brace-expansion@5.0.6:
     dependencies:
       balanced-match: 4.0.4
-    optional: true
 
   braces@3.0.3:
     dependencies:
@@ -10039,7 +10034,6 @@ snapshots:
       electron-to-chromium: 1.5.357
       node-releases: 2.0.44
       update-browserslist-db: 1.2.3(browserslist@4.28.2)
-    optional: true
 
   buffer-from@1.1.2: {}
 
@@ -10071,7 +10065,7 @@ snapshots:
 
   callsites@3.1.0: {}
 
-  camoufox-js@0.10.2(playwright-core@1.59.1):
+  camoufox-js@0.9.3(playwright-core@1.59.1):
     dependencies:
       adm-zip: 0.5.17
       better-sqlite3: 12.10.0
@@ -10079,19 +10073,17 @@ snapshots:
       commander: 14.0.3
       fingerprint-generator: 2.1.82
       glob: 13.0.6
-      impit: 0.13.1
+      impit: 0.11.0
       language-tags: 2.1.0
       maxmind: 5.0.6
       playwright-core: 1.59.1
       pretty-bytes: 7.1.0
       ua-parser-js: 2.0.9
       xml2js: 0.6.2
-    optional: true
 
   caniuse-lite@1.0.30001761: {}
 
-  caniuse-lite@1.0.30001792:
-    optional: true
+  caniuse-lite@1.0.30001792: {}
 
   ccount@2.0.1: {}
 
@@ -10159,7 +10151,6 @@ snapshots:
   cli-progress@3.12.0:
     dependencies:
       string-width: 4.2.3
-    optional: true
 
   cli-spinners@2.9.2: {}
 
@@ -10315,8 +10306,7 @@ snapshots:
 
   dequal@2.0.3: {}
 
-  detect-europe-js@0.1.2:
-    optional: true
+  detect-europe-js@0.1.2: {}
 
   detect-indent@6.1.0: {}
 
@@ -10339,7 +10329,6 @@ snapshots:
   dot-prop@6.0.1:
     dependencies:
       is-obj: 2.0.0
-    optional: true
 
   dotenv@16.0.3: {}
 
@@ -10369,8 +10358,7 @@ snapshots:
 
   ee-first@1.1.1: {}
 
-  electron-to-chromium@1.5.357:
-    optional: true
+  electron-to-chromium@1.5.357: {}
 
   emoji-regex@10.6.0: {}
 
@@ -10880,7 +10868,6 @@ snapshots:
       generative-bayesian-network: 2.1.83
       header-generator: 2.1.82
       tslib: 2.8.1
-    optional: true
 
   flat-cache@4.0.1:
     dependencies:
@@ -10966,7 +10953,6 @@ snapshots:
     dependencies:
       adm-zip: 0.5.17
       tslib: 2.8.1
-    optional: true
 
   get-caller-file@2.0.5: {}
 
@@ -11019,7 +11005,6 @@ snapshots:
       minimatch: 10.2.5
       minipass: 7.1.3
       path-scurry: 2.0.2
-    optional: true
 
   globals@14.0.0: {}
 
@@ -11118,7 +11103,6 @@ snapshots:
       generative-bayesian-network: 2.1.83
       ow: 0.28.2
       tslib: 2.8.1
-    optional: true
 
   highlight.js@10.7.3: {}
 
@@ -11168,41 +11152,40 @@ snapshots:
 
   ignore@7.0.5: {}
 
-  impit-darwin-arm64@0.13.1:
+  impit-darwin-arm64@0.11.0:
     optional: true
 
-  impit-darwin-x64@0.13.1:
+  impit-darwin-x64@0.11.0:
     optional: true
 
-  impit-linux-arm64-gnu@0.13.1:
+  impit-linux-arm64-gnu@0.11.0:
     optional: true
 
-  impit-linux-arm64-musl@0.13.1:
+  impit-linux-arm64-musl@0.11.0:
     optional: true
 
-  impit-linux-x64-gnu@0.13.1:
+  impit-linux-x64-gnu@0.11.0:
     optional: true
 
-  impit-linux-x64-musl@0.13.1:
+  impit-linux-x64-musl@0.11.0:
     optional: true
 
-  impit-win32-arm64-msvc@0.13.1:
+  impit-win32-arm64-msvc@0.11.0:
     optional: true
 
-  impit-win32-x64-msvc@0.13.1:
+  impit-win32-x64-msvc@0.11.0:
     optional: true
 
-  impit@0.13.1:
+  impit@0.11.0:
     optionalDependencies:
-      impit-darwin-arm64: 0.13.1
-      impit-darwin-x64: 0.13.1
-      impit-linux-arm64-gnu: 0.13.1
-      impit-linux-arm64-musl: 0.13.1
-      impit-linux-x64-gnu: 0.13.1
-      impit-linux-x64-musl: 0.13.1
-      impit-win32-arm64-msvc: 0.13.1
-      impit-win32-x64-msvc: 0.13.1
-    optional: true
+      impit-darwin-arm64: 0.11.0
+      impit-darwin-x64: 0.11.0
+      impit-linux-arm64-gnu: 0.11.0
+      impit-linux-arm64-musl: 0.11.0
+      impit-linux-x64-gnu: 0.11.0
+      impit-linux-x64-musl: 0.11.0
+      impit-win32-arm64-msvc: 0.11.0
+      impit-win32-x64-msvc: 0.11.0
 
   import-fresh@3.3.1:
     dependencies:
@@ -11394,8 +11377,7 @@ snapshots:
 
   is-number@7.0.0: {}
 
-  is-obj@2.0.0:
-    optional: true
+  is-obj@2.0.0: {}
 
   is-path-inside@4.0.0: {}
 
@@ -11418,8 +11400,7 @@ snapshots:
     dependencies:
       call-bound: 1.0.4
 
-  is-standalone-pwa@0.1.1:
-    optional: true
+  is-standalone-pwa@0.1.1: {}
 
   is-stream@2.0.1: {}
 
@@ -11556,13 +11537,11 @@ snapshots:
 
   kind-of@6.0.3: {}
 
-  language-subtag-registry@0.3.23:
-    optional: true
+  language-subtag-registry@0.3.23: {}
 
   language-tags@2.1.0:
     dependencies:
       language-subtag-registry: 0.3.23
-    optional: true
 
   levn@0.4.1:
     dependencies:
@@ -11628,8 +11607,7 @@ snapshots:
 
   lodash.camelcase@4.3.0: {}
 
-  lodash.isequal@4.5.0:
-    optional: true
+  lodash.isequal@4.5.0: {}
 
   lodash.merge@4.6.2: {}
 
@@ -11652,8 +11630,7 @@ snapshots:
 
   lru-cache@10.4.3: {}
 
-  lru-cache@11.3.6:
-    optional: true
+  lru-cache@11.3.6: {}
 
   lucide-react@1.14.0(react@19.2.0):
     dependencies:
@@ -11686,7 +11663,6 @@ snapshots:
     dependencies:
       mmdb-lib: 3.0.2
       tiny-lru: 13.0.0
-    optional: true
 
   mdast-util-find-and-replace@3.0.2:
     dependencies:
@@ -12064,7 +12040,6 @@ snapshots:
   minimatch@10.2.5:
     dependencies:
       brace-expansion: 5.0.6
-    optional: true
 
   minimatch@3.1.2:
     dependencies:
@@ -12076,13 +12051,11 @@ snapshots:
 
   minimist@1.2.8: {}
 
-  minipass@7.1.3:
-    optional: true
+  minipass@7.1.3: {}
 
   mkdirp-classic@0.5.3: {}
 
-  mmdb-lib@3.0.2:
-    optional: true
+  mmdb-lib@3.0.2: {}
 
   module-details-from-path@1.0.4: {}
 
@@ -12145,8 +12118,7 @@ snapshots:
     dependencies:
       whatwg-url: 5.0.0
 
-  node-releases@2.0.44:
-    optional: true
+  node-releases@2.0.44: {}
 
   nwsapi@2.2.23: {}
 
@@ -12234,7 +12206,6 @@ snapshots:
       dot-prop: 6.0.1
       lodash.isequal: 4.5.0
       vali-date: 1.0.0
-    optional: true
 
   own-keys@1.0.1:
     dependencies:
@@ -12310,7 +12281,6 @@ snapshots:
     dependencies:
       lru-cache: 11.3.6
       minipass: 7.1.3
-    optional: true
 
   path-to-regexp@8.4.2: {}
 
@@ -12423,8 +12393,7 @@ snapshots:
 
   prettier@3.7.4: {}
 
-  pretty-bytes@7.1.0:
-    optional: true
+  pretty-bytes@7.1.0: {}
 
   process-warning@5.0.0: {}
 
@@ -12803,8 +12772,7 @@ snapshots:
 
   safer-buffer@2.1.2: {}
 
-  sax@1.6.0:
-    optional: true
+  sax@1.6.0: {}
 
   saxes@6.0.0:
     dependencies:
@@ -13176,8 +13144,7 @@ snapshots:
 
   throttleit@2.1.0: {}
 
-  tiny-lru@13.0.0:
-    optional: true
+  tiny-lru@13.0.0: {}
 
   tinybench@2.9.0: {}
 
@@ -13319,15 +13286,13 @@ snapshots:
 
   typescript@5.9.2: {}
 
-  ua-is-frozen@0.1.2:
-    optional: true
+  ua-is-frozen@0.1.2: {}
 
   ua-parser-js@2.0.9:
     dependencies:
       detect-europe-js: 0.1.2
       is-standalone-pwa: 0.1.1
       ua-is-frozen: 0.1.2
-    optional: true
 
   unbox-primitive@1.1.0:
     dependencies:
@@ -13384,7 +13349,6 @@ snapshots:
       browserslist: 4.28.2
       escalade: 3.2.0
       picocolors: 1.1.1
-    optional: true
 
   uri-js@4.4.1:
     dependencies:
@@ -13413,8 +13377,7 @@ snapshots:
 
   uuid@9.0.1: {}
 
-  vali-date@1.0.0:
-    optional: true
+  vali-date@1.0.0: {}
 
   vary@1.1.2: {}
 
@@ -13599,10 +13562,8 @@ snapshots:
     dependencies:
       sax: 1.6.0
       xmlbuilder: 11.0.1
-    optional: true
 
-  xmlbuilder@11.0.1:
-    optional: true
+  xmlbuilder@11.0.1: {}
 
   xmlchars@2.2.0: {}
 
