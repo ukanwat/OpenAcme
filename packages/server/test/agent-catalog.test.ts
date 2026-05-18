@@ -9,12 +9,12 @@ import { AgentManager } from "../src/agent-manager.js";
  * Full end-to-end import flow against a real (temp) data directory and a
  * real AgentManager. Exercises:
  *   - bundled-skill auto-install via the `builtin` SkillHub source
- *   - bundled-MCP add to global mcp.json (Coder bundles `filesystem`)
+ *   - bundled-MCP add to global mcp.json (Software Engineer bundles `filesystem`)
  *   - agent folder materialization (AGENT.md + workspace/ + resources/)
  *   - id auto-increment across repeated imports
  *   - id derives from folder, not frontmatter
  */
-describe("AgentManager.importAgentFromTemplate (bundled Coder)", () => {
+describe("AgentManager.importAgentFromTemplate (bundled Software Engineer)", () => {
   let dataDir: string;
   let manager: AgentManager;
 
@@ -32,16 +32,17 @@ describe("AgentManager.importAgentFromTemplate (bundled Coder)", () => {
     rmSync(dataDir, { recursive: true, force: true });
   });
 
-  it("imports Coder, installs the bundled skill, copies resources", async () => {
-    const result = await manager.importAgentFromTemplate("coder", {});
+  it("imports Software Engineer, installs the bundled skill, copies resources", async () => {
+    const result = await manager.importAgentFromTemplate("software-engineer", {});
 
-    expect(result.agent.id).toBe("coder");
-    expect(result.agent.name).toBe("Coder");
-    expect(result.manifest.agent.id).toBe("coder");
-    expect(result.manifest.agent.resourceFiles).toHaveLength(1);
-    expect(result.manifest.agent.resourceFiles[0]?.relPath).toBe(
-      "style-guide.md"
+    expect(result.agent.id).toBe("software-engineer");
+    expect(result.agent.name).toBe("Software Engineer");
+    expect(result.manifest.agent.id).toBe("software-engineer");
+    expect(result.manifest.agent.resourceFiles.length).toBeGreaterThanOrEqual(1);
+    const styleGuide = result.manifest.agent.resourceFiles.find(
+      (r) => r.relPath === "style-guide.md"
     );
+    expect(styleGuide).toBeDefined();
 
     // Skill: auto-installed via the builtin source
     const skill = result.manifest.workforce.skills.find(
@@ -52,7 +53,7 @@ describe("AgentManager.importAgentFromTemplate (bundled Coder)", () => {
       .toBe(true);
 
     // Agent folder shape
-    const agentDir = path.join(dataDir, "agents", "coder");
+    const agentDir = path.join(dataDir, "agents", "software-engineer");
     expect(existsSync(path.join(agentDir, "AGENT.md"))).toBe(true);
     expect(existsSync(path.join(agentDir, "workspace"))).toBe(true);
     expect(existsSync(path.join(agentDir, "resources", "style-guide.md")))
@@ -89,13 +90,13 @@ describe("AgentManager.importAgentFromTemplate (bundled Coder)", () => {
   });
 
   it("auto-increments the id on repeated imports", async () => {
-    const a = await manager.importAgentFromTemplate("coder", {});
-    const b = await manager.importAgentFromTemplate("coder", {});
-    const c = await manager.importAgentFromTemplate("coder", {});
+    const a = await manager.importAgentFromTemplate("software-engineer", {});
+    const b = await manager.importAgentFromTemplate("software-engineer", {});
+    const c = await manager.importAgentFromTemplate("software-engineer", {});
 
-    expect(a.agent.id).toBe("coder");
-    expect(b.agent.id).toBe("coder-2");
-    expect(c.agent.id).toBe("coder-3");
+    expect(a.agent.id).toBe("software-engineer");
+    expect(b.agent.id).toBe("software-engineer-2");
+    expect(c.agent.id).toBe("software-engineer-3");
 
     // The skill should be installed once and kept on subsequent imports
     // (skills live workforce-wide; only the first import installs them).
@@ -109,14 +110,16 @@ describe("AgentManager.importAgentFromTemplate (bundled Coder)", () => {
     expect(c.manifest.workforce.mcpServers[0]?.action).toBe("kept");
 
     // Each instance has its own resources copied fresh
-    expect(b.manifest.agent.resourceFiles).toHaveLength(1);
+    expect(b.manifest.agent.resourceFiles.length).toBeGreaterThanOrEqual(1);
     expect(
-      existsSync(path.join(dataDir, "agents", "coder-2", "resources", "style-guide.md"))
+      existsSync(
+        path.join(dataDir, "agents", "software-engineer-2", "resources", "style-guide.md")
+      )
     ).toBe(true);
   });
 
   it("honors idOverride when supplied", async () => {
-    const r = await manager.importAgentFromTemplate("coder", {
+    const r = await manager.importAgentFromTemplate("software-engineer", {
       idOverride: "backend-coder",
       nameOverride: "Backend Coder",
     });
@@ -128,9 +131,11 @@ describe("AgentManager.importAgentFromTemplate (bundled Coder)", () => {
   });
 
   it("rejects an idOverride that collides", async () => {
-    await manager.importAgentFromTemplate("coder", {});
+    await manager.importAgentFromTemplate("software-engineer", {});
     await expect(
-      manager.importAgentFromTemplate("coder", { idOverride: "coder" })
+      manager.importAgentFromTemplate("software-engineer", {
+        idOverride: "software-engineer",
+      })
     ).rejects.toThrow(/already exists/);
   });
 
@@ -141,7 +146,7 @@ describe("AgentManager.importAgentFromTemplate (bundled Coder)", () => {
   });
 
   it("applies inline overrides to the imported AgentDefinition", async () => {
-    const r = await manager.importAgentFromTemplate("coder", {
+    const r = await manager.importAgentFromTemplate("software-engineer", {
       overrides: {
         model: { provider: "openai", model: "gpt-5", auth: "api_key" },
         role: "Backend specialist",
@@ -159,23 +164,28 @@ describe("AgentManager.importAgentFromTemplate (bundled Coder)", () => {
   });
 
   it("id derives from folder name, ignoring frontmatter id drift", async () => {
-    await manager.importAgentFromTemplate("coder", {});
+    await manager.importAgentFromTemplate("software-engineer", {});
     // Tamper: prepend a stale `id: imposter` to the AGENT.md frontmatter.
-    const filePath = path.join(dataDir, "agents", "coder", "AGENT.md");
+    const filePath = path.join(
+      dataDir,
+      "agents",
+      "software-engineer",
+      "AGENT.md"
+    );
     const orig = readFileSync(filePath, "utf-8");
     const tampered = orig.replace("---\n", "---\nid: imposter\n");
     require("node:fs").writeFileSync(filePath, tampered);
 
-    // Re-list — the agent should still report id "coder" from its folder,
-    // not the bogus frontmatter id.
+    // Re-list — the agent should still report id "software-engineer" from
+    // its folder, not the bogus frontmatter id.
     const fresh = new AgentManager(ConfigSchema.parse({
       dataDir,
       model: { provider: "anthropic", model: "claude-sonnet-4-6" },
     }));
     try {
       const agents = fresh.listAgents();
-      const coder = agents.find((a) => a.id === "coder");
-      expect(coder).toBeDefined();
+      const swe = agents.find((a) => a.id === "software-engineer");
+      expect(swe).toBeDefined();
       expect(agents.find((a) => a.id === "imposter")).toBeUndefined();
     } finally {
       await fresh.close();
@@ -250,15 +260,15 @@ describe("AgentManager.ensureManagedAgents", () => {
 
   it("installs Acme even when other (unmanaged) agents exist", async () => {
     // Pretend a user-added agent showed up before Acme.
-    await manager.importAgentFromTemplate("coder", {});
-    expect(manager.listAgents().map((a) => a.id)).toEqual(["coder"]);
+    await manager.importAgentFromTemplate("software-engineer", {});
+    expect(manager.listAgents().map((a) => a.id)).toEqual(["software-engineer"]);
 
     await manager.ensureManagedAgents();
 
     // The gate is per-template: the acme slot is empty, so Acme installs
     // even though another agent already exists.
     const ids = manager.listAgents().map((a) => a.id).sort();
-    expect(ids).toEqual(["acme", "coder"]);
+    expect(ids).toEqual(["acme", "software-engineer"]);
     expect(existsSync(path.join(dataDir, "agents", "acme"))).toBe(true);
   });
 

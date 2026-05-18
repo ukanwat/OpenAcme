@@ -39,7 +39,7 @@ packages/
   skills/       # SKILL.md discovery, progressive disclosure + multi-source hub
                 #   (GitHub, marketplaces, URL, well-known, local, builtin) under hub/;
                 #   bundled skills live at packages/skills/builtin/<name>/
-  agent-catalog/# Bundled agent templates (Coder, …) — Importable via web or CLI
+  agent-catalog/# Bundled agent templates (Software Engineer, …) — Importable via web or CLI
   ui/           # Shared React components (minimal)
   eslint-config, typescript-config   # @repo/* internal
 ```

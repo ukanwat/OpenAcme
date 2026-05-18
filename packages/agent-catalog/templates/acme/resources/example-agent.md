@@ -5,7 +5,7 @@ name is the id — `<dataDir>/agents/<id>/AGENT.md`.
 
 ```markdown
 ---
-name: Coder
+name: Software Engineer
 role: Owns implementation work, small refactors, and code review for
   the workforce. Reads existing patterns before writing new code. Hands
   off ambiguous design decisions to the user. Asks when requirements

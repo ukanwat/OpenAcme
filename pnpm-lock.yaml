@@ -325,9 +325,6 @@ importers:
       typescript:
         specifier: 5.9.2
         version: 5.9.2
-      vitest:
-        specifier: ^2.1.9
-        version: 2.1.9(@types/node@22.15.3)(jsdom@25.0.1)(lightningcss@1.32.0)
 
   packages/agent-core:
     dependencies:

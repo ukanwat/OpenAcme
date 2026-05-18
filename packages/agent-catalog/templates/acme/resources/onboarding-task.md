@@ -58,7 +58,7 @@ Welcome to the team.
 
 - **Always**, when you create a new agent from scratch.
 - **Optionally**, when you import an agent from the catalog — the
-  Coder template (etc.) doesn't currently include onboarding, so a
-  fresh import benefits from one.
+  Software Engineer template (etc.) doesn't currently include
+  onboarding, so a fresh import benefits from one.
 - **Skip**, for agents that don't have peer-facing work (e.g., a
   scheduled-recurring data fetcher with no delegation surface).
