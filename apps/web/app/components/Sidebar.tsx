@@ -149,20 +149,22 @@ export function Sidebar({ children }: { children?: React.ReactNode }) {
               ? pathname === "/"
               : pathname.startsWith(item.href);
           const Icon = item.icon;
-          // Home is a same-route nav from `/?session=X`-style URLs and
-          // Next's Link silently no-ops in `output: "export"` mode for
-          // those. Intercept clicks on the Home link and dispatch a
-          // raw history change so `useSearchParams` re-renders. Other
-          // navItems point at real routes (/agents, /tasks, etc.)
-          // which Link handles correctly.
-          const isHomeItem = item.href === "/";
+          // Home → "/" is a same-route change ONLY when we're already
+          // on the root route (e.g. clearing `?session=X` from the chat
+          // page). In static-export mode Next's <Link> silently no-ops
+          // that case, so we intercept and use `navigateClient`. But
+          // when we're on a different route entirely (`/tasks`,
+          // `/agents`, etc.) the Home link IS a real cross-route nav
+          // and Next's <Link> handles it correctly — don't intercept,
+          // or the page won't re-mount.
+          const interceptHome = item.href === "/" && pathname === "/";
           return (
             <Link
               key={item.href}
               href={item.href}
               title={collapsed ? item.label : undefined}
               onClick={
-                isHomeItem
+                interceptHome
                   ? (e) => {
                       e.preventDefault();
                       navigateClient("/");
