@@ -25,7 +25,6 @@ import {
   Clock,
   MessageSquarePlus,
   Plus,
-  ChevronDown,
   Filter as FilterIcon,
   Search,
   Trash2,
@@ -499,23 +498,28 @@ function FilterByAgentPopover({
       <PopoverTrigger asChild>
         <button
           type="button"
+          title={
+            activeName
+              ? `Filtered: ${activeName}`
+              : "Filter by agent"
+          }
+          aria-label={
+            activeName ? `Filtered by ${activeName}` : "Filter by agent"
+          }
           className={cn(
-            "flex shrink-0 items-center gap-1.5 border bg-paper text-[12px] transition-colors hover:border-plot-red/60",
-            compact ? "px-2 py-1" : "px-2.5 py-1",
+            "relative flex size-8 shrink-0 items-center justify-center border bg-paper transition-colors hover:border-plot-red hover:text-plot-red",
             active
-              ? "border-plot-red/60 text-plot-red"
-              : "border-paper-rule text-ink"
+              ? "border-plot-red text-plot-red"
+              : "border-paper-rule text-ink-soft"
           )}
-          aria-label="Filter by agent"
         >
           <FilterIcon className="size-3.5" aria-hidden />
-          <span className="font-medium">
-            {activeName ?? "All agents"}
-          </span>
-          <span className="font-mono tabular-nums text-ink-faint">
-            ·&nbsp;{active ? agentTotals.find((t) => t.id === active)?.count ?? 0 : total}
-          </span>
-          <ChevronDown className="size-3.5 text-ink-soft" aria-hidden />
+          {active && (
+            <span
+              aria-hidden
+              className="absolute right-1 top-1 size-1.5 bg-plot-red"
+            />
+          )}
         </button>
       </PopoverTrigger>
       <PopoverContent
