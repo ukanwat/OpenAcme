@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createLogger } from "@openacme/config/logger";
-import { sessions, type Session } from "../schema.js";
+import { messages, sessions, type Session } from "../schema.js";
 
 const log = createLogger("db.session-store");
 
@@ -142,6 +142,91 @@ export function createSessionStore(
         )
         .orderBy(desc(sessions.updatedAt))
         .all();
+    },
+
+    /**
+     * Compaction fork via rename-swap. Atomically:
+     *   1. Mints a fresh uuid `archivedId`
+     *   2. Inserts a new sessions row at `archivedId` carrying the
+     *      original row's metadata (including its current
+     *      `parent_session_id`, so a re-compress chain keeps linking).
+     *   3. Moves all of the original session's messages under
+     *      `archivedId`.
+     *   4. Drops the original row (no rows reference it anymore — the
+     *      messages just moved).
+     *   5. Re-inserts a fresh row at the ORIGINAL id with
+     *      `parent_session_id = archivedId`, `system_prompt = NULL`,
+     *      and `defer_until` carried over from the original (so a
+     *      standing defer survives compaction).
+     *
+     * Caller then appends compressed `[head + summary + tail]` messages
+     * under the original id. External references that used the original
+     * id (`task.session_id`, `agent_inbox.related_session`, the URL,
+     * the dispatcher's `activeTurns` controller) keep pointing at the
+     * right (post-compression) session with no migration step.
+     *
+     * Returns the new archived id; the original id is unchanged by
+     * design.
+     *
+     * Throws if no row with `id = parentId` exists. Wrap the whole thing
+     * in `orm.transaction(...)` so a failure mid-swap rolls back.
+     */
+    renameAndForkInTransaction(
+      parentId: string,
+      opts: { title?: string } = {}
+    ): { archivedId: string; originalId: string } {
+      return orm.transaction((tx) => {
+        const parent = tx
+          .select()
+          .from(sessions)
+          .where(eq(sessions.id, parentId))
+          .get();
+        if (!parent) {
+          throw new Error(
+            `renameAndForkInTransaction: session ${parentId} not found`
+          );
+        }
+        const archivedId = randomUUID();
+        // 1. Insert the archived shell with the original's metadata.
+        //    `parent_session_id` is inherited so the chain continues
+        //    pointing further back (Y2 → Y → … → root) when this is
+        //    a second-or-later compaction.
+        tx
+          .insert(sessions)
+          .values({
+            id: archivedId,
+            agentId: parent.agentId,
+            title: parent.title,
+            systemPrompt: parent.systemPrompt,
+            parentSessionId: parent.parentSessionId,
+            // defer_until stays on the active row; archive doesn't need it
+            deferUntil: null,
+          })
+          .run();
+        // 2. Move parent's messages to the archive.
+        tx
+          .update(messages)
+          .set({ sessionId: archivedId })
+          .where(eq(messages.sessionId, parentId))
+          .run();
+        // 3. Drop the original row. Nothing FK's to it now.
+        tx.delete(sessions).where(eq(sessions.id, parentId)).run();
+        // 4. Re-insert at the original id, pointing at the archive.
+        //    system_prompt cleared so the next turn rebuilds; defer
+        //    carried over so any standing window survives compaction.
+        tx
+          .insert(sessions)
+          .values({
+            id: parentId,
+            agentId: parent.agentId,
+            title: opts.title ?? parent.title,
+            systemPrompt: null,
+            parentSessionId: archivedId,
+            deferUntil: parent.deferUntil,
+          })
+          .run();
+        return { archivedId, originalId: parentId };
+      });
     },
 
     findChildOf(parentSessionId: string): Session | null {

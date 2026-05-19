@@ -40,6 +40,18 @@ export interface OpenAcmeDataParts {
     kind: "info" | "warn" | "error" | "compressing" | "compressed";
     message: string;
   };
+  /** Mid-turn session-fork notification. Emitted on the PARENT
+   *  session's broadcast channel right before the assistant turn
+   *  actually executes on the child. Existing subscribers handle this
+   *  by reopening their EventSource against `newSessionId`, updating
+   *  the URL, and refetching the new history. Transient — purely a
+   *  routing hint, never persisted to a message row. */
+  "session-fork": {
+    newSessionId: string;
+    /** Optional one-line description for the UI ("Conversation
+     *  compressed", etc.). The client can show it as a status chip. */
+    reason?: string;
+  };
   /** Recall surfacing for a user turn. Lives on the user UIMessage:
    *  drives the chip (RelevantMemoryBlock), the model input
    *  (materializeRecallContext prepends `modelContent`), and the
@@ -91,6 +103,11 @@ export interface AgentConfig {
   persona: string;
   tools: string[];
   maxSteps: number;
+  /** Per-call cap on output tokens. Plumbed into `streamText` so the SDK
+   *  doesn't auto-pick the model's published max — that auto-pick blows
+   *  up on 200K-entitled accounts where 128K reserved output leaves only
+   *  72K for input. Default in config schema is 16K. */
+  maxOutputTokens?: number;
   skillsIndex?: string;
   compression?: CompressionConfig;
   /** Wall-clock cap on a single autonomous turn (ms). */

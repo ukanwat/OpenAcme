@@ -16,6 +16,14 @@ export interface OpenAcmeDataParts {
     kind: "info" | "warn" | "error" | "compressing" | "compressed";
     message: string;
   };
+  /** Mid-turn session-fork signal. Emitted on the PARENT session's
+   *  broadcast channel right before the assistant turn executes on
+   *  the child. Handler re-subscribes to `newSessionId`'s channel,
+   *  updates the URL, refetches messages. Transient. */
+  "session-fork": {
+    newSessionId: string;
+    reason?: string;
+  };
   /** Persisted on the USER message. Carries entries for the chip + the
    *  pre-rendered `modelContent` string materialized into model input
    *  by uiToModelMessages on every load (byte-stable across turns). */

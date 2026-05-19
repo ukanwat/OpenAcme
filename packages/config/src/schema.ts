@@ -400,6 +400,13 @@ export const AgentBehaviorSchema = z.object({
   // agent stops when IT decides (no more tool calls), not when we cap it.
   // Still finite as a safety net against pathological tool-call loops.
   maxSteps: z.number().default(1000),
+  // Per-call output cap. Without this the Anthropic SDK auto-picks the
+  // model's published max (e.g. 128K for opus-4-7) — fine on 1M-context
+  // accounts but on a 200K-entitled account it eats nearly the whole
+  // budget and "Request size exceeds model context window" kicks in
+  // before compression can help. 16K is a sane default for tool-use
+  // turns; raise for long-form generation workloads.
+  maxOutputTokens: z.number().default(16384),
   // Trigger. Default `compressionThresholdPercent: 0.5` enables proactive
   // compression at half the model's context window for any model present
   // in the bundled registry. Models without a registry entry fall through

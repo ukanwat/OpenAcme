@@ -16,6 +16,7 @@ import type { MessageMetadata, OpenAcmeUIMessage } from "./lib/types";
 import { Sidebar } from "./components/Sidebar";
 import { HomeView } from "./components/HomeView";
 import { useLiveSession } from "./lib/useLiveSession";
+import { navigateClient } from "./lib/navigate";
 import { Markdown } from "./components/Markdown";
 import { AttachmentChip } from "./components/AttachmentChip";
 import { ToolBlock } from "./components/ToolBlock";
@@ -142,37 +143,67 @@ function ChatPageInner() {
     activeSessionIdRef.current = activeSessionId;
   }, [activeSessionId]);
 
-  // State → URL sync. `searchParams` is read at fire time but is NOT
-  // a dependency — including it would re-fire on every URL change and
-  // race the URL → state sync below, clobbering an in-flight HomeView
-  // navigation back to "/".
-  useEffect(() => {
-    const currentSession = searchParams.get("session") ?? "";
-    const currentAgent = searchParams.get("agent") ?? "";
-    if (activeSessionId === currentSession && activeAgentId === currentAgent) {
-      return;
-    }
-    if (!activeSessionId) {
-      if (currentSession) router.replace("/");
-      return;
-    }
-    const qs = activeAgentId
-      ? `session=${encodeURIComponent(activeSessionId)}&agent=${encodeURIComponent(activeAgentId)}`
-      : `session=${encodeURIComponent(activeSessionId)}`;
-    router.replace(`/?${qs}`);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSessionId, activeAgentId, router]);
-
-  // URL → state sync (browser nav, HomeView row click).
+  // URL ↔ state sync — URL is the canonical store, state mirrors it.
+  //
+  // Rules:
+  //  - `?session=<id>` is sufficient on its own. The agent is implied
+  //    by the session (sessions are agent-scoped server-side) and we
+  //    resolve it from `/api/sessions/:id` on load. Including `?agent`
+  //    when a session is set is redundant and causes URL-vs-state
+  //    drift bugs (you'd refresh and see the URL ratchet between
+  //    `?session=X&agent=Y` and `?session=X` depending on which
+  //    effect ran last).
+  //  - `?agent=<id>` ALONE (no session) is the "start a fresh chat
+  //    with agent X" state. Sidebar's new-chat button uses it.
+  //  - `/` is the home view (no session, no agent context yet).
+  //
+  // Implementation: one effect, URL → state. State changes also push
+  // the URL via `router.replace` but ALWAYS strip `?agent` when a
+  // session is set. No circular ping-pong: when state matches URL,
+  // both sides quiesce.
   useEffect(() => {
     if (sessionFromUrl !== activeSessionId) {
       setActiveSessionId(sessionFromUrl);
     }
-    if (agentFromUrl && agentFromUrl !== activeAgentId) {
-      setActiveAgentId(agentFromUrl);
+    if (!sessionFromUrl) {
+      // No session in URL — agent state mirrors the URL exactly.
+      // (Includes the empty case: navigating to `/` clears the agent
+      // too. Without this, going home would leave `activeAgentId`
+      // stale and the state→URL effect would immediately rewrite the
+      // URL to `?agent=<previous>`, defeating the navigation.)
+      if (agentFromUrl !== activeAgentId) {
+        setActiveAgentId(agentFromUrl);
+      }
     }
+    // While a session IS in the URL, we intentionally don't clobber
+    // `activeAgentId` — the session row's agent is adopted via the
+    // `/api/sessions/:id` fetch below. The URL stays `?session=<id>`
+    // only; the agent name in the chat header comes from server data.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionFromUrl, agentFromUrl]);
+
+  // Push state → URL ONLY when a local action mints a new session.
+  // `send()` does this when the user hits enter with no active session
+  // (`setActiveSessionId(crypto.randomUUID())`). All other URL changes
+  // flow through `router.push`/`router.replace` at the call site
+  // (sidebar/HomeView/agents-page); the state then catches up via the
+  // URL→state effect above.
+  //
+  // This breaks the previous bidirectional sync loop. With both effects
+  // firing on every URL change, the state→URL effect would close over
+  // stale state during the same render the URL→state was clearing it,
+  // and rewrite the URL back. The fix: only push when the local state
+  // diverges from the URL AND it's a new session id we just minted.
+  useEffect(() => {
+    const currentSession = searchParams.get("session") ?? "";
+    if (activeSessionId && activeSessionId !== currentSession) {
+      // `router.replace` no-ops on same-route URL changes in
+      // `output: "export"` mode; `navigateClient` does the
+      // pushState + manual popstate dispatch so hooks re-render.
+      navigateClient(`/?session=${encodeURIComponent(activeSessionId)}`);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSessionId]);
 
   const [messages, setMessages] = useState<OpenAcmeUIMessage[]>([]);
   const [submitting, setSubmitting] = useState(false);
@@ -218,6 +249,34 @@ function ChatPageInner() {
             }
             return { ...prev, [data.id]: { kind: data.kind, message: data.message } };
           });
+        } else if (part.type === "data-session-fork") {
+          // Server compressed the session and forked it into a child.
+          // Re-point activeSessionId to the child — useLiveSession's
+          // resubscribe effect handles closing the parent EventSource
+          // and opening a new one; the URL-sync effect updates ?session;
+          // the history-fetch effect pulls the compressed history.
+          // We don't broadcast on parent after this point.
+          const data = part.data as { newSessionId?: string; reason?: string };
+          if (typeof data.newSessionId === "string" && data.newSessionId) {
+            const next = data.newSessionId;
+            activeSessionIdRef.current = next;
+            setActiveSessionId(next);
+            if (data.reason) {
+              const id = "session-fork";
+              setStatusBoard((prev) => ({
+                ...prev,
+                [id]: { kind: "info", message: data.reason! },
+              }));
+              // Self-clear after a beat so the chip doesn't linger.
+              setTimeout(() => {
+                setStatusBoard((prev) => {
+                  const out = { ...prev };
+                  delete out[id];
+                  return out;
+                });
+              }, 4000);
+            }
+          }
         }
       },
       // Tab-to-tab queue sync: another tab queued a message, render
@@ -368,9 +427,15 @@ function ChatPageInner() {
     const ctrl = new AbortController();
     fetch(`${API_BASE}/api/sessions/${activeSessionId}`, { signal: ctrl.signal })
       .then((r) => (r.ok ? r.json() : null))
-      .then((data: { title?: string | null } | null) => {
+      .then((data: { title?: string | null; agentId?: string } | null) => {
         if (!data) return;
         setActiveSessionTitle(data.title ?? null);
+        // Adopt the session's agent — URL only carries `?session=<id>`,
+        // so on a direct nav (refresh, shared link, HomeView click) the
+        // chat header would otherwise render with no agent set.
+        if (data.agentId && data.agentId !== activeAgentIdRef.current) {
+          setActiveAgentId(data.agentId);
+        }
       })
       .catch((e) => {
         if ((e as Error).name === "AbortError") return;
@@ -1221,8 +1286,8 @@ function MessageBubble({
           createdAt={(message as { createdAt?: number }).createdAt}
         />
         {text && (
-          <div className="text-sm leading-relaxed text-ink whitespace-pre-wrap break-words">
-            {text}
+          <div className="text-sm leading-relaxed text-ink break-words">
+            <Markdown>{text}</Markdown>
           </div>
         )}
         {images.length > 0 && (

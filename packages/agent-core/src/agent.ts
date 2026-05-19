@@ -10,7 +10,7 @@ import {
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { getModel } from "@openacme/llm-provider";
+import { getModel, getEffectiveContextWindow } from "@openacme/llm-provider";
 import { createLogger } from "@openacme/config/logger";
 import { toolCallContext, type ToolRegistry } from "@openacme/tools";
 import {
@@ -28,7 +28,7 @@ import type {
   InboxRow,
 } from "@openacme/db";
 import { buildSystemPrompt } from "./prompt.js";
-import { Compressor } from "./compression.js";
+import { Compressor, resolveThreshold } from "./compression.js";
 import { findRelevantMemories, type RelevantMemory } from "./selector.js";
 import { collectSurfacedMemories } from "./surfaced.js";
 import { runExtractor } from "./extractor.js";
@@ -43,7 +43,6 @@ import {
 } from "./cache-control.js";
 import {
   uiToModelMessages,
-  parseAttachmentUrl,
   sanitizeStoredHistory,
   ensureStepBoundaries,
   finalizeOrphanToolParts,
@@ -198,6 +197,30 @@ function buildWakeText(inboxText: string | null, now: Date): string {
   return `<system-event>\n${intro}${body}\n</system-event>`;
 }
 
+/** True when the tail of history is a `user`-role autonomous_event wake
+ *  that never got an assistant response. Used by `runAutonomous` to
+ *  suppress no-signal tick wakes when the previous turn left the wake
+ *  row unanswered — otherwise repeated tick wakes pile up indefinitely
+ *  (the redditor's 1112-row case). Inbox-signal wakes ignore this check
+ *  and always fire so new events are surfaced. */
+function lastIsUnansweredAutonomousWake(
+  history: readonly UIMessage[]
+): boolean {
+  if (history.length === 0) return false;
+  const m = history[history.length - 1]!;
+  if (m.role !== "user") return false;
+  const meta = (m as { metadata?: MessageMetadata }).metadata;
+  if (meta?.kind === "autonomous_event") return true;
+  // Belt + suspenders for rows that lost metadata in transit (e.g.
+  // pre-fix compression forks): match the wake-text shape.
+  const first = (m.parts as Array<{ type?: string; text?: string }>)[0];
+  return (
+    first?.type === "text" &&
+    typeof first.text === "string" &&
+    first.text.startsWith("<system-event>\n")
+  );
+}
+
 /**
  * Owns prompt assembly, tool resolution, the per-session prompt cache,
  * and the recall/extractor lifecycle. Host (HTTP route or CLI) drives
@@ -325,6 +348,7 @@ export class Agent {
       messages: cachedMessages,
       tools: tools as Parameters<typeof streamText>[0]["tools"],
       stopWhen: opts.stopWhen ?? stepCountIs(this.config.maxSteps),
+      maxOutputTokens: this.config.maxOutputTokens,
       abortSignal: opts.signal,
       prepareStep: opts.prepareStep,
       // Anthropic native cache-control requires the system prompt to live
@@ -451,9 +475,74 @@ export class Agent {
     }
 
     const inboxText = renderInboxItems(pendingInbox);
-    const baseHistory = sanitizeStoredHistory(
+    let baseHistory = sanitizeStoredHistory(
       this.messageStore.getHistory(opts.sessionId)
     ) as unknown as UIMessage[];
+
+    // Preflight compression: fork the session before the LLM call if
+    // the next request would exceed the configured threshold. After
+    // this block `sessionId` (the local) is the effective session for
+    // the rest of the turn — it differs from `opts.sessionId` when a
+    // fork happened, and the in-progress task's `session_id` has been
+    // re-pointed so the next scheduler wake hits the new id.
+    //
+    // Skipped on failure — broken compression must not block the turn.
+    // Reactive 413 fallback isn't wired today (see agent-core rule),
+    // so a preflight failure here means the turn will likely 4xx.
+    let sessionId = opts.sessionId;
+    try {
+      const compressedId = await this.preflightCompress(
+        sessionId,
+        baseHistory
+      );
+      if (compressedId !== sessionId) {
+        // Notify any tabs subscribed to the parent's SSE channel BEFORE
+        // we swap. Most autonomous wakes have no live subscribers, but
+        // a user who happens to have the parent URL open should get the
+        // routing hint so they follow the fork instead of staring at a
+        // session that just went silent.
+        try {
+          this.broadcaster?.broadcast(sessionId, {
+            kind: "ui_message_part",
+            part: {
+              type: "data-session-fork",
+              data: {
+                newSessionId: compressedId,
+                reason: "Conversation compressed",
+              },
+              transient: true,
+            },
+          });
+        } catch {
+          /* broadcast is best-effort; never block the turn on it */
+        }
+        sessionId = compressedId;
+        baseHistory = sanitizeStoredHistory(
+          this.messageStore.getHistory(sessionId)
+        ) as unknown as UIMessage[];
+        if (inProgress) {
+          try {
+            await this.taskStore.update(inProgress.id, {
+              session_id: sessionId,
+            });
+          } catch (e) {
+            log.warn(
+              {
+                err: e,
+                taskId: inProgress.id,
+                newSession: sessionId,
+              },
+              "preflight fork: failed to update task session_id"
+            );
+          }
+        }
+      }
+    } catch (e) {
+      log.warn(
+        { err: e, sessionId },
+        "preflight compression failed; continuing on parent session"
+      );
+    }
 
     // "Has the agent already responded to every real user message in
     // history?" Walk backwards: if we hit a real (non-autonomous) user
@@ -472,17 +561,27 @@ export class Agent {
     }
 
     // Wake-row decision:
-    //   (a) `inboxText` non-null  → system_notices to surface; write a
-    //       wake row containing them. Wake row exists.
-    //   (b) drained a user_message OR there's an unanswered user
-    //       message in history → no wake row; history's user message
-    //       is what the agent responds to. (The mid-turn /api/chat
-    //       queue path persists the user msg BEFORE writing the
-    //       inbox row, so it's already in history by the time we
-    //       get here.)
-    //   (c) Neither → continuation/health-check wake. Write a brief
-    //       wake row so the model has something to respond to.
+    //   (a) `inboxText` non-null  → write a wake row carrying the new
+    //       signals. Always fires — new events reach the agent
+    //       regardless of prior turn state.
+    //   (b) drained user_message OR unanswered REAL user message →
+    //       no wake row; the agent responds to that user message.
+    //   (c-retry) No signal AND the last message is an unanswered
+    //       autonomous_event wake → don't write a new row, but still
+    //       fire the LLM on the existing history. Gives the agent a
+    //       second chance on transient failures (rate-limit, network
+    //       blip) without piling another wake row.
+    //   (c-fresh) No signal AND no unanswered wake at the tail →
+    //       write the standard "no new signals; scan your queue" wake
+    //       and fire. Lets the agent do periodic health-check / defer
+    //       work on a regular cadence.
     const wakeAt = new Date();
+    const retryingExistingWake =
+      !inboxText &&
+      !drainedUserMessage &&
+      !unansweredUser &&
+      lastIsUnansweredAutonomousWake(baseHistory);
+
     let userMessage: UIMessage | null = null;
     if (inboxText) {
       userMessage = {
@@ -491,13 +590,24 @@ export class Agent {
         parts: [{ type: "text", text: buildWakeText(inboxText, wakeAt) }],
         metadata: { kind: "autonomous_event" } satisfies MessageMetadata,
       };
-    } else if (!drainedUserMessage && !unansweredUser) {
+    } else if (
+      !drainedUserMessage &&
+      !unansweredUser &&
+      !retryingExistingWake
+    ) {
       userMessage = {
         id: randomUUID(),
         role: "user",
         parts: [{ type: "text", text: buildWakeText(null, wakeAt) }],
         metadata: { kind: "autonomous_event" } satisfies MessageMetadata,
       };
+    }
+
+    if (retryingExistingWake) {
+      log.info(
+        { sessionId, agentId: this.config.id },
+        "autonomous wake: previous wake unanswered; retrying on existing history without new row"
+      );
     }
 
     const history = userMessage ? [...baseHistory, userMessage] : baseHistory;
@@ -510,14 +620,14 @@ export class Agent {
     let persistSucceeded = userMessage === null;
     if (userMessage) {
       try {
-        this.messageStore.append(opts.sessionId, {
+        this.messageStore.append(sessionId, {
           id: userMessage.id,
           role: "user",
           parts: userMessage.parts as unknown[],
           metadata: { kind: "autonomous_event" },
         });
         persistSucceeded = true;
-        this.broadcaster?.broadcast(opts.sessionId, {
+        this.broadcaster?.broadcast(sessionId, {
           kind: "messages_appended",
           messages: [
             {
@@ -625,7 +735,7 @@ export class Agent {
     const MAX_INJECTIONS = 5;
     const turnAgentId = this.config.id;
     const turnInboxStore = this.inboxStore;
-    const turnSessionId = opts.sessionId;
+    const turnSessionId = sessionId;
     const prepareStep: Parameters<typeof streamText>[0]["prepareStep"] = (
       stepOpts
     ) => {
@@ -669,7 +779,7 @@ export class Agent {
 
     try {
       const result = await this.runStream({
-        sessionId: opts.sessionId,
+        sessionId,
         history,
         signal: timeoutAbort.signal,
         prepareStep,
@@ -692,7 +802,7 @@ export class Agent {
       if (this.broadcaster) {
         const [a, b] = uiStream.tee();
         assemblerStream = a;
-        const sid = opts.sessionId;
+        const sid = sessionId;
         const bc = this.broadcaster;
         void (async () => {
           const reader = b.getReader();
@@ -744,7 +854,7 @@ export class Agent {
       // `ui_message_part` events; the snapshot path is the safety net.
       const SNAPSHOT_INTERVAL_MS = 500;
       let lastSnapshotAt = 0;
-      const sid = opts.sessionId;
+      const sid = sessionId;
       const bc = this.broadcaster;
       for await (const m of readUIMessageStream<UIMessage>({
         stream: assemblerStream,
@@ -812,12 +922,12 @@ export class Agent {
 
     if (timedOut) {
       throw new AutonomousTurnTimeout(
-        `Autonomous turn timed out after ${timeoutMs}ms in session ${opts.sessionId}`
+        `Autonomous turn timed out after ${timeoutMs}ms in session ${sessionId}`
       );
     }
     if (!assistantMessage) {
       throw new Error(
-        `Autonomous turn in session ${opts.sessionId} produced no assistant message`
+        `Autonomous turn in session ${sessionId} produced no assistant message`
       );
     }
 
@@ -829,7 +939,7 @@ export class Agent {
         finalizeOrphanToolParts(assistantParts)
       );
       const assistantId = assistantMessage.id ?? randomUUID();
-      this.messageStore.append(opts.sessionId, {
+      this.messageStore.append(sessionId, {
         id: assistantId,
         role: "assistant",
         parts: sanitized as unknown[],
@@ -839,7 +949,7 @@ export class Agent {
       // The streaming `ui_message_part` arrivals already produced an
       // assembled UIMessage with this same id, so this is an upsert
       // no-op for clients that received the live stream.
-      this.broadcaster?.broadcast(opts.sessionId, {
+      this.broadcaster?.broadcast(sessionId, {
         kind: "messages_appended",
         messages: [
           {
@@ -849,9 +959,9 @@ export class Agent {
           },
         ],
       });
-      const stored = this.messageStore.getHistory(opts.sessionId);
+      const stored = this.messageStore.getHistory(sessionId);
       this.fireExtractor({
-        sessionId: opts.sessionId,
+        sessionId,
         sessionMessages: stored as unknown as UIMessage[],
       });
     }
@@ -865,10 +975,24 @@ export class Agent {
   }
 
   /**
-   * Compress a session synchronously. Loads parent history, runs the
-   * Compressor pipeline, creates a child session, and persists the new
-   * UIMessage list. Returns the new child id, or the parent id if
-   * compression was a no-op.
+   * Compress a session in place via rename-swap. Loads the current
+   * history, runs the Compressor pipeline to produce
+   * `[head + summary + tail]`, then atomically:
+   *
+   *   1. Archives the existing row under a fresh uuid (`archivedId`),
+   *      moving its messages with it.
+   *   2. Re-creates the row at the ORIGINAL id, now pointing back at
+   *      the archive via `parent_session_id`.
+   *   3. Persists the compressed message list under the original id.
+   *
+   * External references that captured the original id (tasks.session_id,
+   * agent_inbox.related_session, session.defer_until, the URL,
+   * activeTurns controller, etc.) keep resolving to the post-
+   * compression session with no migration step — that's the whole point
+   * of the rename-swap. Callers receive the same id back.
+   *
+   * Returns `parentSessionId` unchanged in all cases (including
+   * noop — the algorithm found nothing to summarize).
    */
   async compress(
     parentSessionId: string,
@@ -876,24 +1000,16 @@ export class Agent {
   ): Promise<string> {
     const parent = this.sessionStore.get(parentSessionId);
     if (!parent) return parentSessionId;
-
-    const existingChild = this.sessionStore.findChildOf(parentSessionId);
-    if (existingChild) {
-      this.compressor.inheritState(parentSessionId, existingChild.id);
-      return existingChild.id;
-    }
-
     if (!this.config.compression) return parentSessionId;
 
     const parentMessages = sanitizeStoredHistory(
       this.messageStore.getHistory(parentSessionId)
     ) as unknown as UIMessage[];
 
-    // Pre-compaction memory flush (port from OpenClaw): give the agent one
-    // silent turn to externalize anything important to MEMORY.md before
-    // the older portion of context is summarized away. Best-effort —
-    // a flush failure (often the same context-overflow that triggered
-    // the compression in the first place) must not block recovery.
+    // Pre-compaction memory flush: give the agent one silent turn to
+    // externalize anything important to MEMORY.md before the older
+    // portion of context is summarized away. Best-effort — failure must
+    // not block compaction recovery.
     await this.flushMemoryBeforeCompression(parentSessionId, parentMessages);
     const result = await this.compressor.compress({
       parentSessionId,
@@ -907,38 +1023,32 @@ export class Agent {
       return parentSessionId;
     }
 
-    const child = this.sessionStore.createChildIfNoSibling(
-      this.config.id,
-      parentSessionId,
-      { title: parent.title ?? undefined }
-    );
-    if (!child) {
-      const won = this.sessionStore.findChildOf(parentSessionId);
-      if (won) {
-        this.compressor.inheritState(parentSessionId, won.id);
-        return won.id;
-      }
+    // Rename-swap: the new compressed session inherits the ORIGINAL id;
+    // the original row (with all its old messages) moves to a fresh
+    // archived uuid. Atomic — sqlite transaction rolls back on any
+    // failure inside.
+    try {
+      this.sessionStore.renameAndForkInTransaction(parentSessionId, {
+        title: parent.title ?? undefined,
+      });
+    } catch (e) {
+      log.error(
+        { err: e, sessionId: parentSessionId },
+        "rename-swap failed; session unchanged"
+      );
       return parentSessionId;
     }
 
     try {
-      // Verbatim head/tail copies of user UIMessages may carry
-      // FileUIParts whose URL points at the PARENT session's attachments
-      // dir. The parent session is hidden post-fork; if it ever gets
-      // deleted, those files would disappear and the child's bubbles
-      // would 404. Copy the bytes under the child's session dir and
-      // rewrite the URL before persisting.
-      const rebound = result.childMessages.map((m) =>
-        this.rebindAttachmentsForChild(m, parentSessionId, child.id)
-      );
-      // Each child row needs a fresh primary key — the parent session's
-      // rows live in the same `messages` table and the original ids are
-      // already taken. We rewrite ids here rather than inside the
-      // Compressor so the algorithm stays free to use parent ids for
-      // its head/tail bookkeeping.
+      // Fresh ids for the compressed rows: head/tail copies preserve the
+      // parent's original row ids on their Step objects, but after the
+      // swap those ids are now under the archived session in the same
+      // `messages` table — reusing them would collide on the PK. Mint
+      // fresh ones at the persistence boundary; the algorithm stays
+      // free to use source ids internally.
       // `stepsToUIMessages` rebuilds parts without step-start markers;
-      // re-inject so the child session converts cleanly on the next turn.
-      const rows: StoredUIMessage[] = rebound.map((m) => ({
+      // re-inject so the new session converts cleanly on the next turn.
+      const rows: StoredUIMessage[] = result.childMessages.map((m) => ({
         id: randomUUID(),
         role: m.role as "user" | "assistant",
         parts: ensureStepBoundaries(
@@ -946,66 +1056,117 @@ export class Agent {
         ) as unknown[],
         metadata: m.metadata,
       }));
-      this.messageStore.appendMany(child.id, rows);
+      this.messageStore.appendMany(parentSessionId, rows);
     } catch (e) {
-      // Body kept verbatim — referenced in CLAUDE.md compression notes.
       log.error(
-        { err: e, childSessionId: child.id },
-        `Failed to persist compressed messages for ${child.id}`
+        { err: e, sessionId: parentSessionId },
+        `Failed to persist compressed messages for ${parentSessionId}`
       );
       throw e;
     }
 
-    this.compressor.inheritState(parentSessionId, child.id);
-    this.compressor.recordResult(child.id, result.savingsRatio, result.summary);
+    this.compressor.recordResult(
+      parentSessionId,
+      result.savingsRatio,
+      result.summary
+    );
     this.cachedSystemPrompts.delete(parentSessionId);
-    return child.id;
+    return parentSessionId;
   }
 
   /**
-   * Walk a single child UIMessage's parts; for any FileUIPart whose URL
-   * resolves to a path under the parent's session dir, copy the file
-   * to a fresh `<childSessionId>/<newAttId>/<filename>` location and
-   * rewrite the URL to match. Other URL shapes (`data:`, external
-   * https, or already-rebound child URLs) pass through unchanged.
+   * Preflight token-budget check + compression. Estimates the next
+   * request's token cost (system + history + tool schemas + per-image
+   * cost) and, if it would cross the configured threshold, forks the
+   * session via `compress(..., "proactive")` and returns the new id.
+   *
+   * Loops up to 3 passes — one compression pass is enough for most
+   * sessions, but very long histories with a tight context window can
+   * need a second or third. Bails as soon as a pass returns the same
+   * id (no-op compression) or the estimate falls under threshold.
+   *
+   * Caller is responsible for re-reading history from the new id if
+   * one was created.
    */
-  private rebindAttachmentsForChild(
-    m: UIMessage,
-    parentSessionId: string,
-    childSessionId: string
-  ): UIMessage {
-    if (m.role !== "user") return m;
-    let mutated = false;
-    const parts = m.parts.map((p) => {
-      if ((p as { type?: unknown }).type !== "file") return p;
-      const fp = p as { url?: string };
-      if (typeof fp.url !== "string") return p;
-      const rel = parseAttachmentUrl(fp.url);
-      // Only rewrite when the URL is rooted in the PARENT session.
-      // Already-child / data: / external URLs pass through.
-      if (!rel || !rel.startsWith(`${parentSessionId}/`)) return p;
-      const filename = rel.split("/").pop() ?? "file";
-      const newAttId = `att_${randomUUID()}`;
-      const newRel = `${childSessionId}/${newAttId}/${filename}`;
-      const srcAbs = path.join(this.attachmentsRoot, rel);
-      const dstAbs = path.join(this.attachmentsRoot, newRel);
-      try {
-        fs.mkdirSync(path.dirname(dstAbs), { recursive: true });
-        fs.copyFileSync(srcAbs, dstAbs);
-      } catch (e) {
-        log.error(
-          { err: e, src: srcAbs, dst: dstAbs },
-          "compression: failed to copy attachment"
-        );
-        // File didn't copy — leave the URL alone; the next render will
-        // 404 against this attachment but the rest of the message
-        // survives. Better than aborting the whole compression.
-        return p;
+  async preflightCompress(
+    sessionId: string,
+    history: UIMessage[]
+  ): Promise<string> {
+    if (!this.config.compression) return sessionId;
+    // The registry-resolved contextWindow (e.g. 1M for opus-4-7) is
+    // aspirational on accounts that don't have the 1M-context tier
+    // entitlement — the API quietly caps them at 200K and returns
+    // "Request size exceeds model context window" once they cross it.
+    // `getEffectiveContextWindow` consults the in-process latch set by
+    // the llm-provider fetch wrapper when it sees the entitlement
+    // rejection and returns 200K in that case, so threshold fires at
+    // 50% × 200K = 100K — well before the wall.
+    const effectiveWindow = getEffectiveContextWindow(this.config.model);
+    const threshold = resolveThreshold(
+      this.config.compression,
+      effectiveWindow
+    );
+    if (threshold === null) return sessionId;
+
+    let currentId = sessionId;
+    let currentHistory = history;
+    for (let pass = 0; pass < 3; pass++) {
+      const tokens = this.estimateRequestTokens(currentId, currentHistory);
+      if (!this.compressor.shouldCompress(currentId, tokens, threshold)) {
+        return currentId;
       }
-      mutated = true;
-      return { ...(p as object), url: `/api/attachments/${newRel}` } as typeof p;
-    });
-    return mutated ? ({ ...m, parts } as UIMessage) : m;
+      log.info(
+        {
+          sessionId: currentId,
+          tokens,
+          threshold,
+          effectiveWindow,
+          pass,
+        },
+        "preflight compression: tokens >= threshold, forking"
+      );
+      const newId = await this.compress(currentId, "proactive");
+      if (newId === currentId) return currentId; // no-op pass; give up
+      currentId = newId;
+      currentHistory = sanitizeStoredHistory(
+        this.messageStore.getHistory(currentId)
+      ) as unknown as UIMessage[];
+    }
+    return currentId;
+  }
+
+  /**
+   * Rough chars/4 token estimate for a full request shape. Images
+   * counted at a flat per-image cost (the Anthropic pricing model);
+   * without this an inlined base64 screenshot would estimate at ~250K
+   * tokens and trip premature compression on every turn that uses
+   * vision. Mirrors hermes-agent's `estimate_request_tokens_rough`.
+   */
+  private estimateRequestTokens(
+    sessionId: string,
+    history: UIMessage[]
+  ): number {
+    const IMAGE_TOKEN_COST = 1500;
+    const system = this.getSystemPrompt(sessionId);
+    let chars = system.length;
+    let imageTokens = 0;
+    for (const m of history) {
+      for (const p of m.parts as Array<{ type?: string; text?: string }>) {
+        if (!p || typeof p !== "object") continue;
+        if (p.type === "text" && typeof p.text === "string") {
+          chars += p.text.length;
+        } else if (p.type === "file" || p.type === "image") {
+          // Don't fold base64 bytes into char count — that's what the
+          // flat per-image cost is for.
+          imageTokens += IMAGE_TOKEN_COST;
+        } else {
+          chars += JSON.stringify(p).length;
+        }
+      }
+    }
+    const tools = this.toolRegistry.getVercelTools(new Set(this.config.tools));
+    chars += JSON.stringify(tools).length;
+    return Math.floor(chars / 4) + imageTokens;
   }
 
   /**
@@ -1026,6 +1187,25 @@ export class Agent {
     history: UIMessage[]
   ): Promise<void> {
     try {
+      // Skip the flush when history is already too big for the model's
+      // effective context window. The flush sends the FULL history to
+      // generateText, so on a session that just tripped the
+      // compression threshold for being oversize we'd just immediately
+      // get "Request size exceeds model context window" back. Failure
+      // is swallowed below so it doesn't BLOCK compaction, but it's
+      // also a wasted Anthropic round-trip. The 75% safety margin
+      // leaves headroom for system prompt + tool schemas + max_tokens.
+      const effective = getEffectiveContextWindow(this.config.model);
+      if (effective != null) {
+        const estimated = this.estimateRequestTokens(sessionId, history);
+        if (estimated > Math.floor(effective * 0.75)) {
+          log.info(
+            { sessionId, estimated, effective },
+            "skipping memory flush: history too large for the model's effective context"
+          );
+          return;
+        }
+      }
       const tools = this.toolRegistry.getVercelTools(new Set(["memory"]));
       // Reuse the cached system prompt so the flush turn sees the same
       // memory header and tool guidance the main turn uses.

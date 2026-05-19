@@ -267,6 +267,16 @@ function upsertById(
   const idx = prev.findIndex((m) => m.id === next.id);
   if (idx < 0) return [...prev, next];
   const out = prev.slice();
-  out[idx] = next;
+  // Preserve metadata across upserts. The chunk-assembled message from
+  // `readUIMessageStream` doesn't carry `metadata`, and a naïve replace
+  // would wipe out fields like `kind: "autonomous_event"` that came in
+  // on the initial fetch — causing autonomous wake rows to render as
+  // ordinary user messages instead of being filtered out by the bubble.
+  const prior = out[idx]!;
+  const merged: OpenAcmeUIMessage =
+    next.metadata == null && prior.metadata != null
+      ? ({ ...next, metadata: prior.metadata } as OpenAcmeUIMessage)
+      : next;
+  out[idx] = merged;
   return out;
 }

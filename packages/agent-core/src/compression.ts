@@ -28,6 +28,11 @@ type Step = {
    *  `messageBudgetLength` to count multimodal parts at their real budget
    *  weight. The algorithm itself never reads or mutates this field. */
   originalParts?: UIMessage["parts"];
+  /** Source UIMessage metadata. Round-tripped through compression so
+   *  fields like `kind: "autonomous_event"` survive into the child —
+   *  otherwise the web's wake-row filter has nothing to match against
+   *  and the rows render as ordinary user bubbles. */
+  metadata?: unknown;
 };
 
 interface ToolCallEntry {
@@ -905,10 +910,14 @@ export function withSummaryPrefix(summary: string): string {
  *   3. Otherwise → null (proactive compression disabled; reactive on
  *      provider 413 / context_overflow still fires).
  */
-export function resolveThreshold(c: CompressionConfig): number | null {
+export function resolveThreshold(
+  c: CompressionConfig,
+  contextWindowOverride?: number | null
+): number | null {
   if (c.thresholdTokens != null) return c.thresholdTokens;
-  if (c.thresholdPercent != null && c.contextWindow != null) {
-    return Math.floor(c.contextWindow * c.thresholdPercent);
+  const window = contextWindowOverride ?? c.contextWindow;
+  if (c.thresholdPercent != null && window != null) {
+    return Math.floor(window * c.thresholdPercent);
   }
   return null;
 }
@@ -1387,6 +1396,7 @@ function flattenUIMessage(m: UIMessage): Step[] {
         toolCallId: null,
         toolName: null,
         originalParts: m.parts,
+        metadata: (m as { metadata?: unknown }).metadata,
       },
     ];
   }
@@ -1445,6 +1455,7 @@ function flattenUIMessage(m: UIMessage): Step[] {
       toolCalls: calls.length > 0 ? JSON.stringify(calls) : null,
       toolCallId: null,
       toolName: null,
+      metadata: (m as { metadata?: unknown }).metadata,
     },
     ...toolSteps,
   ];
@@ -1479,7 +1490,11 @@ export function stepsToUIMessages(steps: Step[]): UIMessage[] {
         : s.content
           ? [{ type: "text", text: s.content } as UIMessage["parts"][number]]
           : [];
-      out.push({ id: s.id, role: "user", parts } as UIMessage);
+      const msg: UIMessage = { id: s.id, role: "user", parts } as UIMessage;
+      if (s.metadata != null) {
+        (msg as { metadata?: unknown }).metadata = s.metadata;
+      }
+      out.push(msg);
       i++;
       continue;
     }
@@ -1508,7 +1523,11 @@ export function stepsToUIMessages(steps: Step[]): UIMessage[] {
           output,
         } as unknown as UIMessage["parts"][number]);
       }
-      out.push({ id: s.id, role: "assistant", parts } as UIMessage);
+      const msg: UIMessage = { id: s.id, role: "assistant", parts } as UIMessage;
+      if (s.metadata != null) {
+        (msg as { metadata?: unknown }).metadata = s.metadata;
+      }
+      out.push(msg);
       i = j;
       continue;
     }

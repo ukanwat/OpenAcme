@@ -548,6 +548,10 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
     // upsert refer to the same row.
     const responseMessageId = randomUUID();
 
+    // The active-turn cleanup needs to know whichever session id the
+    // turn ended up running on (preflight compression can fork mid-turn
+    // and rekey activeTurns to the child).
+    let runtimeSessionId = effectiveSessionId;
     void runChatTurn({
       manager,
       agentId,
@@ -555,9 +559,16 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
       committed,
       responseMessageId,
       signal,
+      onSessionFork: (oldId, newId) => {
+        if (activeTurns.get(oldId) === controller) {
+          activeTurns.delete(oldId);
+          activeTurns.set(newId, controller);
+          runtimeSessionId = newId;
+        }
+      },
     }).finally(() => {
-      if (activeTurns.get(effectiveSessionId) === controller) {
-        activeTurns.delete(effectiveSessionId);
+      if (activeTurns.get(runtimeSessionId) === controller) {
+        activeTurns.delete(runtimeSessionId);
       }
     });
 
@@ -1489,8 +1500,20 @@ async function runChatTurn(args: {
   committed: UIMessage[];
   responseMessageId: string;
   signal: AbortSignal;
+  /** Called when preflight compression forks the session. Implementation
+   *  rekeys the route handler's `activeTurns` map so the stop endpoint
+   *  (`DELETE /api/sessions/:id/active-turn`) finds the AbortController
+   *  under the child id — the originating tab updates its URL on the
+   *  fork notification and will hit the child id from then on. */
+  onSessionFork?: (oldSessionId: string, newSessionId: string) => void;
 }): Promise<void> {
-  const { manager, agentId, sessionId, committed, responseMessageId, signal } = args;
+  const { manager, agentId, responseMessageId, signal, onSessionFork } = args;
+  // `sessionId` and `history` are mutable here because preflight
+  // compression may fork the session before the LLM call. Everything
+  // downstream (recall, runStream, persist, idle broadcast, extractor)
+  // operates on whichever id is current after preflight.
+  let sessionId = args.sessionId;
+  let history = args.committed;
 
   manager.dispatcher.markInteractiveBusy(sessionId);
   manager.broadcaster.broadcast(sessionId, {
@@ -1498,12 +1521,88 @@ async function runChatTurn(args: {
     state: "running",
   });
 
+  // Preflight: fork the session if its history is too large for the
+  // next request. The originating tab is subscribed to the parent's
+  // SSE channel — we broadcast a `data-session-fork` part there so its
+  // useLiveSession handler can repoint to the child before any chunks
+  // start flowing. After this block, all downstream broadcasts go to
+  // the child's channel (which the tab re-subscribes to on fork).
+  const compressionStatusId = `compress-${responseMessageId}`;
+  try {
+    const agent = manager.getAgent(agentId);
+    // Surface a chip while compaction runs — summarizing 100K+ tokens
+    // can take 20-60s and looks like a freeze otherwise. Cleared
+    // unconditionally in the `finally` so the chip doesn't linger.
+    manager.broadcaster.broadcast(sessionId, {
+      kind: "ui_message_part",
+      part: {
+        type: "data-status",
+        id: compressionStatusId,
+        data: {
+          id: compressionStatusId,
+          kind: "compressing",
+          message: "Compacting older context…",
+        },
+        transient: true,
+      },
+    });
+    const compressedId = await agent.preflightCompress(sessionId, history);
+    if (compressedId !== sessionId) {
+      manager.broadcaster.broadcast(sessionId, {
+        kind: "ui_message_part",
+        part: {
+          type: "data-session-fork",
+          data: {
+            newSessionId: compressedId,
+            reason: "Conversation compressed",
+          },
+          transient: true,
+        },
+      });
+      // Swap interactive-busy + running flag onto the child so the
+      // stop-button endpoint and session-state broadcasts target the
+      // session the agent is actually running on.
+      manager.dispatcher.clearInteractiveBusy(sessionId);
+      manager.dispatcher.markInteractiveBusy(compressedId);
+      manager.broadcaster.broadcast(compressedId, {
+        kind: "session_state",
+        state: "running",
+      });
+      onSessionFork?.(sessionId, compressedId);
+      sessionId = compressedId;
+      history = sanitizeStoredHistory(
+        manager.messageStore.getHistory(sessionId)
+      ) as unknown as UIMessage[];
+    }
+  } catch (e) {
+    log.warn(
+      { err: e, sessionId },
+      "chat preflight compression failed; continuing on parent"
+    );
+  } finally {
+    // Clear the in-progress chip. Same id + empty `message` removes
+    // the entry from the client's statusBoard.
+    manager.broadcaster.broadcast(sessionId, {
+      kind: "ui_message_part",
+      part: {
+        type: "data-status",
+        id: compressionStatusId,
+        data: {
+          id: compressionStatusId,
+          kind: "info",
+          message: "",
+        },
+        transient: true,
+      },
+    });
+  }
+
   const wrapper = createUIMessageStream<OpenAcmeUIMessage>({
     execute: async ({ writer }) => {
       const agent = manager.getAgent(agentId);
 
       const recall = await agent.applyMemoryRecall({
-        history: committed,
+        history,
         signal,
       });
       // Attach to the new user msg before runStream: the model sees it
@@ -1514,7 +1613,7 @@ async function runChatTurn(args: {
         recall.modelContent
       );
       if (recallPart) {
-        const lastUser = committed[committed.length - 1];
+        const lastUser = history[history.length - 1];
         if (lastUser?.role === "user") {
           lastUser.parts = [
             ...(lastUser.parts as UIMessage["parts"]),
@@ -1525,7 +1624,7 @@ async function runChatTurn(args: {
 
       const result = await agent.runStream({
         sessionId,
-        history: committed,
+        history,
         signal,
       });
       // Synthetic start so SSE assemblers and `onFinish`'s
@@ -1620,7 +1719,7 @@ async function runChatTurn(args: {
         messageId: responseMessageId,
       });
     },
-    originalMessages: committed as unknown as OpenAcmeUIMessage[],
+    originalMessages: history as unknown as OpenAcmeUIMessage[],
     generateId: () => responseMessageId,
     onFinish: ({ responseMessage }) => {
       manager.dispatcher.clearInteractiveBusy(sessionId);
@@ -1660,7 +1759,7 @@ async function runChatTurn(args: {
       });
 
       const turnHistory = [
-        ...committed,
+        ...history,
         responseMessage as unknown as UIMessage,
       ];
       try {

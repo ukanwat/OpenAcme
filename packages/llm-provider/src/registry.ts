@@ -3,6 +3,7 @@ import {
   defaultSettingsMiddleware,
   type LanguageModel,
 } from "ai";
+import { lookupModelMetadata } from "@openacme/config";
 import type { ModelConfig, Provider } from "@openacme/config";
 import { createLogger } from "@openacme/config/logger";
 import { createOpenAI } from "@ai-sdk/openai";
@@ -68,7 +69,15 @@ function anthropicForbidsSamplingParams(model: string): boolean {
   return ["4-7", "4.7"].some((s) => model.includes(s));
 }
 
-/** Only Opus/Sonnet 4.6+ accept the 1M context beta on subscription auth. */
+/**
+ * Models that support 1M context via the `context-1m-2025-08-07` beta.
+ * Opus/Sonnet 4.6+. Whether 1M actually activates is an account-level
+ * entitlement — sending the beta on an unentitled account returns
+ * "extra usage required", which we detect downstream and latch off for
+ * the process. Anthropic's docs describe 4.7 as 1M-by-default at
+ * standard pricing, but the rollout is tier-gated in practice — without
+ * the beta header, accounts on the older tier silently cap at 200K.
+ */
 function anthropicSupports1mContext(model: string): boolean {
   const m = model.toLowerCase();
   if (!m.includes("opus") && !m.includes("sonnet")) return false;
@@ -98,6 +107,49 @@ function anthropicSupportsFineGrainedToolStreaming(model: string): boolean {
 let anthropic1mDisabled = false;
 const ANTHROPIC_NO_1M_ENTITLEMENT_RX =
   /extra usage is required for long context|context_1m|long.?context.*not.*enabled/i;
+
+/**
+ * Public read of the 1M-entitlement latch. Returns true when this process
+ * has confirmed (via a failed beta-header request) that the account is
+ * actually capped at 200K for the given model. Compression's preflight
+ * uses this to recompute its threshold against the real cap instead of
+ * the registry's `contextWindow` value — the registry says 1M but the
+ * API enforces 200K, so a 50% × 1M threshold (500K) would never fire
+ * before the wall.
+ */
+export function isAnthropicLongContextDisabled(model: string): boolean {
+  return anthropic1mDisabled && anthropicSupports1mContext(model);
+}
+
+/** Fallback ceiling for accounts without the 1M-context entitlement. */
+const ANTHROPIC_LONG_CONTEXT_FALLBACK_TOKENS = 200_000;
+
+/**
+ * Effective per-request context window for a model config. Returns the
+ * registry value normally; when the Anthropic 1M-latch has fired for
+ * this process, Anthropic models that depend on the beta get clipped
+ * to 200K (the standard-tier ceiling). `null` when no registry entry
+ * exists (custom / ollama / unknown — caller falls through to reactive
+ * 413 recovery).
+ *
+ * Mirrors hermes-agent's `conversation_loop.py:long_context_tier`
+ * recovery path: when the API reports the account isn't entitled to
+ * 1M, reduce the compressor's effective context to 200K so threshold
+ * fires before the wall.
+ */
+export function getEffectiveContextWindow(config: ModelConfig): number | null {
+  const meta = lookupModelMetadata(config);
+  const base = meta.contextWindow ?? null;
+  if (base == null) return null;
+  if (
+    config.provider === "anthropic" &&
+    typeof config.model === "string" &&
+    isAnthropicLongContextDisabled(config.model)
+  ) {
+    return Math.min(base, ANTHROPIC_LONG_CONTEXT_FALLBACK_TOKENS);
+  }
+  return base;
+}
 
 /**
  * Resolve whether a request should take the OAuth path. Honors the explicit
@@ -286,10 +338,10 @@ const providerFactories: Record<
               betas.add("fine-grained-tool-streaming-2025-05-14");
             }
             // 1M context: try by default on capable models. If the API
-            // rejects it (account lacks the paid entitlement), the
-            // fetch wrapper below latches `anthropic1mDisabled` and
-            // retries without the beta — and all subsequent requests
-            // in this process skip it from the start.
+            // rejects it (account lacks the entitlement) the fetch
+            // wrapper below latches `anthropic1mDisabled`, persists
+            // the cap, retries without the beta, and subsequent
+            // requests skip it from the start.
             if (
               !anthropic1mDisabled &&
               anthropicSupports1mContext(config.model)
@@ -356,16 +408,21 @@ const providerFactories: Record<
             throw e;
           }
         }
-        // 429 with OAuth: the account we're using is rate-capped. If
-        // the user has since switched to a different Claude account in
-        // Claude Code, that account has its own usage budget. Try a
-        // one-shot Claude Code re-import; if the active bearer differs
-        // from the one we just sent, retry with it. If it doesn't
-        // differ, propagate the 429 — there's nothing more we can do.
-        if (oauthNow && res.status === 429) {
+        // 429 or 401 with OAuth: the account we're using is either
+        // rate-capped (429) or its token expired between our refresh
+        // probe and the API receipt (401). In both cases, the user may
+        // have a fresher bearer in Claude Code (either a different
+        // account they've since switched to, or just a refreshed token
+        // CC managed on its own). Try a one-shot CC re-import; if the
+        // active bearer differs from the one we just sent, retry with
+        // it. If it doesn't differ, propagate the original status.
+        if (oauthNow && (res.status === 429 || res.status === 401)) {
           const active = tryReimportClaudeCode(dataDir);
           if (active && active !== lastSentToken) {
-            log.debug({ provider: "anthropic" }, "anthropic 429 — claude-code creds changed, retrying with new bearer");
+            log.debug(
+              { provider: "anthropic", status: res.status },
+              "anthropic auth/rate retry — claude-code creds changed, retrying with new bearer"
+            );
             res = await send(false);
           }
         }

@@ -1,4 +1,10 @@
-export { getModel, listProviders, type ProviderInfo } from "./registry.js";
+export {
+  getModel,
+  listProviders,
+  getEffectiveContextWindow,
+  isAnthropicLongContextDisabled,
+  type ProviderInfo,
+} from "./registry.js";
 export {
   MODEL_PRESETS,
   DEFAULT_MODEL_BY_PROVIDER,

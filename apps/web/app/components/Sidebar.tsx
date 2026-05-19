@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/app/lib/utils";
 import { API_BASE } from "@/app/lib/api";
+import { navigateClient } from "@/app/lib/navigate";
 import { Logotype } from "@/app/components/Logotype";
 import { Logomark } from "@/app/components/Logomark";
 import { ThemeToggle } from "@/app/components/ThemeToggle";
@@ -148,11 +149,26 @@ export function Sidebar({ children }: { children?: React.ReactNode }) {
               ? pathname === "/"
               : pathname.startsWith(item.href);
           const Icon = item.icon;
+          // Home is a same-route nav from `/?session=X`-style URLs and
+          // Next's Link silently no-ops in `output: "export"` mode for
+          // those. Intercept clicks on the Home link and dispatch a
+          // raw history change so `useSearchParams` re-renders. Other
+          // navItems point at real routes (/agents, /tasks, etc.)
+          // which Link handles correctly.
+          const isHomeItem = item.href === "/";
           return (
             <Link
               key={item.href}
               href={item.href}
               title={collapsed ? item.label : undefined}
+              onClick={
+                isHomeItem
+                  ? (e) => {
+                      e.preventDefault();
+                      navigateClient("/");
+                    }
+                  : undefined
+              }
               className={cn(
                 "group relative flex items-center gap-3 text-sm transition-colors",
                 collapsed ? "justify-center py-2.5" : "px-4 py-2",

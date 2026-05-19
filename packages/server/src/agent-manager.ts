@@ -1252,6 +1252,7 @@ export class AgentManager {
         new Set([...def.tools, ...mcpToolNames, ...SYSTEM_TOOLS])
       ),
       maxSteps: b.maxSteps,
+      maxOutputTokens: b.maxOutputTokens,
       skillsIndex,
       compression: {
         thresholdTokens: b.compressionThresholdTokens,

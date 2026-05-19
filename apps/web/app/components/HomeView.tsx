@@ -33,6 +33,7 @@ import { useHomeStream } from "@/app/lib/useHomeStream";
 import { API_BASE } from "@/app/lib/api";
 import type { SessionSummary } from "@/app/lib/types";
 import { cn } from "@/app/lib/utils";
+import { navigateClient } from "@/app/lib/navigate";
 import { Button } from "@/app/components/ui/button";
 import {
   Popover,
@@ -430,7 +431,7 @@ function NewChatPopover({ compact }: { compact: boolean }) {
                     );
                     params.set("agent", a.id);
                     params.delete("session");
-                    router.push(`/?${params.toString()}`);
+                    navigateClient(`/?${params.toString()}`);
                   }}
                   className="group flex w-full items-start gap-3 border-b border-paper-rule px-3 py-2.5 text-left transition-colors last:border-b-0 hover:bg-paper-sunk"
                 >
@@ -706,11 +707,10 @@ export function HomeView({ compact = false }: { compact?: boolean } = {}) {
   }
 
   const pick = (sid: string) => {
-    const aid = sessionToAgent.get(sid);
-    const qs = aid
-      ? `session=${encodeURIComponent(sid)}&agent=${encodeURIComponent(aid)}`
-      : `session=${encodeURIComponent(sid)}`;
-    router.push(`/?${qs}`);
+    // Canonical URL is `?session=<id>` only — the agent is implied
+    // by the session row server-side, the chat page fetches
+    // `/api/sessions/:id` and adopts the agent from there.
+    navigateClient(`/?session=${encodeURIComponent(sid)}`);
   };
 
   const deleteSession = async (sid: string) => {
@@ -730,7 +730,7 @@ export function HomeView({ compact = false }: { compact?: boolean } = {}) {
       const params = new URLSearchParams(searchParams.toString());
       params.delete("session");
       const qs = params.toString();
-      router.replace(qs ? `/?${qs}` : "/");
+      navigateClient(qs ? `/?${qs}` : "/");
     }
     void refresh({ force: true });
   };
@@ -740,7 +740,7 @@ export function HomeView({ compact = false }: { compact?: boolean } = {}) {
     if (next == null) params.delete("agentFilter");
     else params.set("agentFilter", next);
     const qs = params.toString();
-    router.replace(qs ? `/?${qs}` : "/");
+    navigateClient(qs ? `/?${qs}` : "/");
   };
 
   if (loading && !payload) {

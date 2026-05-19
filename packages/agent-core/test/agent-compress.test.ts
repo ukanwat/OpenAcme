@@ -37,6 +37,9 @@ vi.mock("ai", async () => {
 
 vi.mock("@openacme/llm-provider", () => ({
   getModel: getModelMock,
+  // Returning null disables the size-guard in flushMemoryBeforeCompression
+  // so existing tests don't accidentally exercise that branch.
+  getEffectiveContextWindow: () => null,
 }));
 
 function freshDb() {
@@ -131,7 +134,7 @@ describe("Agent — compress() over UIMessage[]", () => {
     expect(sessions.findChildOf("s1")).toBeNull();
   });
 
-  it("forks the session when there's enough history to summarize", async () => {
+  it("rename-swaps the session in place when there's enough history to summarize", async () => {
     const db = freshDb();
     const sessions = createSessionStore(db);
     const messages = createMessageStore(db);
@@ -154,36 +157,121 @@ describe("Agent — compress() over UIMessage[]", () => {
       protectFirstN: 1,
       tailTokenBudget: 100,
     });
-    const childId = await agent.compress(parent.id, "proactive");
-    expect(childId).not.toBe(parent.id);
-    const child = sessions.get(childId);
-    expect(child?.parentSessionId).toBe(parent.id);
+    const returnedId = await agent.compress(parent.id, "proactive");
 
-    const childHistory = messages.getHistory(childId);
-    expect(childHistory.length).toBeGreaterThan(0);
-    // The synthetic summary shows up as a user message whose first text-part
-    // begins with the SUMMARY_PREFIX sentinel.
-    const summaryRow = childHistory.find((m) => {
+    // Rename-swap: the original id is reused for the post-compression
+    // session; the old row moves to a fresh archived uuid.
+    expect(returnedId).toBe(parent.id);
+    const active = sessions.get(parent.id);
+    expect(active).not.toBeNull();
+    expect(active!.parentSessionId).toBeTruthy();
+    const archivedId = active!.parentSessionId!;
+    expect(archivedId).not.toBe(parent.id);
+
+    const archived = sessions.get(archivedId);
+    expect(archived).not.toBeNull();
+    expect(archived!.parentSessionId).toBeNull();
+
+    // listActive hides the archived row, surfaces the active one
+    const active_sessions = sessions.listActive("a1");
+    const activeIds = new Set(active_sessions.map((s) => s.id));
+    expect(activeIds.has(parent.id)).toBe(true);
+    expect(activeIds.has(archivedId)).toBe(false);
+
+    // Compressed history is now under the ORIGINAL id; the archived row
+    // holds the original messages.
+    const postHistory = messages.getHistory(parent.id);
+    expect(postHistory.length).toBeGreaterThan(0);
+    const summaryRow = postHistory.find((m) => {
       if (m.role !== "user") return false;
       const first = m.parts[0] as { type?: string; text?: string };
       return first.type === "text" && (first.text ?? "").includes("[CONTEXT COMPACTION");
     });
     expect(summaryRow).toBeDefined();
+
+    const archivedHistory = messages.getHistory(archivedId);
+    expect(archivedHistory.length).toBe(seed.length);
   });
 
-  it("returns the existing child when one already exists for the parent", async () => {
+  it("extends the chain on repeated compression", async () => {
     const db = freshDb();
     const sessions = createSessionStore(db);
-    const parent = sessions.create("a1", { id: "p" });
-    const existingChild = sessions.createChildIfNoSibling("a1", parent.id);
-    expect(existingChild).not.toBeNull();
+    const messages = createMessageStore(db);
+    const parent = sessions.create("a1", { id: "p-chain" });
 
-    const agent = makeAgent({ db, thresholdTokens: 1000 });
-    const childId = await agent.compress(parent.id, "proactive");
-    expect(childId).toBe(existingChild!.id);
+    // First pass: seed + compress
+    function seedTurns(target: string, count: number, prefix: string): void {
+      const turns: UIMessage[] = [];
+      for (let i = 0; i < count; i++) {
+        turns.push(userUI(`${prefix}u${i}`));
+        turns.push(assistantUI(`${prefix}a${i}`.repeat(40)));
+      }
+      messages.appendMany(
+        target,
+        turns.map((m) => ({ id: m.id, role: m.role as "user" | "assistant", parts: m.parts }))
+      );
+    }
+    seedTurns(parent.id, 6, "round1-");
+
+    const agent = makeAgent({
+      db,
+      thresholdTokens: 1000,
+      protectFirstN: 1,
+      tailTokenBudget: 100,
+    });
+    await agent.compress(parent.id, "proactive");
+    const afterFirst = sessions.get(parent.id)!;
+    const archived1 = afterFirst.parentSessionId!;
+
+    // Refill the active session and compress again
+    seedTurns(parent.id, 6, "round2-");
+    await agent.compress(parent.id, "proactive");
+
+    const afterSecond = sessions.get(parent.id)!;
+    const archived2 = afterSecond.parentSessionId!;
+    expect(archived2).not.toBe(archived1);
+
+    // Chain extension: archived2.parent === archived1, archived1.parent === null
+    const arch2 = sessions.get(archived2)!;
+    expect(arch2.parentSessionId).toBe(archived1);
+    const arch1 = sessions.get(archived1)!;
+    expect(arch1.parentSessionId).toBeNull();
   });
 
-  it("preserves user FileUIParts across the fork; rewrites URL to child + copies bytes", async () => {
+  it("preserves defer_until across compaction", async () => {
+    const db = freshDb();
+    const sessions = createSessionStore(db);
+    const messages = createMessageStore(db);
+    const parent = sessions.create("a1", { id: "p-defer" });
+
+    const seed: UIMessage[] = [];
+    for (let i = 0; i < 6; i++) {
+      seed.push(userUI(`u${i}`));
+      seed.push(assistantUI(`a${i}`.repeat(40)));
+    }
+    messages.appendMany(
+      parent.id,
+      seed.map((m) => ({ id: m.id, role: m.role as "user" | "assistant", parts: m.parts }))
+    );
+
+    const future = Math.floor(Date.now() / 1000) + 3600;
+    sessions.setDeferUntil(parent.id, future);
+
+    const agent = makeAgent({
+      db,
+      thresholdTokens: 1000,
+      protectFirstN: 1,
+      tailTokenBudget: 100,
+    });
+    await agent.compress(parent.id, "proactive");
+
+    expect(sessions.getDeferUntil(parent.id)).toBe(future);
+    // Archived row should not carry the defer
+    const archivedId = sessions.get(parent.id)!.parentSessionId!;
+    expect(sessions.getDeferUntil(archivedId)).toBeNull();
+  });
+
+  it("preserves user FileUIParts across compaction; URL stays rooted at the active id", async () => {
     const db = freshDb();
     const sessions = createSessionStore(db);
     const messages = createMessageStore(db);
@@ -192,7 +280,7 @@ describe("Agent — compress() over UIMessage[]", () => {
     const root = path.join(tmp, "attachments");
     const parent = sessions.create("a1", { id: "parent" });
 
-    // Stage one image under the parent's session dir.
+    // Stage one image under the session's attachment dir.
     const rel = `${parent.id}/att-seed/shot.png`;
     fs.mkdirSync(path.join(root, `${parent.id}/att-seed`), { recursive: true });
     fs.writeFileSync(
@@ -236,23 +324,23 @@ describe("Agent — compress() over UIMessage[]", () => {
       tailTokenBudget: 100,
       attachmentsRoot: root,
     });
-    const childId = await agent.compress(parent.id, "proactive");
-    expect(childId).not.toBe(parent.id);
+    const returnedId = await agent.compress(parent.id, "proactive");
+    // Rename-swap: same id, no rebind needed because the post-compression
+    // session still owns `<root>/<parent.id>/` on disk.
+    expect(returnedId).toBe(parent.id);
 
-    // Find the head copy of the user-with-file in the child. It should
-    // carry a FileUIPart whose URL is now under the CHILD session dir,
-    // and the file should exist at the new path on disk.
-    const childHistory = messages.getHistory(childId);
-    const childUserParts = childHistory
+    const postHistory = messages.getHistory(parent.id);
+    const userParts = postHistory
       .filter((m) => m.role === "user")
       .flatMap((m) => m.parts as Array<{ type?: string; url?: string }>);
-    const fileParts = childUserParts.filter((p) => p.type === "file");
+    const fileParts = userParts.filter((p) => p.type === "file");
     expect(fileParts.length).toBeGreaterThan(0);
     for (const fp of fileParts) {
       expect(fp.url).toBeDefined();
-      expect(fp.url!.startsWith(`/api/attachments/${childId}/`)).toBe(true);
-      const childRel = fp.url!.slice("/api/attachments/".length);
-      expect(fs.existsSync(path.join(root, childRel))).toBe(true);
+      // URL is unchanged — still rooted under the original session id.
+      expect(fp.url).toBe(`/api/attachments/${rel}`);
+      // File on disk is intact.
+      expect(fs.existsSync(path.join(root, rel))).toBe(true);
     }
 
     fs.rmSync(tmp, { recursive: true, force: true });
@@ -313,9 +401,12 @@ describe("Agent — compress() over UIMessage[]", () => {
       tailTokenBudget: 200,
       attachmentsRoot: root,
     });
-    const childId = await agent.compress(parent.id, "proactive");
-    // Compression actually fires (no-op would return parent id).
-    expect(childId).not.toBe(parent.id);
+    await agent.compress(parent.id, "proactive");
+    // Compression actually fired (no-op would leave the row with
+    // `parentSessionId === null`); after a successful rename-swap the
+    // active row points at the archive.
+    const archivedId = sessions.get(parent.id)!.parentSessionId;
+    expect(archivedId).toBeTruthy();
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 });
