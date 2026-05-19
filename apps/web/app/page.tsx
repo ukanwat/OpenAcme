@@ -249,34 +249,6 @@ function ChatPageInner() {
             }
             return { ...prev, [data.id]: { kind: data.kind, message: data.message } };
           });
-        } else if (part.type === "data-session-fork") {
-          // Server compressed the session and forked it into a child.
-          // Re-point activeSessionId to the child — useLiveSession's
-          // resubscribe effect handles closing the parent EventSource
-          // and opening a new one; the URL-sync effect updates ?session;
-          // the history-fetch effect pulls the compressed history.
-          // We don't broadcast on parent after this point.
-          const data = part.data as { newSessionId?: string; reason?: string };
-          if (typeof data.newSessionId === "string" && data.newSessionId) {
-            const next = data.newSessionId;
-            activeSessionIdRef.current = next;
-            setActiveSessionId(next);
-            if (data.reason) {
-              const id = "session-fork";
-              setStatusBoard((prev) => ({
-                ...prev,
-                [id]: { kind: "info", message: data.reason! },
-              }));
-              // Self-clear after a beat so the chip doesn't linger.
-              setTimeout(() => {
-                setStatusBoard((prev) => {
-                  const out = { ...prev };
-                  delete out[id];
-                  return out;
-                });
-              }, 4000);
-            }
-          }
         }
       },
       // Tab-to-tab queue sync: another tab queued a message, render
