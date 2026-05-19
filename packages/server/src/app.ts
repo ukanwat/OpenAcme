@@ -548,10 +548,6 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
     // upsert refer to the same row.
     const responseMessageId = randomUUID();
 
-    // The active-turn cleanup needs to know whichever session id the
-    // turn ended up running on (preflight compression can fork mid-turn
-    // and rekey activeTurns to the child).
-    let runtimeSessionId = effectiveSessionId;
     void runChatTurn({
       manager,
       agentId,
@@ -559,16 +555,9 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
       committed,
       responseMessageId,
       signal,
-      onSessionFork: (oldId, newId) => {
-        if (activeTurns.get(oldId) === controller) {
-          activeTurns.delete(oldId);
-          activeTurns.set(newId, controller);
-          runtimeSessionId = newId;
-        }
-      },
     }).finally(() => {
-      if (activeTurns.get(runtimeSessionId) === controller) {
-        activeTurns.delete(runtimeSessionId);
+      if (activeTurns.get(effectiveSessionId) === controller) {
+        activeTurns.delete(effectiveSessionId);
       }
     });
 
@@ -1500,19 +1489,11 @@ async function runChatTurn(args: {
   committed: UIMessage[];
   responseMessageId: string;
   signal: AbortSignal;
-  /** Called when preflight compression forks the session. Implementation
-   *  rekeys the route handler's `activeTurns` map so the stop endpoint
-   *  (`DELETE /api/sessions/:id/active-turn`) finds the AbortController
-   *  under the child id — the originating tab updates its URL on the
-   *  fork notification and will hit the child id from then on. */
-  onSessionFork?: (oldSessionId: string, newSessionId: string) => void;
 }): Promise<void> {
-  const { manager, agentId, responseMessageId, signal, onSessionFork } = args;
-  // `sessionId` and `history` are mutable here because preflight
-  // compression may fork the session before the LLM call. Everything
-  // downstream (recall, runStream, persist, idle broadcast, extractor)
-  // operates on whichever id is current after preflight.
-  let sessionId = args.sessionId;
+  const { manager, agentId, sessionId, responseMessageId, signal } = args;
+  // `history` is mutable because preflight compression may compact the
+  // session in place; we re-read from the message store after to pick
+  // up the new [head + summary + tail] shape.
   let history = args.committed;
 
   manager.dispatcher.markInteractiveBusy(sessionId);
@@ -1521,12 +1502,10 @@ async function runChatTurn(args: {
     state: "running",
   });
 
-  // Preflight: fork the session if its history is too large for the
-  // next request. The originating tab is subscribed to the parent's
-  // SSE channel — we broadcast a `data-session-fork` part there so its
-  // useLiveSession handler can repoint to the child before any chunks
-  // start flowing. After this block, all downstream broadcasts go to
-  // the child's channel (which the tab re-subscribes to on fork).
+  // Preflight: compact the session in place if the next request would
+  // exceed the configured threshold. The session id is preserved
+  // (rename-swap), so all external references stay valid; we only
+  // need to re-read history after.
   const compressionStatusId = `compress-${responseMessageId}`;
   try {
     const agent = manager.getAgent(agentId);
@@ -1546,38 +1525,14 @@ async function runChatTurn(args: {
         transient: true,
       },
     });
-    const compressedId = await agent.preflightCompress(sessionId, history);
-    if (compressedId !== sessionId) {
-      manager.broadcaster.broadcast(sessionId, {
-        kind: "ui_message_part",
-        part: {
-          type: "data-session-fork",
-          data: {
-            newSessionId: compressedId,
-            reason: "Conversation compressed",
-          },
-          transient: true,
-        },
-      });
-      // Swap interactive-busy + running flag onto the child so the
-      // stop-button endpoint and session-state broadcasts target the
-      // session the agent is actually running on.
-      manager.dispatcher.clearInteractiveBusy(sessionId);
-      manager.dispatcher.markInteractiveBusy(compressedId);
-      manager.broadcaster.broadcast(compressedId, {
-        kind: "session_state",
-        state: "running",
-      });
-      onSessionFork?.(sessionId, compressedId);
-      sessionId = compressedId;
-      history = sanitizeStoredHistory(
-        manager.messageStore.getHistory(sessionId)
-      ) as unknown as UIMessage[];
-    }
+    await agent.preflightCompress(sessionId, history);
+    history = sanitizeStoredHistory(
+      manager.messageStore.getHistory(sessionId)
+    ) as unknown as UIMessage[];
   } catch (e) {
     log.warn(
       { err: e, sessionId },
-      "chat preflight compression failed; continuing on parent"
+      "chat preflight compression failed; continuing on uncompacted history"
     );
   } finally {
     // Clear the in-progress chip. Same id + empty `message` removes

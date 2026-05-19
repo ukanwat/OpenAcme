@@ -479,68 +479,27 @@ export class Agent {
       this.messageStore.getHistory(opts.sessionId)
     ) as unknown as UIMessage[];
 
-    // Preflight compression: fork the session before the LLM call if
-    // the next request would exceed the configured threshold. After
-    // this block `sessionId` (the local) is the effective session for
-    // the rest of the turn — it differs from `opts.sessionId` when a
-    // fork happened, and the in-progress task's `session_id` has been
-    // re-pointed so the next scheduler wake hits the new id.
+    // Preflight compression: compact the session in place before the
+    // LLM call if the next request would exceed the configured
+    // threshold. Under rename-swap, the session id is preserved across
+    // compaction — `opts.sessionId` stays valid for all downstream
+    // bookkeeping (task.session_id, inbox.related_session, etc.).
     //
     // Skipped on failure — broken compression must not block the turn.
-    // Reactive 413 fallback isn't wired today (see agent-core rule),
-    // so a preflight failure here means the turn will likely 4xx.
-    let sessionId = opts.sessionId;
+    // Reactive 413 fallback isn't wired today; a preflight failure
+    // here means the LLM call may 4xx, surfacing back to the user.
+    const sessionId = opts.sessionId;
     try {
-      const compressedId = await this.preflightCompress(
-        sessionId,
-        baseHistory
-      );
-      if (compressedId !== sessionId) {
-        // Notify any tabs subscribed to the parent's SSE channel BEFORE
-        // we swap. Most autonomous wakes have no live subscribers, but
-        // a user who happens to have the parent URL open should get the
-        // routing hint so they follow the fork instead of staring at a
-        // session that just went silent.
-        try {
-          this.broadcaster?.broadcast(sessionId, {
-            kind: "ui_message_part",
-            part: {
-              type: "data-session-fork",
-              data: {
-                newSessionId: compressedId,
-                reason: "Conversation compressed",
-              },
-              transient: true,
-            },
-          });
-        } catch {
-          /* broadcast is best-effort; never block the turn on it */
-        }
-        sessionId = compressedId;
-        baseHistory = sanitizeStoredHistory(
-          this.messageStore.getHistory(sessionId)
-        ) as unknown as UIMessage[];
-        if (inProgress) {
-          try {
-            await this.taskStore.update(inProgress.id, {
-              session_id: sessionId,
-            });
-          } catch (e) {
-            log.warn(
-              {
-                err: e,
-                taskId: inProgress.id,
-                newSession: sessionId,
-              },
-              "preflight fork: failed to update task session_id"
-            );
-          }
-        }
-      }
+      await this.preflightCompress(sessionId, baseHistory);
+      // Re-read history if compaction wrote new messages under the
+      // same id. Cheaper than diffing — message-row counts are small.
+      baseHistory = sanitizeStoredHistory(
+        this.messageStore.getHistory(sessionId)
+      ) as unknown as UIMessage[];
     } catch (e) {
       log.warn(
         { err: e, sessionId },
-        "preflight compression failed; continuing on parent session"
+        "preflight compression failed; continuing on uncompacted session"
       );
     }
 
@@ -1077,16 +1036,17 @@ export class Agent {
   /**
    * Preflight token-budget check + compression. Estimates the next
    * request's token cost (system + history + tool schemas + per-image
-   * cost) and, if it would cross the configured threshold, forks the
-   * session via `compress(..., "proactive")` and returns the new id.
+   * cost) and, if it would cross the configured threshold, compacts
+   * the session via `compress(..., "proactive")`. Returns the session
+   * id (unchanged under rename-swap — preserved for API symmetry with
+   * the old fork-based shape).
    *
-   * Loops up to 3 passes — one compression pass is enough for most
-   * sessions, but very long histories with a tight context window can
-   * need a second or third. Bails as soon as a pass returns the same
-   * id (no-op compression) or the estimate falls under threshold.
-   *
-   * Caller is responsible for re-reading history from the new id if
-   * one was created.
+   * Loops up to 3 passes — one is enough for most sessions, but very
+   * long histories with a tight context window need a second or third.
+   * Bails when:
+   *   - the estimate falls under threshold (done), OR
+   *   - a pass shrinks history by less than 5% (no further progress
+   *     possible — refuse to spin)
    */
   async preflightCompress(
     sessionId: string,
@@ -1108,31 +1068,36 @@ export class Agent {
     );
     if (threshold === null) return sessionId;
 
-    let currentId = sessionId;
     let currentHistory = history;
     for (let pass = 0; pass < 3; pass++) {
-      const tokens = this.estimateRequestTokens(currentId, currentHistory);
-      if (!this.compressor.shouldCompress(currentId, tokens, threshold)) {
-        return currentId;
+      const tokens = this.estimateRequestTokens(sessionId, currentHistory);
+      if (!this.compressor.shouldCompress(sessionId, tokens, threshold)) {
+        return sessionId;
       }
       log.info(
         {
-          sessionId: currentId,
+          sessionId,
           tokens,
           threshold,
           effectiveWindow,
           pass,
         },
-        "preflight compression: tokens >= threshold, forking"
+        "preflight compression: tokens >= threshold, compacting"
       );
-      const newId = await this.compress(currentId, "proactive");
-      if (newId === currentId) return currentId; // no-op pass; give up
-      currentId = newId;
+      const beforeLen = currentHistory.length;
+      await this.compress(sessionId, "proactive");
+      // Rename-swap keeps the same id; re-read history under the same
+      // id to see post-compaction state.
       currentHistory = sanitizeStoredHistory(
-        this.messageStore.getHistory(currentId)
+        this.messageStore.getHistory(sessionId)
       ) as unknown as UIMessage[];
+      // If the message-count drop is negligible (<5%) the algorithm
+      // can't compact further — stop instead of spinning.
+      if (currentHistory.length >= Math.floor(beforeLen * 0.95)) {
+        return sessionId;
+      }
     }
-    return currentId;
+    return sessionId;
   }
 
   /**
