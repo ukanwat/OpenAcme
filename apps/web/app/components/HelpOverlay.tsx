@@ -3,9 +3,14 @@
 import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogTitle,
+} from "@/app/components/ui/dialog";
 import { Kbd } from "@/app/components/ui/kbd";
 import { SectionEyebrow } from "@/app/components/ui/section-eyebrow";
-import { cn } from "@/app/lib/utils";
 
 interface ShortcutRow {
   combo: string[];
@@ -18,6 +23,7 @@ interface ConceptRow {
 }
 
 const GLOBAL_SHORTCUTS: ShortcutRow[] = [
+  { combo: ["⌘", "K"], description: "Open command palette" },
   { combo: ["?", "or", "⌘", "/"], description: "Open this help" },
   { combo: ["Esc"], description: "Close this help / cancel modal" },
 ];
@@ -66,10 +72,7 @@ export function HelpOverlay() {
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape" && open) {
-        setOpen(false);
-        return;
-      }
+      // Esc is handled by Radix internally when the dialog is open.
       // Cmd-/ or Ctrl-/ everywhere
       if ((e.metaKey || e.ctrlKey) && e.key === "/") {
         e.preventDefault();
@@ -89,36 +92,26 @@ export function HelpOverlay() {
         setOpen((v) => !v);
       }
     }
+    // Other surfaces (command palette) can request this overlay
+    // programmatically. Window-scoped CustomEvent so the contract is
+    // explicit — no synthesized keypresses.
+    function onOpenHelp() {
+      setOpen(true);
+    }
     document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [open]);
-
-  if (!open) return null;
+    window.addEventListener("openacme:open-help", onOpenHelp);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("openacme:open-help", onOpenHelp);
+    };
+  }, []);
 
   const pageShortcuts = PAGE_SHORTCUTS[pathname] ?? [];
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center px-4"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Help"
-    >
-      {/* Backdrop — flat ink 60% (DESIGN.md command palette spec). */}
-      <div
-        className="absolute inset-0 bg-ink/60"
-        onClick={() => setOpen(false)}
-        aria-hidden
-      />
-
-      <div
-        className={cn(
-          "relative w-full max-w-2xl max-h-[80vh] overflow-y-auto",
-          "border border-paper-rule bg-paper paper-surface",
-          "section-enter"
-        )}
-        onClick={(e) => e.stopPropagation()}
-      >
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogContent className="max-w-2xl">
+        <DialogTitle className="sr-only">Help</DialogTitle>
         <div className="px-5 pt-4 pb-3">
           <SectionEyebrow
             meta={
@@ -132,36 +125,38 @@ export function HelpOverlay() {
           </SectionEyebrow>
         </div>
 
-        {pageShortcuts.length > 0 && (
-          <div className="px-5 pb-5">
-            <div className="label-faceplate mb-2">Page shortcuts</div>
+        <DialogBody className="max-h-[70vh] overflow-y-auto">
+          {pageShortcuts.length > 0 && (
+            <div className="pb-5">
+              <div className="label-faceplate mb-2">Page shortcuts</div>
+              <ul className="space-y-1.5">
+                {pageShortcuts.map((s, i) => (
+                  <ShortcutLine key={i} {...s} />
+                ))}
+              </ul>
+            </div>
+          )}
+
+          <div className="pb-5">
+            <div className="label-faceplate mb-2">Global shortcuts</div>
             <ul className="space-y-1.5">
-              {pageShortcuts.map((s, i) => (
+              {GLOBAL_SHORTCUTS.map((s, i) => (
                 <ShortcutLine key={i} {...s} />
               ))}
             </ul>
           </div>
-        )}
 
-        <div className="px-5 pb-5">
-          <div className="label-faceplate mb-2">Global shortcuts</div>
-          <ul className="space-y-1.5">
-            {GLOBAL_SHORTCUTS.map((s, i) => (
-              <ShortcutLine key={i} {...s} />
-            ))}
-          </ul>
-        </div>
-
-        <div className="border-t border-paper-rule px-5 py-5">
-          <div className="label-faceplate mb-3">Key concepts</div>
-          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-3">
-            {CONCEPTS.map((c) => (
-              <ConceptRow key={c.term} {...c} />
-            ))}
-          </dl>
-        </div>
-      </div>
-    </div>
+          <div className="border-t border-paper-rule pt-5">
+            <div className="label-faceplate mb-3">Key concepts</div>
+            <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-3">
+              {CONCEPTS.map((c) => (
+                <ConceptRow key={c.term} {...c} />
+              ))}
+            </dl>
+          </div>
+        </DialogBody>
+      </DialogContent>
+    </Dialog>
   );
 }
 

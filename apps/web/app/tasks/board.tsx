@@ -18,7 +18,6 @@ import { CSS } from "@dnd-kit/utilities";
 import { Repeat2 } from "lucide-react";
 import { cn } from "@/app/lib/utils";
 import { TabularTick } from "@/app/components/ui/tabular-tick";
-import { SectionEyebrow } from "@/app/components/ui/section-eyebrow";
 import { ActiveMarker } from "@/app/components/ui/active-marker";
 import {
   STATUS_LABEL,
@@ -30,6 +29,25 @@ import {
   type Task,
   type TaskStatus,
 } from "./types";
+
+// Column eyebrow + count tint by status role (DESIGN.md §2).
+// open → neutral (ink-soft); in_progress → WORKING (signal-blue);
+// blocked → WAIT (signal-amber); done/canceled → terminal recess.
+function statusTint(status: TaskStatus): { label: string; dot: string } {
+  switch (status) {
+    case "in_progress":
+      return { label: "text-signal-blue", dot: "bg-signal-blue" };
+    case "blocked":
+      return { label: "text-signal-amber", dot: "bg-signal-amber" };
+    case "done":
+      return { label: "text-ink-soft", dot: "bg-ink-soft" };
+    case "canceled":
+      return { label: "text-ink-faint", dot: "bg-ink-faint" };
+    case "open":
+    default:
+      return { label: "text-ink", dot: "bg-ink" };
+  }
+}
 
 export interface TasksBoardProps {
   tasks: Task[];
@@ -96,26 +114,31 @@ function BoardColumn({
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: status });
   const ids = useMemo(() => tasks.map((t) => t.id), [tasks]);
+  const tint = statusTint(status);
   return (
     <div
       ref={setNodeRef}
       className={cn(
         "flex w-72 shrink-0 flex-col border border-paper-rule bg-paper-sunk transition-colors",
-        isOver && "border-plot-red"
+        isOver && "border-plot-red bg-paper"
       )}
     >
-      <div className="sticky top-0 z-10 border-b border-paper-rule bg-paper px-3 py-2">
-        <SectionEyebrow
-          rule={false}
-          meta={
-            <TabularTick
-              value={tasks.length}
-              className="text-[11px] text-ink-soft"
-            />
-          }
-        >
-          {STATUS_LABEL[status]}
-        </SectionEyebrow>
+      <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-paper-rule bg-paper px-3 py-2">
+        <span className="flex items-center gap-2">
+          <span aria-hidden className={cn("status-dot", tint.dot)} />
+          <span
+            className={cn(
+              "font-mono text-[11px] uppercase tracking-[0.08em]",
+              tint.label
+            )}
+          >
+            {STATUS_LABEL[status]}
+          </span>
+        </span>
+        <TabularTick
+          value={tasks.length}
+          className={cn("text-[11px]", tint.label)}
+        />
       </div>
       <div className="flex flex-1 flex-col gap-2 overflow-y-auto p-2">
         <SortableContext items={ids} strategy={verticalListSortingStrategy}>
@@ -162,6 +185,14 @@ function BoardCard({
     transition,
   };
 
+  // Terminal statuses recede so the eye lands on actionable columns first.
+  const terminal = task.status === "done" || task.status === "canceled";
+  const titleClass = terminal
+    ? task.status === "canceled"
+      ? "text-ink-faint"
+      : "text-ink-soft"
+    : "text-ink";
+
   return (
     <button
       ref={setNodeRef}
@@ -170,7 +201,7 @@ function BoardCard({
       onClick={() => onPick(task.id)}
       className={cn(
         "relative border border-paper-rule bg-paper px-3.5 py-2 text-left transition-colors",
-        selected ? "bg-paper-sunk text-ink" : "text-ink hover:bg-paper-sunk",
+        selected ? "bg-paper-sunk text-ink" : "hover:bg-paper-sunk",
         isDragging && "opacity-50"
       )}
       {...attributes}
@@ -178,7 +209,9 @@ function BoardCard({
     >
       <ActiveMarker active={selected} />
       <div className="space-y-1">
-        <div className="line-clamp-1 text-sm font-medium text-ink">{task.title}</div>
+        <div className={cn("line-clamp-1 text-sm font-medium", titleClass)}>
+          {task.title}
+        </div>
         <div className="flex flex-wrap gap-x-3 gap-y-0.5 font-mono text-[11px] tabular-nums text-ink-faint">
           <span>@{task.assignee}</span>
           {task.due_at && (

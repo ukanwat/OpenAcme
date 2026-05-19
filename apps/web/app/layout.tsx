@@ -5,6 +5,7 @@ import { Toaster } from "@/app/components/ui/sonner";
 import { TooltipProvider } from "@/app/components/ui/tooltip";
 import { AuthFetch } from "@/app/components/auth-fetch";
 import { HelpOverlay } from "@/app/components/HelpOverlay";
+import { CommandPalette } from "@/app/components/CommandPalette";
 
 const geistSans = localFont({
   src: "./fonts/GeistVF.woff",
@@ -50,6 +51,7 @@ export default function RootLayout({
           <AuthFetch />
           {children}
           <HelpOverlay />
+          <CommandPalette />
           <Toaster />
         </TooltipProvider>
       </body>

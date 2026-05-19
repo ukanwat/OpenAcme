@@ -17,7 +17,8 @@
   /* Ink (text on paper) */
   --ink: oklch(22% 0.008 280);
   --ink-soft: oklch(42% 0.006 280);
-  --ink-faint: oklch(54% 0.006 280);
+  /* Tertiary text — body-size 4.5:1 on paper requires L ≤ ~50%; held at 48% for headroom. */
+  --ink-faint: oklch(48% 0.006 280);
 
   /* Accent — Plot Red (the only chromatic at any meaningful coverage) */
   --plot-red: oklch(58% 0.18 28);

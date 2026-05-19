@@ -20,6 +20,9 @@ import { Logomark } from "@/app/components/Logomark";
 import { ThemeToggle } from "@/app/components/ThemeToggle";
 import { ActiveMarker } from "@/app/components/ui/active-marker";
 
+// no width transition: the lab-instrument register prefers an instant snap
+// over animating a layout property (DESIGN.md §6 "Don't animate layout").
+
 interface NavItem {
   href: string;
   label: string;
@@ -51,13 +54,10 @@ const useIsomorphicLayoutEffect =
 export function Sidebar({ children }: { children?: React.ReactNode }) {
   const pathname = usePathname();
   const [version, setVersion] = useState<string | null>(null);
-  // Both server and client render `collapsed=true` initially — same
-  // HTML, no hydration warning. The layoutEffect below flips it to
-  // the persisted value before paint when localStorage says
-  // "expanded"; the transition is gated on `mounted` so this flip is
-  // instant, not animated.
+  // SSR + first client render both emit `collapsed=true` (same HTML, no
+  // hydration warning). The layoutEffect flips it to the persisted value
+  // before paint.
   const [collapsed, setCollapsed] = useState<boolean>(true);
-  const [mounted, setMounted] = useState(false);
   useIsomorphicLayoutEffect(() => {
     try {
       const stored = window.localStorage.getItem(COLLAPSED_KEY);
@@ -65,13 +65,6 @@ export function Sidebar({ children }: { children?: React.ReactNode }) {
     } catch {
       // localStorage blocked — keep collapsed default.
     }
-    // Defer `mounted` so the localStorage-driven collapse flip renders
-    // first WITHOUT the width transition (mounted still false), then
-    // mounted flips on the next frame to enable transitions for user
-    // toggles. Same-tick setMounted(true) would batch with setCollapsed
-    // and animate the initial flip.
-    const raf = requestAnimationFrame(() => setMounted(true));
-    return () => cancelAnimationFrame(raf);
   }, []);
 
   const toggle = () => {
@@ -102,7 +95,6 @@ export function Sidebar({ children }: { children?: React.ReactNode }) {
     <aside
       className={cn(
         "relative flex shrink-0 flex-col border-r border-paper-rule bg-sidebar text-sidebar-foreground",
-        mounted && "transition-[width]",
         collapsed ? "w-14" : "w-60"
       )}
     >
@@ -129,7 +121,7 @@ export function Sidebar({ children }: { children?: React.ReactNode }) {
               onClick={toggle}
               title="Collapse sidebar"
               aria-label="Collapse sidebar"
-              className="-mr-1 flex size-6 items-center justify-center rounded text-ink-soft hover:bg-paper hover:text-ink focus:outline-none focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-1 focus-visible:outline-plot-red"
+              className="-mr-1 flex size-6 items-center justify-center text-ink-soft hover:bg-paper hover:text-ink focus:outline-none focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-1 focus-visible:outline-plot-red"
             >
               <PanelLeftClose className="size-4" />
             </button>

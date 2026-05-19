@@ -826,9 +826,9 @@ export default function SettingsPage() {
       <main className="flex flex-1 flex-col overflow-hidden bg-paper">
         <header className="flex h-12 shrink-0 items-center border-b border-paper-rule px-6">
           <div className="flex items-center gap-3">
-            <span className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-faint">
+            <h1 className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-faint">
               Settings
-            </span>
+            </h1>
             <span className="h-3 w-px bg-paper-rule" aria-hidden />
             <span className="font-mono text-[12px] text-ink-soft">
               Providers · Server · MCP
@@ -1602,7 +1602,7 @@ export default function SettingsPage() {
                     ) : (
                       <>
                         {browserPendingRestart && (
-                          <div className="rounded border border-paper-rule bg-paper-sunk px-3 py-2 font-mono text-[11px] text-ink">
+                          <div className="border border-paper-rule bg-paper-sunk px-3 py-2 font-mono text-[11px] text-ink">
                             Restart OpenAcme to apply the new browser settings.
                           </div>
                         )}
@@ -1629,7 +1629,7 @@ export default function SettingsPage() {
                         </div>
 
                         {browserCfg.active === "local" && (
-                          <div className="space-y-4 rounded border border-paper-rule bg-paper-sunk/40 p-4">
+                          <div className="space-y-4 border border-paper-rule bg-paper-sunk/40 p-4">
                             <div className="grid gap-2">
                               <Label>Browser</Label>
                               <Select
@@ -1782,7 +1782,7 @@ export default function SettingsPage() {
                               return (
                                 <div
                                   key={p.id}
-                                  className="space-y-3 rounded border border-paper-rule bg-paper-sunk/40 p-4"
+                                  className="space-y-3 border border-paper-rule bg-paper-sunk/40 p-4"
                                 >
                                   <div className="flex items-center gap-2">
                                     <Label htmlFor={`browser-key-${p.id}`}>

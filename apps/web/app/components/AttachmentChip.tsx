@@ -1,7 +1,8 @@
 "use client";
 
-import { FileText, Image as ImageIcon, X, Loader2, AlertCircle } from "lucide-react";
+import { FileText, Image as ImageIcon, X, AlertCircle } from "lucide-react";
 import { cn } from "@/app/lib/utils";
+import { LoadingHairline } from "@/app/components/ui/loading-hairline";
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -38,7 +39,7 @@ export function AttachmentChip({
   const inner = (
     <span className="flex items-center gap-2 min-w-0">
       {status === "uploading" ? (
-        <Loader2 className="size-3 shrink-0 animate-spin text-ink-soft" />
+        <LoadingHairline inline aria-label="Uploading" className="shrink-0" />
       ) : status === "error" ? (
         <AlertCircle className="size-3 shrink-0 text-destructive" />
       ) : (

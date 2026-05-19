@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ArrowRight } from "lucide-react";
 import { Button } from "@/app/components/ui/button";
@@ -231,50 +231,21 @@ function ScreenWelcome({ onNext }: { onNext: () => void }) {
     <div className="space-y-10">
       <div className="space-y-5">
         <TeletypeMarker text="00 · WELCOME" startMs={120} stepMs={28} />
-        <h1
-          className="max-w-prose text-[28px] font-semibold leading-[1.15] tracking-[-0.01em] text-ink"
-          style={{
-            animation: "section-enter 380ms var(--ease-out-quart) both",
-            animationDelay: "520ms",
-          }}
-        >
-          <DecryptedText
-            text="The operator's console for an agent workforce."
-            startDelayMs={520}
-            speed={32}
-          />
+        <h1 className="max-w-prose text-[28px] font-semibold leading-[1.15] tracking-[-0.01em] text-ink">
+          The operator&apos;s console for an agent workforce.
         </h1>
-        <p
-          className="max-w-prose text-[15px] leading-[1.6] text-ink-soft"
-          style={{
-            animation: "section-enter 320ms var(--ease-out-quart) both",
-            animationDelay: "1100ms",
-          }}
-        >
-          You're the operator. OpenAcme runs a workforce of agents for you,
+        <p className="max-w-prose text-[15px] leading-[1.6] text-ink-soft">
+          You&apos;re the operator. OpenAcme runs a workforce of agents for you,
           on this machine. Configure as many as you want; each gets its own
           model, tools, and memory. They file tasks, run tools, and remember
-          context across sessions. Walk through what's in the box, then
+          context across sessions. Walk through what&apos;s in the box, then
           connect a model provider.
         </p>
       </div>
 
-      <div
-        style={{
-          animation: "section-enter 380ms var(--ease-out-quart) both",
-          animationDelay: "1300ms",
-        }}
-      >
-        <SchematicTopology />
-      </div>
+      <SchematicTopology />
 
-      <div
-        className="flex items-center justify-end"
-        style={{
-          animation: "section-enter 280ms var(--ease-out-quart) both",
-          animationDelay: "1700ms",
-        }}
-      >
+      <div className="flex items-center justify-end">
         <Button onClick={onNext}>
           Continue
           <ArrowRight className="size-4" />
@@ -297,46 +268,23 @@ function ScreenSubstrate({
     <div className="space-y-10">
       <div className="space-y-5">
         <TeletypeMarker text="01 · WHAT'S RUNNING" startMs={120} stepMs={28} />
-        <h2
-          className="max-w-prose text-[24px] font-semibold leading-[1.2] tracking-[-0.01em] text-ink"
-          style={{
-            animation: "section-enter 360ms var(--ease-out-quart) both",
-            animationDelay: "440ms",
-          }}
-        >
+        <h2 className="max-w-prose text-[24px] font-semibold leading-[1.2] tracking-[-0.01em] text-ink">
           Four nouns. Each one a real file you can open, read, edit, move.
         </h2>
-        <p
-          className="max-w-prose text-[14px] leading-relaxed text-ink-soft"
-          style={{
-            animation: "section-enter 320ms var(--ease-out-quart) both",
-            animationDelay: "640ms",
-          }}
-        >
-          OpenAcme is not a chat tool. It's a substrate. The interface above is
+        <p className="max-w-prose text-[14px] leading-relaxed text-ink-soft">
+          OpenAcme is not a chat tool. It&apos;s a substrate. The interface above is
           a window into these four kinds of state, all sitting on your disk.
         </p>
       </div>
 
-      <div
-        className="grid grid-cols-2 gap-px border border-paper-rule bg-paper-rule"
-        style={{
-          animation: "section-enter 380ms var(--ease-out-quart) both",
-          animationDelay: "780ms",
-        }}
-      >
+      <div className="grid grid-cols-2 gap-px border border-paper-rule bg-paper-rule">
         <Tile
           label="Agents"
           teaching="A coworker. Has its own model, tools, persona, memory."
           body={
             <div className="space-y-1">
               <div className="font-mono text-[12px] text-ink-soft">
-                <DecryptedText
-                  text="~/.openacme/agents/alice/AGENT.md"
-                  startDelayMs={900}
-                  speed={26}
-                  charset="abcdefghijklmnopqrstuvwxyz/.-_"
-                />
+                ~/.openacme/agents/alice/AGENT.md
               </div>
               <div className="font-mono text-[11px] text-ink-faint">
                 yaml frontmatter · prose persona · tools list
@@ -357,10 +305,6 @@ function ScreenSubstrate({
                 <div
                   key={i}
                   className="flex items-baseline gap-2 font-mono text-[11px]"
-                  style={{
-                    animation: "section-enter 320ms var(--ease-out-quart) both",
-                    animationDelay: `${1100 + i * 220}ms`,
-                  }}
                 >
                   <span
                     className={cn(
@@ -388,20 +332,9 @@ function ScreenSubstrate({
             <div className="space-y-1">
               <div className="font-mono text-[11px] text-ink-soft">
                 <span className="text-plot-red">$ </span>
-                <DecryptedText
-                  text="rg 'session_id' packages/db --type ts"
-                  startDelayMs={1300}
-                  speed={22}
-                  charset="abcdefghijklmnopqrstuvwxyz_-/."
-                />
+                rg &apos;session_id&apos; packages/db --type ts
               </div>
-              <div
-                className="font-mono text-[11px] text-ink-faint"
-                style={{
-                  animation: "section-enter 280ms var(--ease-out-quart) both",
-                  animationDelay: "2300ms",
-                }}
-              >
+              <div className="font-mono text-[11px] text-ink-faint">
                 12 matches · 47ms
               </div>
             </div>
@@ -439,13 +372,7 @@ function ScreenProvider(props: ProviderFormProps & {
     <div className="space-y-10">
       <div className="space-y-5">
         <TeletypeMarker text="02 · PROVIDER" startMs={120} stepMs={28} />
-        <h2
-          className="max-w-prose text-[24px] font-semibold leading-[1.2] tracking-[-0.01em] text-ink"
-          style={{
-            animation: "section-enter 360ms var(--ease-out-quart) both",
-            animationDelay: "440ms",
-          }}
-        >
+        <h2 className="max-w-prose text-[24px] font-semibold leading-[1.2] tracking-[-0.01em] text-ink">
           One credential to bring the workforce online.
         </h2>
         <p className="max-w-prose text-[14px] leading-relaxed text-ink-soft">
@@ -639,28 +566,14 @@ function SchematicTopology() {
   return (
     <svg
       viewBox="0 0 500 360"
-      className="w-full max-w-[480px] text-ink-soft"
+      className="section-enter w-full max-w-[480px] text-ink-soft"
       aria-hidden
     >
-      <style>{`
-        .draw {
-          stroke-dasharray: var(--len, 400);
-          stroke-dashoffset: var(--len, 400);
-          animation: draw-path 900ms cubic-bezier(0.25, 1, 0.5, 1) both;
-        }
-        @keyframes draw-path { to { stroke-dashoffset: 0; } }
-        @media (prefers-reduced-motion: reduce) {
-          .draw { animation: none; stroke-dashoffset: 0; }
-        }
-      `}</style>
-
       {/* L1 — YOU */}
       <rect
         x="210" y="10" width="80" height="34"
         fill="var(--paper)"
         stroke="currentColor" strokeWidth="1"
-        className="draw"
-        style={{ ["--len" as string]: 228, animationDelay: "100ms" }}
       />
       <text x="250" y="32" textAnchor="middle"
         className="fill-ink font-mono"
@@ -672,8 +585,6 @@ function SchematicTopology() {
       <path
         d="M250 44 L250 70"
         stroke="currentColor" strokeWidth="1" fill="none"
-        className="draw"
-        style={{ ["--len" as string]: 26, animationDelay: "440ms" }}
       />
 
       {/* L2 — OPENACME */}
@@ -681,8 +592,6 @@ function SchematicTopology() {
         x="170" y="70" width="160" height="42"
         fill="var(--paper)"
         stroke="currentColor" strokeWidth="1"
-        className="draw"
-        style={{ ["--len" as string]: 404, animationDelay: "580ms" }}
       />
       <text x="250" y="90" textAnchor="middle"
         className="fill-ink font-mono"
@@ -699,22 +608,16 @@ function SchematicTopology() {
       <path
         d="M250 112 L250 140"
         stroke="currentColor" strokeWidth="1" fill="none"
-        className="draw"
-        style={{ ["--len" as string]: 28, animationDelay: "920ms" }}
       />
       <path
         d="M80 140 L420 140"
         stroke="currentColor" strokeWidth="1" fill="none"
-        className="draw"
-        style={{ ["--len" as string]: 340, animationDelay: "1040ms" }}
       />
       {directors.map((d, i) => (
         <path
           key={`drop-d-${i}`}
           d={`M${d.x} 140 L${d.x} 162`}
           stroke="currentColor" strokeWidth="1" fill="none"
-          className="draw"
-          style={{ ["--len" as string]: 22, animationDelay: `${1240 + i * 80}ms` }}
         />
       ))}
 
@@ -725,11 +628,6 @@ function SchematicTopology() {
             x={d.x - 50} y="162" width="100" height="34"
             fill="var(--paper)"
             stroke="currentColor" strokeWidth="1"
-            className="draw"
-            style={{
-              ["--len" as string]: 268,
-              animationDelay: `${1380 + i * 100}ms`,
-            }}
           />
           <text x={d.x} y="184" textAnchor="middle"
             className="fill-ink font-mono"
@@ -745,28 +643,16 @@ function SchematicTopology() {
           <path
             d={`M${d.x} 196 L${d.x} 222`}
             stroke="currentColor" strokeWidth="1" fill="none"
-            className="draw"
-            style={{ ["--len" as string]: 26, animationDelay: `${1700 + i * 90}ms` }}
           />
           <path
             d={`M${d.workers[0]!.x} 222 L${d.workers[1]!.x} 222`}
             stroke="currentColor" strokeWidth="1" fill="none"
-            className="draw"
-            style={{
-              ["--len" as string]: Math.abs(d.workers[1]!.x - d.workers[0]!.x),
-              animationDelay: `${1840 + i * 90}ms`,
-            }}
           />
           {d.workers.map((w, wi) => (
             <path
               key={`drop-w-${i}-${wi}`}
               d={`M${w.x} 222 L${w.x} 244`}
               stroke="currentColor" strokeWidth="1" fill="none"
-              className="draw"
-              style={{
-                ["--len" as string]: 22,
-                animationDelay: `${1980 + i * 90 + wi * 60}ms`,
-              }}
             />
           ))}
         </g>
@@ -780,11 +666,6 @@ function SchematicTopology() {
               x={w.x - 32} y="244" width="64" height="32"
               fill="var(--paper)"
               stroke="currentColor" strokeWidth="1"
-              className="draw"
-              style={{
-                ["--len" as string]: 192,
-                animationDelay: `${2120 + i * 90 + wi * 60}ms`,
-              }}
             />
             <text x={w.x} y="264" textAnchor="middle"
               className="fill-ink-soft font-mono"
@@ -794,10 +675,7 @@ function SchematicTopology() {
             {w.live && (
               <circle
                 cx={w.x + 25} cy="251" r="2.2"
-                className="fill-plot-red"
-                style={{
-                  animation: `pulse-live var(--duration-pulse) var(--ease-out-quart) infinite ${2600 + i * 120 + wi * 80}ms`,
-                }}
+                className="fill-plot-red pulse-live"
               />
             )}
           </g>
@@ -805,83 +683,6 @@ function SchematicTopology() {
       )}
     </svg>
   );
-}
-
-// ─── Decrypted-text reveal (React-Bits technique) ─────────────────────────
-
-const DEFAULT_CHARSET =
-  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%&*";
-
-/**
- * Characters scramble through a charset, then progressively lock to the
- * target string from left to right. Fits OpenAcme's lab-instrument
- * register (reads like data resolving on an instrument display).
- */
-function DecryptedText({
-  text,
-  startDelayMs = 0,
-  speed = 50,
-  charset = DEFAULT_CHARSET,
-  className,
-}: {
-  text: string;
-  startDelayMs?: number;
-  speed?: number;
-  charset?: string;
-  className?: string;
-}) {
-  const [displayed, setDisplayed] = useState(text);
-  const [started, setStarted] = useState(false);
-  const lockedRef = useRef(0);
-
-  useEffect(() => {
-    // Respect reduced motion — show target string immediately.
-    if (
-      typeof window !== "undefined" &&
-      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
-    ) {
-      setDisplayed(text);
-      return;
-    }
-    const startTimer = setTimeout(() => setStarted(true), startDelayMs);
-    return () => clearTimeout(startTimer);
-  }, [text, startDelayMs]);
-
-  useEffect(() => {
-    if (!started) {
-      // Pre-start placeholder: show all-scrambled.
-      const scrambled = text
-        .split("")
-        .map((ch) =>
-          ch === " " ? " " : charset[Math.floor(Math.random() * charset.length)]
-        )
-        .join("");
-      setDisplayed(scrambled);
-      return;
-    }
-    lockedRef.current = 0;
-    const interval = setInterval(() => {
-      const locked = lockedRef.current;
-      const next = text
-        .split("")
-        .map((ch, i) => {
-          if (i < locked) return ch;
-          if (ch === " ") return " ";
-          return charset[Math.floor(Math.random() * charset.length)];
-        })
-        .join("");
-      setDisplayed(next);
-      // Each tick, lock one more character from the left.
-      lockedRef.current = Math.min(locked + 1, text.length);
-      if (lockedRef.current >= text.length) {
-        setDisplayed(text);
-        clearInterval(interval);
-      }
-    }, speed);
-    return () => clearInterval(interval);
-  }, [started, text, speed, charset]);
-
-  return <span className={className}>{displayed}</span>;
 }
 
 // ─── Step indicator + skip ────────────────────────────────────────────────

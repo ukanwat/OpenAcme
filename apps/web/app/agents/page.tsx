@@ -741,9 +741,9 @@ function AgentsPageInner() {
       <main className="flex flex-1 flex-col overflow-hidden bg-paper">
         <header className="flex h-12 shrink-0 items-center justify-between border-b border-paper-rule px-6">
           <div className="flex items-center gap-3">
-            <span className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-faint">
+            <h1 className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-faint">
               Agents
-            </span>
+            </h1>
             <span className="h-3 w-px bg-paper-rule" aria-hidden />
             <span className="font-mono text-[12px] text-ink-soft">
               <TabularTick value={agents.length} /> configured
@@ -1146,38 +1146,54 @@ function AgentsPageInner() {
                   Build one from scratch, or start with a bundled template.
                 </DialogDescription>
               </DialogHeader>
-              <DialogBody className="grid gap-3 md:grid-cols-2">
-                <button
-                  type="button"
-                  onClick={startScratchFromModal}
-                  className="flex flex-col gap-2 rounded-md border border-paper-rule p-4 text-left transition-colors hover:bg-paper-sunk"
-                >
-                  <div className="flex items-center gap-2">
-                    <Plus className="size-4 text-ink-soft" />
-                    <span className="text-sm font-medium text-ink">
-                      Start from scratch
-                    </span>
-                  </div>
-                  <p className="text-xs text-ink-faint">
-                    Empty form. Pick a name, model, persona, and tools yourself.
-                  </p>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setCreationModal("catalog")}
-                  className="flex flex-col gap-2 rounded-md border border-paper-rule p-4 text-left transition-colors hover:bg-paper-sunk"
-                >
-                  <div className="flex items-center gap-2">
-                    <BookOpen className="size-4 text-ink-soft" />
-                    <span className="text-sm font-medium text-ink">
-                      Import from catalog
-                    </span>
-                  </div>
-                  <p className="text-xs text-ink-faint">
-                    Bundled templates ({catalogTemplates.length}) ship with the
-                    platform. Auto-installs recommended skills + MCP servers.
-                  </p>
-                </button>
+              <DialogBody className="px-0 py-0">
+                <ul className="border-y border-paper-rule">
+                  <li>
+                    <button
+                      type="button"
+                      onClick={startScratchFromModal}
+                      className="group flex w-full items-start gap-4 border-b border-paper-rule px-5 py-4 text-left transition-colors hover:bg-paper-sunk"
+                    >
+                      <Plus className="mt-0.5 size-4 shrink-0 text-ink-soft group-hover:text-plot-red" />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-baseline justify-between gap-3">
+                          <span className="text-sm font-medium text-ink">
+                            Start from scratch
+                          </span>
+                          <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
+                            scratch
+                          </span>
+                        </div>
+                        <p className="mt-1 text-xs text-ink-soft">
+                          Empty form. Pick a name, model, persona, and tools yourself.
+                        </p>
+                      </div>
+                    </button>
+                  </li>
+                  <li>
+                    <button
+                      type="button"
+                      onClick={() => setCreationModal("catalog")}
+                      className="group flex w-full items-start gap-4 px-5 py-4 text-left transition-colors hover:bg-paper-sunk"
+                    >
+                      <BookOpen className="mt-0.5 size-4 shrink-0 text-ink-soft group-hover:text-plot-red" />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-baseline justify-between gap-3">
+                          <span className="text-sm font-medium text-ink">
+                            Import from catalog
+                          </span>
+                          <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
+                            {catalogTemplates.length} templates
+                          </span>
+                        </div>
+                        <p className="mt-1 text-xs text-ink-soft">
+                          Bundled templates ship with the platform. Auto-installs
+                          recommended skills + MCP servers.
+                        </p>
+                      </div>
+                    </button>
+                  </li>
+                </ul>
               </DialogBody>
               <DialogFooter>
                 <Button
@@ -1196,36 +1212,43 @@ function AgentsPageInner() {
                   Pick a template. You can rename and customize after.
                 </DialogDescription>
               </DialogHeader>
-              <DialogBody className="grid gap-3 md:grid-cols-2">
-                {catalogTemplates.map((t) => (
-                  <button
-                    key={t.id}
-                    type="button"
-                    onClick={() => startImportFromModal(t.id)}
-                    className="flex flex-col gap-2 rounded-md border border-paper-rule p-4 text-left transition-colors hover:bg-paper-sunk"
-                  >
-                    <div className="flex items-baseline justify-between gap-2">
-                      <span className="text-sm font-medium text-ink">
-                        {t.name}
-                      </span>
-                      <span className="font-mono text-[10px] uppercase tracking-[0.06em] text-ink-faint">
-                        {t.id}
-                      </span>
-                    </div>
-                    <p className="text-xs text-ink-soft">{t.description}</p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {t.tags.map((tag) => (
-                        <Badge key={tag} variant="secondary">
-                          {tag}
-                        </Badge>
-                      ))}
-                    </div>
-                    <div className="font-mono text-[11px] text-ink-faint">
-                      {t.counts.resources} files · {t.counts.skills} skills ·{" "}
-                      {t.counts.mcpServers} MCP
-                    </div>
-                  </button>
-                ))}
+              <DialogBody className="max-h-[60vh] overflow-y-auto px-0 py-0">
+                <ul className="border-y border-paper-rule">
+                  {catalogTemplates.map((t, i) => (
+                    <li key={t.id}>
+                      <button
+                        type="button"
+                        onClick={() => startImportFromModal(t.id)}
+                        className={cn(
+                          "flex w-full flex-col gap-2 px-5 py-4 text-left transition-colors hover:bg-paper-sunk",
+                          i < catalogTemplates.length - 1 && "border-b border-paper-rule"
+                        )}
+                      >
+                        <div className="flex items-baseline justify-between gap-3">
+                          <span className="text-sm font-medium text-ink">
+                            {t.name}
+                          </span>
+                          <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
+                            {t.id}
+                          </span>
+                        </div>
+                        <p className="text-xs text-ink-soft">{t.description}</p>
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                          <div className="flex flex-wrap gap-1.5">
+                            {t.tags.map((tag) => (
+                              <Badge key={tag} variant="secondary">
+                                {tag}
+                              </Badge>
+                            ))}
+                          </div>
+                          <span className="font-mono text-[11px] tabular-nums text-ink-faint">
+                            {t.counts.resources} files · {t.counts.skills} skills · {t.counts.mcpServers} MCP
+                          </span>
+                        </div>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
               </DialogBody>
               <DialogFooter className="gap-2">
                 <Button

@@ -72,25 +72,9 @@ export default function LoginPage() {
 
         <div className="px-5 pt-4 pb-3">
           <Logotype className="h-7 w-auto text-ink" />
-          <div className="mt-3" aria-label={HEADLINE}>
-            <span
-              aria-hidden
-              className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink"
-            >
-              {HEADLINE.split("").map((ch, i) => (
-                <span
-                  key={i}
-                  className="inline-block"
-                  style={{
-                    animation: "section-enter 220ms var(--ease-out-quart) both",
-                    animationDelay: `${60 + i * 30}ms`,
-                  }}
-                >
-                  {ch === " " ? " " : ch}
-                </span>
-              ))}
-            </span>
-          </div>
+          <h1 className="scribe-in mt-3 font-mono text-[11px] uppercase tracking-[0.08em] text-ink">
+            {HEADLINE}
+          </h1>
           <p className="mt-2 text-sm leading-relaxed text-ink-soft">
             Paste the access secret from{" "}
             <code className="px-1 py-0.5 font-mono text-[11px] text-ink">

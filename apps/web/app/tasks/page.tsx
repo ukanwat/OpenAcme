@@ -269,9 +269,9 @@ function TasksPageInner() {
       <main className="paper-surface flex flex-1 flex-col overflow-hidden bg-paper">
         <header className="flex h-12 shrink-0 items-center justify-between border-b border-paper-rule px-6">
           <div className="flex items-center gap-3">
-            <span className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-faint">
+            <h1 className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-faint">
               Tasks
-            </span>
+            </h1>
             <span className="h-3 w-px bg-paper-rule" aria-hidden />
             <span className="font-mono text-[12px] text-ink-soft">
               <TabularTick value={tasks.length} /> filed

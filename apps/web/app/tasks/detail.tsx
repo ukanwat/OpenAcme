@@ -919,7 +919,7 @@ function AgentCombobox({
             <span className="font-mono text-[11px] text-ink-faint">(unknown)</span>
           </span>
         ) : (
-          <span>Pick an agent</span>
+          <span className="text-ink-faint">Unassigned</span>
         )}
         <ChevronDown className="size-4 shrink-0 text-ink-faint" />
       </button>

@@ -1027,7 +1027,7 @@ function ChatPageInner() {
             </div>
             <div
               className={cn(
-                "border border-paper-rule bg-paper transition-colors focus-within:border-plot-red",
+                "border border-paper-rule bg-paper transition-colors focus-within:border-plot-red focus-within:outline focus-within:outline-2 focus-within:-outline-offset-1 focus-within:outline-plot-red",
                 isDragging && "border-plot-red bg-paper-sunk"
               )}
               onDragOver={onDragOver}

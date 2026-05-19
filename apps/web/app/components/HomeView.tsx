@@ -100,7 +100,7 @@ function SessionRow({ s, onClick, onDelete, compact, active }: RowProps) {
     s.status === "waiting"
       ? "bg-plot-red pulse-live"
       : s.status === "running"
-        ? "bg-amber-500 pulse-live"
+        ? "bg-signal-blue"
         : "bg-ink-faint";
   const statusLabel =
     s.status === "waiting"
@@ -112,7 +112,7 @@ function SessionRow({ s, onClick, onDelete, compact, active }: RowProps) {
     s.status === "waiting"
       ? "text-plot-red"
       : s.status === "running"
-        ? "text-amber-600 dark:text-amber-400"
+        ? "text-signal-blue"
         : "text-ink-soft";
 
   const deleteButton = (size: "compact" | "full") => (
@@ -125,7 +125,7 @@ function SessionRow({ s, onClick, onDelete, compact, active }: RowProps) {
       aria-label="Delete session"
       title="Delete session"
       className={cn(
-        "shrink-0 rounded p-1 text-ink-faint opacity-0 transition-opacity hover:bg-paper-rule/60 hover:text-plot-red focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-plot-red group-hover:opacity-100",
+        "shrink-0 p-1 text-ink-faint opacity-0 transition-opacity hover:bg-paper-rule/60 hover:text-plot-red focus-visible:opacity-100 focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-1 focus-visible:outline-plot-red group-hover:opacity-100",
         size === "compact" ? "size-6" : "size-7"
       )}
     >
@@ -171,9 +171,9 @@ function SessionRow({ s, onClick, onDelete, compact, active }: RowProps) {
             </span>
           </div>
           {s.pingMessage && (
-            <div className="mt-1 line-clamp-2 rounded border border-plot-red/30 bg-plot-red/5 px-1.5 py-0.5 text-[11px] text-ink">
+            <div className="mt-1 line-clamp-2 border border-paper-rule bg-paper-sunk px-1.5 py-0.5 text-[11px] text-ink-soft">
               <Bell
-                className="mr-1 inline size-2.5 -translate-y-px text-plot-red"
+                className="mr-1 inline size-2.5 -translate-y-px text-ink-faint"
                 aria-hidden
               />
               {s.pingMessage}
@@ -228,8 +228,8 @@ function SessionRow({ s, onClick, onDelete, compact, active }: RowProps) {
           </div>
         )}
         {s.pingMessage && (
-          <div className="mt-1 line-clamp-2 rounded border border-plot-red/30 bg-plot-red/5 px-2 py-1 text-[12px] text-ink">
-            <Bell className="mr-1 inline size-3 -translate-y-px text-plot-red" aria-hidden />
+          <div className="mt-1 line-clamp-2 border border-paper-rule bg-paper-sunk px-2 py-1 text-[12px] text-ink-soft">
+            <Bell className="mr-1 inline size-3 -translate-y-px text-ink-faint" aria-hidden />
             {s.pingMessage}
           </div>
         )}
@@ -281,7 +281,7 @@ function Section({
     tone === "waiting"
       ? "text-plot-red"
       : tone === "running"
-        ? "text-amber-600 dark:text-amber-400"
+        ? "text-signal-blue"
         : "text-ink-soft";
   return (
     <section className={compact ? "mt-3" : "mt-6"}>
@@ -645,9 +645,9 @@ function EmptyState({ compact }: { compact: boolean }) {
           <p className="font-mono text-[12px] uppercase tracking-[0.08em] text-ink-soft">
             Start a chat
           </p>
-          <p className="mx-auto mt-2 max-w-md text-sm text-ink-faint">
-            Pick an agent to begin. Your workforce will populate this page as
-            sessions and tasks come online.
+          <p className="mx-auto mt-2 max-w-md text-sm text-ink-soft">
+            Select an agent. Sessions and tasks file to this view as the
+            workforce runs.
           </p>
         </>
       )}
