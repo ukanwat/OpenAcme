@@ -239,13 +239,13 @@ function SessionRow({ s, onClick, onDelete, compact, active }: RowProps) {
           {formatRelative(s.lastActivity)}
         </span>
         {wakeLabel && (
-          <span className="flex items-center gap-1 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-soft">
+          <span className="flex items-center gap-1 font-mono text-[10px] uppercase tracking-[0.08em] text-signal-blue">
             <Clock className="size-3" aria-hidden />
             {wakeLabel}
           </span>
         )}
         {s.pendingTaskCount > 0 && (
-          <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-soft">
+          <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-signal-blue">
             {s.pendingTaskCount} task{s.pendingTaskCount === 1 ? "" : "s"}
           </span>
         )}
@@ -802,55 +802,80 @@ export function HomeView({ compact = false }: { compact?: boolean } = {}) {
           >
             Home
           </h1>
-          {!compact && (
-            <p className="mt-0.5 font-mono text-[11px] uppercase tracking-[0.08em] text-ink-soft">
-              Workforce activity at a glance
-            </p>
-          )}
+          {!compact && (() => {
+            // Aggregate workforce status. Plot Red anchors the eye when
+            // anything is waiting on the operator; otherwise Signal Blue
+            // marks live work; otherwise the workforce is idle and ink-faint.
+            const waiting = payload?.waiting.length ?? 0;
+            const running = payload?.running.length ?? 0;
+            const idle = payload?.idle.length ?? 0;
+            const total = waiting + running + idle;
+            const tone =
+              waiting > 0
+                ? {
+                    dot: "bg-plot-red pulse-live",
+                    label: "text-plot-red",
+                    text: `${waiting} waiting on you`,
+                  }
+                : running > 0
+                  ? {
+                      dot: "bg-signal-blue",
+                      label: "text-signal-blue",
+                      text: `${running} running`,
+                    }
+                  : total > 0
+                    ? {
+                        dot: "bg-ink-faint",
+                        label: "text-ink-soft",
+                        text: "Workforce idle",
+                      }
+                    : {
+                        dot: "bg-ink-faint",
+                        label: "text-ink-soft",
+                        text: "Workforce activity at a glance",
+                      };
+            return (
+              <p className="mt-1 flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.08em]">
+                <span aria-hidden className={cn("status-dot", tone.dot)} />
+                <span className={tone.label}>{tone.text}</span>
+              </p>
+            );
+          })()}
         </div>
-        <NewChatPopover compact={compact} />
+        <div className="flex shrink-0 items-center gap-2">
+          {!empty && payload && (() => {
+            // Per-agent totals from the UNFILTERED payload so chip counts
+            // don't zero out when a filter is active. Single-agent slot
+            // hides the filter entirely — scoping is noise when there's
+            // nothing to scope away from.
+            const totals = new Map<string, { name: string; count: number }>();
+            for (const bucket of [
+              payload.waiting,
+              payload.running,
+              payload.idle,
+            ]) {
+              for (const s of bucket) {
+                const cur = totals.get(s.agentId);
+                if (cur) cur.count++;
+                else totals.set(s.agentId, { name: s.agentName, count: 1 });
+              }
+            }
+            if (totals.size <= 1) return null;
+            const agentTotals = Array.from(totals.entries())
+              .map(([id, { name, count }]) => ({ id, name, count }))
+              .sort((a, b) => a.name.localeCompare(b.name));
+            return (
+              <FilterByAgentPopover
+                agentTotals={agentTotals}
+                active={agentFilter}
+                onPick={setAgentFilter}
+                compact={compact}
+              />
+            );
+          })()}
+          <NewChatPopover compact={compact} />
+        </div>
       </div>
-
-      {!empty && payload && (() => {
-        // Per-agent totals from the UNFILTERED payload so chip counts
-        // don't zero out when a filter is active.
-        const totals = new Map<
-          string,
-          { name: string; count: number }
-        >();
-        for (const bucket of [
-          payload.waiting,
-          payload.running,
-          payload.idle,
-        ]) {
-          for (const s of bucket) {
-            const cur = totals.get(s.agentId);
-            if (cur) cur.count++;
-            else totals.set(s.agentId, { name: s.agentName, count: 1 });
-          }
-        }
-        // Single-agent slot: hide the filter entirely — scoping is
-        // noise when there's nothing to scope away from.
-        if (totals.size <= 1) return null;
-        const agentTotals = Array.from(totals.entries())
-          .map(([id, { name, count }]) => ({ id, name, count }))
-          .sort((a, b) => a.name.localeCompare(b.name));
-        return (
-          <div
-            className={cn(
-              "border-b border-paper-rule",
-              compact ? "px-3 py-2" : "px-6 py-3"
-            )}
-          >
-            <FilterByAgentPopover
-              agentTotals={agentTotals}
-              active={agentFilter}
-              onPick={setAgentFilter}
-              compact={compact}
-            />
-          </div>
-        );
-      })()}
 
       {empty ? (
         <EmptyState compact={compact} />
