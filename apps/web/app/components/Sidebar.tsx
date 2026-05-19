@@ -7,6 +7,7 @@ import {
   Home,
   Bot,
   BookOpen,
+  Command,
   ListChecks,
   Settings,
   PanelLeftClose,
@@ -187,7 +188,9 @@ export function Sidebar({ children }: { children?: React.ReactNode }) {
       <div
         className={cn(
           "flex items-center border-t border-paper-rule",
-          collapsed ? "justify-center px-2 py-3" : "justify-between gap-2 px-4 py-3"
+          collapsed
+            ? "flex-col justify-center gap-1 px-2 py-3"
+            : "justify-between gap-2 px-4 py-3"
         )}
       >
         {!collapsed && (
@@ -195,7 +198,34 @@ export function Sidebar({ children }: { children?: React.ReactNode }) {
             {version ? `v${version}` : "v—"}
           </div>
         )}
-        <ThemeToggle compact={collapsed} />
+        <div
+          className={cn(
+            "flex items-center",
+            collapsed ? "flex-col gap-1" : "gap-1"
+          )}
+        >
+          <button
+            type="button"
+            onClick={() =>
+              window.dispatchEvent(new CustomEvent("openacme:open-palette"))
+            }
+            title="Open command palette (⌘K)"
+            aria-label="Open command palette"
+            aria-keyshortcuts="Meta+K Control+K"
+            className={cn(
+              "flex items-center gap-1.5 text-ink-soft transition-colors hover:text-ink focus:outline-none focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-1 focus-visible:outline-plot-red",
+              collapsed ? "size-6 justify-center" : "px-1"
+            )}
+          >
+            <Command className="size-3.5 shrink-0" aria-hidden />
+            {!collapsed && (
+              <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
+                K
+              </span>
+            )}
+          </button>
+          <ThemeToggle compact={collapsed} />
+        </div>
       </div>
     </aside>
   );

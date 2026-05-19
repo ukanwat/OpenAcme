@@ -66,7 +66,9 @@ export function CommandPalette() {
   const listRef = useRef<HTMLDivElement>(null);
 
   // Cmd-K / Ctrl-K toggle. Bare `k` would clash with text inputs; require
-  // the modifier so it works no matter where focus is.
+  // the modifier so it works no matter where focus is. Sidebar's
+  // "Search" affordance also opens via a CustomEvent so non-keyboard
+  // users have a visible path in.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
@@ -74,8 +76,15 @@ export function CommandPalette() {
         setOpen((v) => !v);
       }
     }
+    function onOpenPalette() {
+      setOpen(true);
+    }
     document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
+    window.addEventListener("openacme:open-palette", onOpenPalette);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("openacme:open-palette", onOpenPalette);
+    };
   }, []);
 
   // Reset transient state on open; lazy-fetch agents the first time the

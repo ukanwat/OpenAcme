@@ -15,7 +15,7 @@
  */
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Bell,
@@ -27,7 +27,9 @@ import {
   Plus,
   ChevronDown,
   Filter as FilterIcon,
+  Search,
   Trash2,
+  X,
 } from "lucide-react";
 import { useHomeStream } from "@/app/lib/useHomeStream";
 import { API_BASE } from "@/app/lib/api";
@@ -284,10 +286,14 @@ function Section({
         ? "text-signal-blue"
         : "text-ink-soft";
   return (
-    <section className={compact ? "mt-3" : "mt-6"}>
+    <section>
+      {/* Section header carries the only hairline that demarcates the
+       *  region (DESIGN.md §5 — "1px hairline below the label"). Sections
+       *  butt up so the previous section's last row border-b plus this
+       *  header's border-b act as a labeled divider, never doubled. */}
       <div
         className={cn(
-          "flex items-center justify-between pb-2",
+          "flex items-center justify-between border-b border-paper-rule pb-2 pt-3",
           compact ? "px-3" : "px-6"
         )}
       >
@@ -306,18 +312,16 @@ function Section({
           <span className="font-mono text-[10px] text-ink-faint">{hint}</span>
         )}
       </div>
-      <div className="border-t border-paper-rule">
-        {sessions.map((s) => (
-          <SessionRow
-            key={s.sessionId}
-            s={s}
-            onClick={() => onPick(s.sessionId)}
-            onDelete={() => onDelete(s.sessionId)}
-            compact={compact}
-            active={activeSessionId === s.sessionId}
-          />
-        ))}
-      </div>
+      {sessions.map((s) => (
+        <SessionRow
+          key={s.sessionId}
+          s={s}
+          onClick={() => onPick(s.sessionId)}
+          onDelete={() => onDelete(s.sessionId)}
+          compact={compact}
+          active={activeSessionId === s.sessionId}
+        />
+      ))}
     </section>
   );
 }
@@ -385,9 +389,8 @@ function NewChatPopover({ compact }: { compact: boolean }) {
         ) : (
           <button
             type="button"
-            className="flex shrink-0 items-center gap-1.5 border border-paper-rule bg-paper px-2.5 py-1 text-[12px] font-medium text-ink transition-colors hover:border-plot-red hover:text-plot-red"
+            className="flex shrink-0 items-center border border-paper-rule bg-paper px-3 py-1.5 text-[13px] font-medium text-ink transition-colors hover:border-plot-red hover:text-plot-red"
           >
-            <Plus className="size-3.5" aria-hidden />
             New chat
           </button>
         )}
@@ -685,6 +688,209 @@ function EmptyState({ compact }: { compact: boolean }) {
   );
 }
 
+// ─── Search ──────────────────────────────────────────────────────────────
+
+interface MessageSearchHit {
+  sessionId: string;
+  agentId: string;
+  agentName: string;
+  sessionTitle: string | null;
+  role: "user" | "assistant";
+  snippet: string;
+  rank: number;
+}
+
+/** Unified search-result row. `kind` tells the operator why this hit
+ *  matched: agent name, session title, ping, or message body. */
+interface SearchResultEntry {
+  sessionId: string;
+  agentId: string;
+  agentName: string;
+  title: string | null;
+  /** What surface produced this match — drives the leading badge text. */
+  kind: "agent" | "title" | "ping" | "message";
+  /** Live-session role if local; null for server-only hits. */
+  status: "waiting" | "running" | "idle" | null;
+  snippet: string;
+  /** Lower is better. Local hits beat server hits via tier ordering. */
+  rank: number;
+}
+
+const KIND_LABEL: Record<SearchResultEntry["kind"], string> = {
+  agent: "agent",
+  title: "title",
+  ping: "ping",
+  message: "message",
+};
+
+const STATUS_DOT: Record<NonNullable<SearchResultEntry["status"]>, string> = {
+  waiting: "bg-plot-red",
+  running: "bg-signal-blue",
+  idle: "bg-ink-faint",
+};
+
+/**
+ * Highlight occurrences of every whitespace-separated query token in
+ * `text`. Case-insensitive, longest-token-first so "foo bar" doesn't
+ * double-highlight inside "foobar". Returns React nodes.
+ */
+function highlightMatches(text: string, query: string): React.ReactNode {
+  const tokens = query
+    .toLowerCase()
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length);
+  if (tokens.length === 0) return text;
+  const pattern = new RegExp(
+    `(${tokens.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})`,
+    "gi"
+  );
+  const parts = text.split(pattern);
+  return parts.map((part, i) =>
+    pattern.test(part) ? (
+      <mark
+        key={i}
+        className="bg-plot-red/15 text-ink underline decoration-plot-red/40 underline-offset-2"
+      >
+        {part}
+      </mark>
+    ) : (
+      <span key={i}>{part}</span>
+    )
+  );
+}
+
+function SearchBar({
+  query,
+  onChange,
+  loading,
+  inputRef,
+  compact,
+  trailing,
+}: {
+  query: string;
+  onChange: (next: string) => void;
+  loading: boolean;
+  inputRef: React.RefObject<HTMLInputElement | null>;
+  compact: boolean;
+  /** Sibling control rendered to the right of the search box, inside the
+   *  same breathing band. Used for the agent filter chip. */
+  trailing?: React.ReactNode;
+}) {
+  return (
+    <div
+      className={cn(
+        "flex items-center gap-2",
+        compact ? "px-3 py-2" : "px-6 py-3"
+      )}
+    >
+      <div
+        className={cn(
+          "relative flex flex-1 items-center gap-2 border border-paper-rule bg-paper transition-colors focus-within:border-plot-red",
+          "px-3 py-1.5"
+        )}
+      >
+        <Search className="size-3.5 shrink-0 text-ink-faint" aria-hidden />
+        <input
+          ref={inputRef}
+          type="text"
+          value={query}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="Search sessions by title, agent, or message…"
+          aria-label="Search workforce"
+          aria-keyshortcuts="/"
+          autoComplete="off"
+          spellCheck={false}
+          className="flex-1 bg-transparent text-[13px] text-ink outline-none placeholder:text-ink-faint"
+        />
+        {query ? (
+          <button
+            type="button"
+            onClick={() => {
+              onChange("");
+              inputRef.current?.focus();
+            }}
+            aria-label="Clear search"
+            className="shrink-0 p-0.5 text-ink-faint transition-colors hover:text-plot-red focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-1 focus-visible:outline-plot-red"
+          >
+            <X className="size-3.5" aria-hidden />
+          </button>
+        ) : (
+          <kbd
+            title="Press / to focus search"
+            className="shrink-0 border border-paper-rule px-1 py-px font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint"
+          >
+            /
+          </kbd>
+        )}
+        {loading && (
+          <span className="pointer-events-none absolute inset-x-0 bottom-0 h-px overflow-hidden">
+            <span aria-hidden className="loading-hairline" />
+          </span>
+        )}
+      </div>
+      {trailing}
+    </div>
+  );
+}
+
+function SearchResultRow({
+  entry,
+  query,
+  active,
+  onPick,
+  compact,
+}: {
+  entry: SearchResultEntry;
+  query: string;
+  active: boolean;
+  onPick: (sid: string) => void;
+  compact: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => onPick(entry.sessionId)}
+      className={cn(
+        "group relative flex w-full items-start gap-3 border-b border-paper-rule text-left transition-colors",
+        compact ? "px-3 py-2" : "px-6 py-2.5",
+        active ? "bg-paper-sunk" : "hover:bg-paper-sunk/60"
+      )}
+    >
+      {active && (
+        <span
+          aria-hidden
+          className="absolute inset-y-0 left-0 w-[2px] bg-plot-red"
+        />
+      )}
+      <span
+        className={cn(
+          "status-dot mt-1.5 shrink-0",
+          entry.status ? STATUS_DOT[entry.status] : "bg-ink-faint"
+        )}
+        aria-hidden
+      />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-baseline gap-2">
+          <span className="truncate text-[13px] font-medium text-ink">
+            {entry.title || "Untitled session"}
+          </span>
+          <span className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
+            <Bot className="size-2.5" aria-hidden />
+            <span className="truncate max-w-[8rem]">{entry.agentName}</span>
+            <span aria-hidden>·</span>
+            <span>{KIND_LABEL[entry.kind]}</span>
+          </span>
+        </div>
+        <div className="mt-0.5 line-clamp-2 font-mono text-[11px] leading-snug text-ink-soft">
+          {highlightMatches(entry.snippet, query)}
+        </div>
+      </div>
+    </button>
+  );
+}
+
 export function HomeView({ compact = false }: { compact?: boolean } = {}) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -706,12 +912,14 @@ export function HomeView({ compact = false }: { compact?: boolean } = {}) {
     }
   }
 
-  const pick = (sid: string) => {
-    // Canonical URL is `?session=<id>` only — the agent is implied
-    // by the session row server-side, the chat page fetches
-    // `/api/sessions/:id` and adopts the agent from there.
+  // Canonical URL is `?session=<id>` only — the agent is implied
+  // by the session row server-side, the chat page fetches
+  // `/api/sessions/:id` and adopts the agent from there.
+  // useCallback so the search keydown effect doesn't re-attach
+  // on every render via the deps array.
+  const pick = useCallback((sid: string) => {
     navigateClient(`/?session=${encodeURIComponent(sid)}`);
-  };
+  }, []);
 
   const deleteSession = async (sid: string) => {
     if (!confirm("Delete this session? Messages and attachments are removed permanently.")) return;
@@ -734,6 +942,223 @@ export function HomeView({ compact = false }: { compact?: boolean } = {}) {
     }
     void refresh({ force: true });
   };
+
+  // ── Search ────────────────────────────────────────────────────────
+  // Always-visible search bar above the section list. Title / agent /
+  // ping matches resolve client-side from the home payload; message-
+  // body content goes to /api/messages/search (FTS5, debounced).
+  const [searchQuery, setSearchQuery] = useState("");
+  const [serverHits, setServerHits] = useState<MessageSearchHit[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchActiveIndex, setSearchActiveIndex] = useState(0);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Pre-build status lookup so server hits can adopt status from the
+  // home payload when the matching session is currently live.
+  const statusBySession = useMemo(() => {
+    const m = new Map<string, "waiting" | "running" | "idle">();
+    if (payload) {
+      for (const s of payload.waiting) m.set(s.sessionId, "waiting");
+      for (const s of payload.running) m.set(s.sessionId, "running");
+      for (const s of payload.idle) m.set(s.sessionId, "idle");
+    }
+    return m;
+  }, [payload]);
+
+  // Wrap the open-with-results transition in View Transitions when the
+  // empty → non-empty toggle happens. The default browser snapshot
+  // animation cross-fades the section list ↔ search results region.
+  const setQueryAnimated = useCallback((next: string) => {
+    const wasEmpty = searchQuery.trim().length === 0;
+    const willBeEmpty = next.trim().length === 0;
+    const crossing = wasEmpty !== willBeEmpty;
+    setSearchActiveIndex(0);
+    if (
+      crossing &&
+      typeof document !== "undefined" &&
+      typeof (document as Document & { startViewTransition?: unknown })
+        .startViewTransition === "function"
+    ) {
+      (document as Document & {
+        startViewTransition: (cb: () => void) => void;
+      }).startViewTransition(() => setSearchQuery(next));
+    } else {
+      setSearchQuery(next);
+    }
+  }, [searchQuery]);
+
+  // Debounced server search (140ms). AbortController kills the previous
+  // request so a fast typer never sees an out-of-order response.
+  useEffect(() => {
+    const q = searchQuery.trim();
+    if (q.length === 0) {
+      setServerHits([]);
+      setSearchLoading(false);
+      return;
+    }
+    setSearchLoading(true);
+    const ctrl = new AbortController();
+    const t = setTimeout(() => {
+      fetch(
+        `${API_BASE}/api/messages/search?q=${encodeURIComponent(q)}&limit=20`,
+        { signal: ctrl.signal }
+      )
+        .then((r) => (r.ok ? r.json() : { results: [] }))
+        .then((data: { results: MessageSearchHit[] }) => {
+          setServerHits(data.results ?? []);
+        })
+        .catch(() => {
+          if (!ctrl.signal.aborted) setServerHits([]);
+        })
+        .finally(() => {
+          if (!ctrl.signal.aborted) setSearchLoading(false);
+        });
+    }, 140);
+    return () => {
+      clearTimeout(t);
+      ctrl.abort();
+    };
+  }, [searchQuery]);
+
+  // Merge local + server hits. Local title matches > agent > ping >
+  // server content. Dedupe by sessionId; local wins because it carries
+  // the live status dot.
+  const searchResults = useMemo<SearchResultEntry[]>(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (q.length === 0) return [];
+    const tokens = q.split(/\s+/).filter(Boolean);
+    const matches = (haystack: string | null | undefined): boolean => {
+      if (!haystack) return false;
+      const lc = haystack.toLowerCase();
+      return tokens.every((t) => lc.includes(t));
+    };
+
+    const out: SearchResultEntry[] = [];
+    const seen = new Set<string>();
+    const push = (e: SearchResultEntry) => {
+      if (seen.has(e.sessionId)) return;
+      seen.add(e.sessionId);
+      out.push(e);
+    };
+
+    if (payload) {
+      const all = [...payload.waiting, ...payload.running, ...payload.idle];
+      // Title hits — rank 0 tier (best).
+      for (const s of all) {
+        if (matches(s.title)) {
+          push({
+            sessionId: s.sessionId,
+            agentId: s.agentId,
+            agentName: s.agentName,
+            title: s.title,
+            kind: "title",
+            status: s.status,
+            snippet: s.title ?? "",
+            rank: 0,
+          });
+        }
+      }
+      // Agent-name hits — rank 1 tier.
+      for (const s of all) {
+        if (matches(s.agentName) && !matches(s.title ?? "")) {
+          push({
+            sessionId: s.sessionId,
+            agentId: s.agentId,
+            agentName: s.agentName,
+            title: s.title,
+            kind: "agent",
+            status: s.status,
+            snippet: s.title || `Session with ${s.agentName}`,
+            rank: 1,
+          });
+        }
+      }
+      // Ping hits — rank 2 tier.
+      for (const s of all) {
+        if (s.pingMessage && matches(s.pingMessage)) {
+          push({
+            sessionId: s.sessionId,
+            agentId: s.agentId,
+            agentName: s.agentName,
+            title: s.title,
+            kind: "ping",
+            status: s.status,
+            snippet: s.pingMessage,
+            rank: 2,
+          });
+        }
+      }
+    }
+    // Server content hits — rank 3+ tier (FTS bm25; lower is better).
+    for (const h of serverHits) {
+      push({
+        sessionId: h.sessionId,
+        agentId: h.agentId,
+        agentName: h.agentName,
+        title: h.sessionTitle,
+        kind: "message",
+        status: statusBySession.get(h.sessionId) ?? null,
+        snippet: h.snippet,
+        rank: 3 + (h.rank ?? 0),
+      });
+    }
+    return out;
+  }, [searchQuery, payload, serverHits, statusBySession]);
+
+  // Clamp active index when results shrink.
+  useEffect(() => {
+    if (searchActiveIndex >= searchResults.length) {
+      setSearchActiveIndex(Math.max(0, searchResults.length - 1));
+    }
+  }, [searchResults.length, searchActiveIndex]);
+
+  // Global `/` focuses the search input. Esc clears the query when
+  // there is one; otherwise blurs. Arrow keys + Enter navigate
+  // results when the input is focused.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const target = e.target as HTMLElement | null;
+      const isEditable =
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable);
+
+      if (e.key === "/" && !e.metaKey && !e.ctrlKey && !e.altKey && !isEditable) {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+        return;
+      }
+      if (target !== searchInputRef.current) return;
+
+      if (e.key === "Escape") {
+        if (searchQuery) {
+          e.preventDefault();
+          setQueryAnimated("");
+        } else {
+          searchInputRef.current?.blur();
+        }
+        return;
+      }
+      if (searchResults.length === 0) return;
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setSearchActiveIndex((i) => Math.min(searchResults.length - 1, i + 1));
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setSearchActiveIndex((i) => Math.max(0, i - 1));
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        const hit = searchResults[searchActiveIndex];
+        if (hit) {
+          pick(hit.sessionId);
+          setQueryAnimated("");
+        }
+      }
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [searchQuery, searchResults, searchActiveIndex, setQueryAnimated, pick]);
 
   const setAgentFilter = (next: string | null) => {
     const params = new URLSearchParams(searchParams.toString());
@@ -789,11 +1214,11 @@ export function HomeView({ compact = false }: { compact?: boolean } = {}) {
     >
       <div
         className={cn(
-          "flex items-start justify-between gap-3 border-b border-paper-rule",
-          compact ? "px-3 py-3" : "px-6 py-5"
+          "flex items-center justify-between gap-3",
+          compact ? "px-3 py-3" : "px-6 py-4"
         )}
       >
-        <div className="min-w-0">
+        <div className="flex min-w-0 items-center gap-3">
           <h1
             className={cn(
               "text-ink",
@@ -835,50 +1260,88 @@ export function HomeView({ compact = false }: { compact?: boolean } = {}) {
                         text: "Workforce activity at a glance",
                       };
             return (
-              <p className="mt-1 flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.08em]">
-                <span aria-hidden className={cn("status-dot", tone.dot)} />
-                <span className={tone.label}>{tone.text}</span>
-              </p>
+              <>
+                <span aria-hidden className="h-4 w-px shrink-0 bg-paper-rule" />
+                <span className="flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-[0.08em]">
+                  <span aria-hidden className={cn("status-dot", tone.dot)} />
+                  <span className={tone.label}>{tone.text}</span>
+                </span>
+              </>
             );
           })()}
         </div>
-        <div className="flex shrink-0 items-center gap-2">
-          {!empty && payload && (() => {
-            // Per-agent totals from the UNFILTERED payload so chip counts
-            // don't zero out when a filter is active. Single-agent slot
-            // hides the filter entirely — scoping is noise when there's
-            // nothing to scope away from.
-            const totals = new Map<string, { name: string; count: number }>();
-            for (const bucket of [
-              payload.waiting,
-              payload.running,
-              payload.idle,
-            ]) {
-              for (const s of bucket) {
-                const cur = totals.get(s.agentId);
-                if (cur) cur.count++;
-                else totals.set(s.agentId, { name: s.agentName, count: 1 });
-              }
-            }
-            if (totals.size <= 1) return null;
-            const agentTotals = Array.from(totals.entries())
-              .map(([id, { name, count }]) => ({ id, name, count }))
-              .sort((a, b) => a.name.localeCompare(b.name));
-            return (
-              <FilterByAgentPopover
-                agentTotals={agentTotals}
-                active={agentFilter}
-                onPick={setAgentFilter}
-                compact={compact}
-              />
-            );
-          })()}
-          <NewChatPopover compact={compact} />
-        </div>
+        <NewChatPopover compact={compact} />
       </div>
+
+      {!empty && payload && (() => {
+        // Per-agent totals from the UNFILTERED payload so chip counts
+        // don't zero out when a filter is active. Single-agent slot
+        // hides the filter entirely — scoping is noise when there's
+        // nothing to scope away from.
+        const totals = new Map<string, { name: string; count: number }>();
+        for (const bucket of [payload.waiting, payload.running, payload.idle]) {
+          for (const s of bucket) {
+            const cur = totals.get(s.agentId);
+            if (cur) cur.count++;
+            else totals.set(s.agentId, { name: s.agentName, count: 1 });
+          }
+        }
+        const agentTotals =
+          totals.size > 1
+            ? Array.from(totals.entries())
+                .map(([id, { name, count }]) => ({ id, name, count }))
+                .sort((a, b) => a.name.localeCompare(b.name))
+            : null;
+        return (
+          <SearchBar
+            query={searchQuery}
+            onChange={setQueryAnimated}
+            loading={searchLoading}
+            inputRef={searchInputRef}
+            compact={compact}
+            trailing={
+              agentTotals && (
+                <FilterByAgentPopover
+                  agentTotals={agentTotals}
+                  active={agentFilter}
+                  onPick={setAgentFilter}
+                  compact={compact}
+                />
+              )
+            }
+          />
+        );
+      })()}
 
       {empty ? (
         <EmptyState compact={compact} />
+      ) : searchQuery.trim().length > 0 ? (
+        searchResults.length === 0 && !searchLoading ? (
+          <div
+            className={cn(
+              "text-center font-mono text-[11px] uppercase tracking-[0.08em] text-ink-faint",
+              compact ? "px-3 py-8" : "px-6 py-12"
+            )}
+          >
+            No matches.
+          </div>
+        ) : (
+          <div className="border-t border-paper-rule">
+            {searchResults.map((entry, i) => (
+              <SearchResultRow
+                key={`${entry.sessionId}-${entry.kind}`}
+                entry={entry}
+                query={searchQuery}
+                active={i === searchActiveIndex}
+                onPick={(sid) => {
+                  pick(sid);
+                  setQueryAnimated("");
+                }}
+                compact={compact}
+              />
+            ))}
+          </div>
+        )
       ) : (() => {
         const apply = (b: SessionSummary[]) =>
           agentFilter ? b.filter((s) => s.agentId === agentFilter) : b;

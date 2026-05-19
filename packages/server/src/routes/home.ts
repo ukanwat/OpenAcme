@@ -41,10 +41,102 @@ export interface HomePayload {
   idle: SessionSummary[];
 }
 
+export interface MessageSearchHit {
+  sessionId: string;
+  agentId: string;
+  agentName: string;
+  sessionTitle: string | null;
+  /** Which side of the conversation matched. */
+  role: "user" | "assistant";
+  /** ±60 chars around the first matched token, ellipsized at boundaries. */
+  snippet: string;
+  /** FTS5 bm25 rank — lower is better. */
+  rank: number;
+}
+
+/**
+ * Wrap user input as FTS5 prefix-with-AND expression. Each whitespace
+ * token becomes a quoted prefix term so reserved syntax in raw input
+ * can't unhinge the query. Empty → null (caller skips the call).
+ */
+function sanitizeFtsQuery(q: string): string | null {
+  const tokens = q.trim().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return null;
+  return tokens.map((t) => `"${t.replace(/"/g, '""')}"*`).join(" ");
+}
+
+/**
+ * Pull ±contextChars around the first matched token. Tokens are matched
+ * case-insensitive; the original casing is preserved in the output.
+ */
+function makeSnippet(content: string, q: string, contextChars = 60): string {
+  const tokens = q.toLowerCase().trim().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return content.slice(0, 200);
+  const lower = content.toLowerCase();
+  let bestPos = -1;
+  for (const t of tokens) {
+    const p = lower.indexOf(t);
+    if (p !== -1 && (bestPos === -1 || p < bestPos)) bestPos = p;
+  }
+  if (bestPos === -1) return content.slice(0, 200);
+  const start = Math.max(0, bestPos - contextChars);
+  const end = Math.min(content.length, bestPos + contextChars * 2);
+  return (
+    (start > 0 ? "…" : "") +
+    content.slice(start, end).replace(/\s+/g, " ").trim() +
+    (end < content.length ? "…" : "")
+  );
+}
+
 export function registerHomeRoutes(app: Hono, manager: AgentManager): void {
   app.get("/api/home", (c) => {
     const payload = buildHomePayload(manager);
     return c.json(payload);
+  });
+
+  // Message-body FTS for the Home page's search bar. Title/agent/ping
+  // matching happens client-side over the home payload; this endpoint
+  // covers content matches only. Returns enriched rows joined with
+  // session + agent name so the client can render without an N+1.
+  app.get("/api/messages/search", (c) => {
+    const raw = c.req.query("q") ?? "";
+    const limit = Math.min(50, Math.max(1, parseInt(c.req.query("limit") ?? "20", 10) || 20));
+    const expr = sanitizeFtsQuery(raw);
+    if (!expr) return c.json({ results: [] as MessageSearchHit[] });
+
+    const rows = manager.messageStore.search(expr, limit);
+    if (rows.length === 0) return c.json({ results: [] as MessageSearchHit[] });
+
+    const agentNames = new Map<string, string>();
+    for (const def of manager.listAgents()) {
+      agentNames.set(def.id, def.name);
+    }
+
+    // FTS can return repeated sessions across multiple message hits.
+    // Keep the best-ranked hit per session so result rows are 1:1 with
+    // sessions and the operator gets variety, not three rows of one chat.
+    const bestBySession = new Map<string, typeof rows[number]>();
+    for (const r of rows) {
+      const cur = bestBySession.get(r.sessionId);
+      if (!cur || r.rank < cur.rank) bestBySession.set(r.sessionId, r);
+    }
+
+    const results: MessageSearchHit[] = [];
+    for (const row of bestBySession.values()) {
+      const session = manager.sessionStore.get(row.sessionId);
+      if (!session) continue;
+      results.push({
+        sessionId: row.sessionId,
+        agentId: session.agentId,
+        agentName: agentNames.get(session.agentId) ?? session.agentId,
+        sessionTitle: session.title,
+        role: row.role as "user" | "assistant",
+        snippet: makeSnippet(row.content, raw),
+        rank: row.rank,
+      });
+    }
+    results.sort((a, b) => a.rank - b.rank);
+    return c.json({ results });
   });
 }
 
