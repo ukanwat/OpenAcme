@@ -38,6 +38,10 @@ const RECOVERABLE_PATTERNS = [
   "connection closed",
   "websocket closed",
   "cdp socket closed",
+  "websocket error",
+  "unexpected server response",
+  "econnreset",
+  "econnrefused",
 ];
 
 /** True when the error looks like a transient CDP disconnect that we can

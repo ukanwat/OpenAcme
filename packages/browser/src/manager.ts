@@ -2,7 +2,6 @@ import type { Browser, BrowserContext, Page } from "playwright-core";
 import { connectOverCdp, isRecoverableDisconnect } from "./cdp.js";
 import type { AcquiredBrowser, BrowserProvider } from "./providers/base.js";
 import type { AgentBrowserOverrides } from "./types.js";
-import { refLocator } from "./refs.js";
 import { ariaSnapshot } from "./snapshot.js";
 import type {
   ActionResult,
@@ -380,31 +379,36 @@ export class BrowserManager {
 
   async snapshot(agentId: string, p: SnapshotParams): Promise<SnapshotResult> {
     return this.withReconnect(agentId, p.tabId, { createIfNone: false }, async (page, ids) => {
-      const snapshot = await ariaSnapshot(page);
+      const snapshot = await ariaSnapshot(page, p.selector);
       return { tabId: ids.tabId, url: page.url(), snapshot };
     });
   }
 
   async click(agentId: string, p: ClickParams): Promise<ActionResult> {
     return this.withReconnect(agentId, p.tabId, { createIfNone: false }, async (page, ids) => {
-      await refLocator(page, p.ref).click();
-      return { tabId: ids.tabId };
+      await page.locator(p.ref).click();
+      return { tabId: ids.tabId, snapshot: await ariaSnapshot(page) };
     });
   }
 
   async type(agentId: string, p: TypeParams): Promise<ActionResult> {
     return this.withReconnect(agentId, p.tabId, { createIfNone: false }, async (page, ids) => {
-      const loc = refLocator(page, p.ref);
+      const loc = page.locator(p.ref);
       await loc.fill(p.text);
       if (p.submit) await loc.press("Enter");
-      return { tabId: ids.tabId };
+      return { tabId: ids.tabId, snapshot: await ariaSnapshot(page) };
     });
   }
 
   async pressKey(agentId: string, p: PressKeyParams): Promise<ActionResult> {
     return this.withReconnect(agentId, p.tabId, { createIfNone: false }, async (page, ids) => {
       await page.keyboard.press(p.key);
-      return { tabId: ids.tabId };
+      // Only Enter triggers a post-action snapshot — matches Microsoft's
+      // playwright-mcp; other keys (Escape, ArrowDown, ...) don't change
+      // the DOM in a way the model needs to re-see.
+      const result: ActionResult = { tabId: ids.tabId };
+      if (p.key === "Enter") result.snapshot = await ariaSnapshot(page);
+      return result;
     });
   }
 
@@ -437,8 +441,17 @@ export class BrowserManager {
 
   async evaluate(agentId: string, p: EvaluateParams): Promise<EvaluateResult> {
     return this.withReconnect(agentId, p.tabId, { createIfNone: false }, async (page, ids) => {
-      const result = await page.evaluate(p.function as unknown as string);
-      return { tabId: ids.tabId, result };
+      // Playwright's page.evaluate(string) treats the source as an
+      // expression. Passing `() => 42` therefore evaluates to the function
+      // value (non-serializable → undefined → masked to null below), not
+      // 42. Wrap in an IIFE that invokes when the result is callable so
+      // arrow / function expressions actually run, while plain expressions
+      // pass through unchanged. `await` covers async functions.
+      const src = `(async () => { const __r = (${p.function}); return typeof __r === 'function' ? await __r() : __r; })()`;
+      const raw = await page.evaluate(src);
+      // JSON.stringify drops keys whose value is undefined, so the agent
+      // sees no `result` field and thinks the call silently failed.
+      return { tabId: ids.tabId, result: raw === undefined ? null : raw };
     });
   }
 
@@ -528,38 +541,42 @@ export class BrowserManager {
 
   async hover(agentId: string, p: HoverParams): Promise<ActionResult> {
     return this.withReconnect(agentId, p.tabId, { createIfNone: false }, async (page, ids) => {
-      await refLocator(page, p.ref).hover();
-      return { tabId: ids.tabId };
+      await page.locator(p.ref).hover();
+      return { tabId: ids.tabId, snapshot: await ariaSnapshot(page) };
     });
   }
 
   async drag(agentId: string, p: DragParams): Promise<ActionResult> {
     return this.withReconnect(agentId, p.tabId, { createIfNone: false }, async (page, ids) => {
-      await refLocator(page, p.startRef).dragTo(refLocator(page, p.endRef));
-      return { tabId: ids.tabId };
+      await page.locator(p.startRef).dragTo(page.locator(p.endRef));
+      return { tabId: ids.tabId, snapshot: await ariaSnapshot(page) };
     });
   }
 
   async selectOption(agentId: string, p: SelectOptionParams): Promise<SelectOptionResult> {
     return this.withReconnect(agentId, p.tabId, { createIfNone: false }, async (page, ids) => {
-      const selected = await refLocator(page, p.ref).selectOption(p.values);
-      return { tabId: ids.tabId, selected };
+      const selected = await page.locator(p.ref).selectOption(p.values);
+      return { tabId: ids.tabId, selected, snapshot: await ariaSnapshot(page) };
     });
   }
 
   async fillForm(agentId: string, p: FillFormParams): Promise<FillFormResult> {
     return this.withReconnect(agentId, p.tabId, { createIfNone: false }, async (page, ids) => {
       for (const f of p.fields) {
-        await refLocator(page, f.ref).fill(f.value);
+        await page.locator(f.ref).fill(f.value);
       }
-      return { tabId: ids.tabId, filled: p.fields.length };
+      return {
+        tabId: ids.tabId,
+        filled: p.fields.length,
+        snapshot: await ariaSnapshot(page),
+      };
     });
   }
 
   async fileUpload(agentId: string, p: FileUploadParams): Promise<ActionResult> {
     return this.withReconnect(agentId, p.tabId, { createIfNone: false }, async (page, ids) => {
-      await refLocator(page, p.ref).setInputFiles(p.paths);
-      return { tabId: ids.tabId };
+      await page.locator(p.ref).setInputFiles(p.paths);
+      return { tabId: ids.tabId, snapshot: await ariaSnapshot(page) };
     });
   }
 
@@ -599,14 +616,22 @@ export class BrowserManager {
   async navigateBack(agentId: string, p: { tabId?: TabId }): Promise<NavHistoryResult> {
     return this.withReconnect(agentId, p.tabId, { createIfNone: false }, async (page, ids) => {
       await page.goBack({ waitUntil: "domcontentloaded" });
-      return { tabId: ids.tabId, url: page.url() };
+      return {
+        tabId: ids.tabId,
+        url: page.url(),
+        snapshot: await ariaSnapshot(page),
+      };
     });
   }
 
   async navigateForward(agentId: string, p: { tabId?: TabId }): Promise<NavHistoryResult> {
     return this.withReconnect(agentId, p.tabId, { createIfNone: false }, async (page, ids) => {
       await page.goForward({ waitUntil: "domcontentloaded" });
-      return { tabId: ids.tabId, url: page.url() };
+      return {
+        tabId: ids.tabId,
+        url: page.url(),
+        snapshot: await ariaSnapshot(page),
+      };
     });
   }
 
@@ -622,7 +647,7 @@ export class BrowserManager {
   async clickCoords(agentId: string, p: ClickCoordsParams): Promise<ActionResult> {
     return this.withReconnect(agentId, p.tabId, { createIfNone: false }, async (page, ids) => {
       await page.mouse.click(p.x, p.y);
-      return { tabId: ids.tabId };
+      return { tabId: ids.tabId, snapshot: await ariaSnapshot(page) };
     });
   }
 }

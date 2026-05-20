@@ -5,6 +5,7 @@ import {
   getBrowserBindings,
   notBoundError,
   requireAgentIdOr,
+  spillSnapshotField,
   toolError,
 } from "./bindings.js";
 
@@ -18,7 +19,9 @@ const ClickParams = z.object({
   ref: z
     .string()
     .min(1)
-    .describe("Ref id from the latest snapshot (e.g. 'e3')."),
+    .describe(
+      "Playwright locator string. For snapshot refs use 'aria-ref=eN' (e.g. 'aria-ref=e3' from a browser_snapshot [ref=e3] marker). Or any other Playwright selector: 'css=button.submit', 'role=button[name=\"Send\"]', 'text=Sign in', 'data-testid=...', 'xpath=...'."
+    ),
   tabId: z.string().optional(),
 });
 
@@ -28,7 +31,7 @@ registry.register({
   emoji: "🖱️",
   parallelSafe: false,
   description:
-    "Click an element identified by its ref id from a browser_snapshot. Pass `element` as a short human description and `ref` as the id (e.g. 'e3'). Requires browser_navigate (or browser_snapshot) to have populated refs.",
+    "Click an element. Pass `element` as a short human description and `ref` as any Playwright locator (typically 'aria-ref=eN' from a recent browser_snapshot, but CSS / role / text / data-testid / xpath all work).",
   parameters: ClickParams,
   handler: async (args) => {
     const p = args as z.infer<typeof ClickParams>;
@@ -39,7 +42,7 @@ registry.register({
     if (guard) return guard;
     try {
       const r = await b.manager.click(agentId!, p);
-      return JSON.stringify(r);
+      return JSON.stringify(spillSnapshotField(r));
     } catch (e) {
       return toolError("browser_click", e);
     }
@@ -48,7 +51,12 @@ registry.register({
 
 const TypeParams = z.object({
   element: z.string().min(1),
-  ref: z.string().min(1),
+  ref: z
+    .string()
+    .min(1)
+    .describe(
+      "Playwright locator string. For snapshot refs use 'aria-ref=eN'. Or any other Playwright selector: 'css=textarea', 'role=textbox[name=\"Comment\"]', 'data-testid=...', etc."
+    ),
   text: z.string().describe("Text to type into the field."),
   submit: z
     .boolean()
@@ -63,7 +71,7 @@ registry.register({
   emoji: "⌨️",
   parallelSafe: false,
   description:
-    "Type text into an input field by its ref id. Clears existing content first. Set submit=true to press Enter after typing (e.g. to submit a search box).",
+    "Type text into an input field. `ref` is any Playwright locator (typically 'aria-ref=eN' from a recent browser_snapshot). Clears existing content first. Set submit=true to press Enter after typing.",
   parameters: TypeParams,
   handler: async (args) => {
     const p = args as z.infer<typeof TypeParams>;
@@ -74,7 +82,7 @@ registry.register({
     if (guard) return guard;
     try {
       const r = await b.manager.type(agentId!, p);
-      return JSON.stringify(r);
+      return JSON.stringify(spillSnapshotField(r));
     } catch (e) {
       return toolError("browser_type", e);
     }
@@ -108,7 +116,7 @@ registry.register({
     if (guard) return guard;
     try {
       const r = await b.manager.pressKey(agentId!, p);
-      return JSON.stringify(r);
+      return JSON.stringify(spillSnapshotField(r));
     } catch (e) {
       return toolError("browser_press_key", e);
     }

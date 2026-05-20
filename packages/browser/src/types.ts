@@ -53,6 +53,7 @@ export interface NavigateParams {
 
 export interface SnapshotParams {
   tabId?: TabId;
+  selector?: string;
 }
 
 export interface ClickParams {
@@ -111,6 +112,11 @@ export interface SnapshotResult {
 
 export interface ActionResult {
   tabId: TabId;
+  /** Post-action aria-snapshot. Present for interactions that can mutate the
+   *  DOM (click/type/hover/drag/select/fill/upload). Omitted for actions
+   *  that don't (resize, dialog handling, save_as_pdf). Mirrors Microsoft
+   *  playwright-mcp's `setIncludeSnapshot()` convention. */
+  snapshot?: string;
 }
 
 export interface ScreenshotResult {
@@ -193,11 +199,13 @@ export interface ClickCoordsParams {
 export interface SelectOptionResult {
   tabId: TabId;
   selected: string[];
+  snapshot?: string;
 }
 
 export interface FillFormResult {
   tabId: TabId;
   filled: number;
+  snapshot?: string;
 }
 
 export interface DialogResult {
@@ -214,6 +222,7 @@ export interface ResizeResult {
 export interface NavHistoryResult {
   tabId: TabId;
   url: string;
+  snapshot?: string;
 }
 
 export interface PdfResult {

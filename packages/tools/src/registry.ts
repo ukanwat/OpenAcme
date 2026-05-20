@@ -2,6 +2,7 @@ import { z } from "zod";
 import { createLogger } from "@openacme/config/logger";
 import type { ToolEntry, ToolDefinition, ToolInfo } from "./types.js";
 import { SYSTEM_TOOLS } from "./system.js";
+import { maybeSpill } from "./spill.js";
 
 const log = createLogger("tools.registry");
 
@@ -121,7 +122,8 @@ export class ToolRegistry {
         description: entry.description,
         inputSchema: entry.parameters,
         execute: async (args: Record<string, unknown>) => {
-          return entry.handler(args);
+          const result = await entry.handler(args);
+          return maybeSpill(result, entry);
         },
       };
     }
@@ -140,7 +142,8 @@ export class ToolRegistry {
       return JSON.stringify({ error: `Unknown tool: ${name}` });
     }
     try {
-      return await entry.handler(args);
+      const result = await entry.handler(args);
+      return await maybeSpill(result, entry);
     } catch (error) {
       const message =
         error instanceof Error ? error.message : String(error);

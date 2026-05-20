@@ -17,6 +17,11 @@ export interface SessionStoreOptions {
    *  filesystem cleanup after the cascading SQL delete. Optional only for
    *  tests/in-memory dbs where no files were ever written. */
   attachmentsRoot?: string;
+  /** Fires after a row is deleted, with the session being removed. Used by
+   *  callers (AgentManager) to fan out side-effect cleanup the db package
+   *  shouldn't know about — e.g. spilled tool-call files under
+   *  `<agentDir>/sessions/<sessionId>/`. Failures are caller-handled. */
+  onAfterDelete?: (session: Session) => void;
 }
 
 /**
@@ -34,6 +39,7 @@ export function createSessionStore(
 ) {
   const orm = drizzle(db);
   const attachmentsRoot = options.attachmentsRoot;
+  const onAfterDelete = options.onAfterDelete;
 
   return {
     create(
@@ -336,9 +342,13 @@ export function createSessionStore(
     delete(id: string): void {
       // FK cascade clears messages and message_attachments; the on-disk
       // attachment files don't have a trigger, so we rm them explicitly.
-      // Order is "SQL first, FS second" because if SQL fails the files
-      // are still referenced; if FS fails the rows are already gone and
-      // the orphan files are harmless until the next sweep.
+      // Order is "fetch row, SQL delete, FS cleanup" — the row read has
+      // to happen before deletion so onAfterDelete still sees agentId etc.
+      const row = orm
+        .select()
+        .from(sessions)
+        .where(eq(sessions.id, id))
+        .get();
       orm.delete(sessions).where(eq(sessions.id, id)).run();
       if (attachmentsRoot) {
         const dir = path.join(attachmentsRoot, id);
@@ -346,6 +356,13 @@ export function createSessionStore(
           fs.rmSync(dir, { recursive: true, force: true });
         } catch (e) {
           log.error({ err: e, dir }, "failed to remove attachment dir");
+        }
+      }
+      if (row && onAfterDelete) {
+        try {
+          onAfterDelete(row);
+        } catch (e) {
+          log.error({ err: e, sessionId: id }, "onAfterDelete hook threw");
         }
       }
     },

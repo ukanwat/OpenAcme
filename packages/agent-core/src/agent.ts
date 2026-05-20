@@ -751,7 +751,15 @@ export class Agent {
       // is long-lived across turns — without those markers,
       // `readUIMessageStream` on the subscriber side accumulates every
       // turn into one ever-growing UIMessage.
-      const uiStream = result.toUIMessageStream();
+      //
+      // `generateMessageId` is required: without it the SDK omits the
+      // message id from the `start` chunk, so per-chunk assemblers
+      // (subscriber side + our throttled snapshot path) end up with
+      // `m.id === ""` and skip emission — the user sees no streaming,
+      // only the final end-of-turn broadcast.
+      const uiStream = result.toUIMessageStream({
+        generateMessageId: () => randomUUID(),
+      });
       // Fan the stream out: one branch feeds the assembler that builds
       // the persisted UIMessage; the other broadcasts raw parts to
       // SSE subscribers so the chat pane streams live. `tee` is a

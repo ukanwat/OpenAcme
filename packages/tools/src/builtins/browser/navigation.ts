@@ -5,6 +5,7 @@ import {
   getBrowserBindings,
   notBoundError,
   requireAgentIdOr,
+  spillSnapshotField,
   toolError,
 } from "./bindings.js";
 
@@ -24,9 +25,8 @@ registry.register({
   emoji: "🌐",
   parallelSafe: false,
   description:
-    "Navigate the browser to a URL. If no tabId is given, opens a new tab for this agent (or reuses the active one). Returns the resolved URL, page title, and a compact aria-snapshot with [ref=eN] ids you can use with browser_click / browser_type. Use browser_* tools for pages that need interaction, login state, or JS rendering; prefer web_search / web_extract for static info retrieval.",
+    "Navigate the browser to a URL. If no tabId is given, opens a new tab for this agent (or reuses the active one). Returns the resolved URL, page title, and a path to the post-navigation aria-snapshot YAML (read_file / search_files to inspect; [ref=eN] markers translate to 'aria-ref=eN' Playwright selectors for click/type). Use browser_* tools for pages that need interaction, login state, or JS rendering; prefer web_search / web_extract for static info retrieval.",
   parameters: NavigateParams,
-  maxResultSizeChars: 12_000,
   handler: async (args) => {
     const p = args as z.infer<typeof NavigateParams>;
     const b = getBrowserBindings();
@@ -39,7 +39,7 @@ registry.register({
         url: p.url,
         tabId: p.tabId,
       });
-      return JSON.stringify(r);
+      return JSON.stringify(spillSnapshotField(r));
     } catch (e) {
       return toolError("browser_navigate", e);
     }

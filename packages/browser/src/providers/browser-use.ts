@@ -11,7 +11,9 @@ interface AgentSession {
 }
 
 const DEFAULT_BASE_URL = "https://api.browser-use.com/api/v3";
-const DEFAULT_TIMEOUT_MIN = 5;
+// Free-plan accounts cap session length at 15 min — request the full window
+// by default so an autonomous turn isn't truncated mid-task.
+const DEFAULT_TIMEOUT_MIN = 15;
 
 /**
  * Browser Use cloud browser. Best stealth pass rate in the 2026 benchmark.
@@ -20,7 +22,7 @@ const DEFAULT_TIMEOUT_MIN = 5;
  * Env vars (read at call time):
  *   BROWSER_USE_API_KEY        — required
  *   BROWSER_USE_BASE_URL       — default https://api.browser-use.com/api/v3
- *   BROWSER_USE_TIMEOUT_MIN    — minutes; default 5
+ *   BROWSER_USE_TIMEOUT_MIN    — minutes; default 15 (free-plan cap)
  *   BROWSER_USE_PROXY_COUNTRY  — ISO code; default "us"
  */
 export class BrowserUseProvider implements BrowserProvider {

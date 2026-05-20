@@ -5,6 +5,7 @@ import {
   getBrowserBindings,
   notBoundError,
   requireAgentIdOr,
+  spillSnapshotField,
   toolError,
 } from "./bindings.js";
 
@@ -124,7 +125,7 @@ registry.register({
   emoji: "🤖",
   parallelSafe: false,
   description:
-    "Less-common browser interactions: hover, drag, select_option, fill_form (bulk), file_upload, handle_dialog, resize, navigate_back, navigate_forward, save_as_pdf, click_coords. The `kind` field picks the action; per-kind required fields are documented inline. For the common verbs use browser_click / browser_type / browser_press_key.",
+    "Less-common browser interactions: hover, drag, select_option, fill_form (bulk), file_upload, handle_dialog, resize, navigate_back, navigate_forward, save_as_pdf, click_coords. The `kind` field picks the action; per-kind required fields are documented inline. All `ref` / `startRef` / `endRef` fields accept any Playwright locator string ('aria-ref=eN' for snapshot refs, or 'css=…', 'role=…', 'text=…', 'data-testid=…', 'xpath=…'). For the common verbs use browser_click / browser_type / browser_press_key.",
   parameters: ActParams,
   handler: async (args) => {
     const p = args as ActArgs;
@@ -137,45 +138,55 @@ registry.register({
       switch (p.kind) {
         case "hover":
           return JSON.stringify(
-            await b.manager.hover(agentId!, {
-              element: p.element!,
-              ref: p.ref!,
-              tabId: p.tabId,
-            })
+            spillSnapshotField(
+              await b.manager.hover(agentId!, {
+                element: p.element!,
+                ref: p.ref!,
+                tabId: p.tabId,
+              })
+            )
           );
         case "drag":
           return JSON.stringify(
-            await b.manager.drag(agentId!, {
-              startElement: p.startElement!,
-              startRef: p.startRef!,
-              endElement: p.endElement!,
-              endRef: p.endRef!,
-              tabId: p.tabId,
-            })
+            spillSnapshotField(
+              await b.manager.drag(agentId!, {
+                startElement: p.startElement!,
+                startRef: p.startRef!,
+                endElement: p.endElement!,
+                endRef: p.endRef!,
+                tabId: p.tabId,
+              })
+            )
           );
         case "select_option":
           return JSON.stringify(
-            await b.manager.selectOption(agentId!, {
-              element: p.element!,
-              ref: p.ref!,
-              values: p.values!,
-              tabId: p.tabId,
-            })
+            spillSnapshotField(
+              await b.manager.selectOption(agentId!, {
+                element: p.element!,
+                ref: p.ref!,
+                values: p.values!,
+                tabId: p.tabId,
+              })
+            )
           );
         case "fill_form":
           return JSON.stringify(
-            await b.manager.fillForm(agentId!, {
-              fields: p.fields!,
-              tabId: p.tabId,
-            })
+            spillSnapshotField(
+              await b.manager.fillForm(agentId!, {
+                fields: p.fields!,
+                tabId: p.tabId,
+              })
+            )
           );
         case "file_upload":
           return JSON.stringify(
-            await b.manager.fileUpload(agentId!, {
-              ref: p.ref!,
-              paths: p.paths!,
-              tabId: p.tabId,
-            })
+            spillSnapshotField(
+              await b.manager.fileUpload(agentId!, {
+                ref: p.ref!,
+                paths: p.paths!,
+                tabId: p.tabId,
+              })
+            )
           );
         case "handle_dialog":
           return JSON.stringify(
@@ -195,11 +206,15 @@ registry.register({
           );
         case "navigate_back":
           return JSON.stringify(
-            await b.manager.navigateBack(agentId!, { tabId: p.tabId })
+            spillSnapshotField(
+              await b.manager.navigateBack(agentId!, { tabId: p.tabId })
+            )
           );
         case "navigate_forward":
           return JSON.stringify(
-            await b.manager.navigateForward(agentId!, { tabId: p.tabId })
+            spillSnapshotField(
+              await b.manager.navigateForward(agentId!, { tabId: p.tabId })
+            )
           );
         case "save_as_pdf":
           return JSON.stringify(
@@ -210,11 +225,13 @@ registry.register({
           );
         case "click_coords":
           return JSON.stringify(
-            await b.manager.clickCoords(agentId!, {
-              x: p.x!,
-              y: p.y!,
-              tabId: p.tabId,
-            })
+            spillSnapshotField(
+              await b.manager.clickCoords(agentId!, {
+                x: p.x!,
+                y: p.y!,
+                tabId: p.tabId,
+              })
+            )
           );
       }
     } catch (e) {

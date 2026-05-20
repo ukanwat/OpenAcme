@@ -44,3 +44,6 @@ yarn-error.log*
 .claude/worktrees/
 .claude/scheduled_tasks.lock
 .envrc
+
+# Personal notes (not for distribution)
+personal/

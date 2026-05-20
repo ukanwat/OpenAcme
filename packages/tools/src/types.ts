@@ -29,8 +29,13 @@ export interface ToolEntry {
   emoji?: string;
   /** Whether this tool is safe to run in parallel with other tools */
   parallelSafe?: boolean;
-  /** Max result size in characters */
+  /** Max result size in characters before the registry spills the result to
+   *  a file in the agent's workspace and returns a preview + path. Defaults
+   *  to the spill module's `DEFAULT_SPILL_THRESHOLD` when unset. */
   maxResultSizeChars?: number;
+  /** Result isn't grep-friendly text (base64 PNG, opaque binary). Skips the
+   *  spill-to-file intercept; the handler's own result flows through. */
+  binaryResult?: boolean;
 }
 
 /**

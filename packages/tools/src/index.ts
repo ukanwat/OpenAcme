@@ -51,6 +51,13 @@ export {
   type DeferSessionBindings,
 } from "./builtins/defer-session.js";
 export { SYSTEM_TOOLS, type SystemTool } from "./system.js";
+export {
+  sweepOverflow,
+  spillSnapshot,
+  deleteSessionToolCalls,
+  DEFAULT_SPILL_THRESHOLD,
+  TOOL_CALLS_DIR,
+} from "./spill.js";
 
 // Import builtins to trigger self-registration
 import "./builtins/shell.js";

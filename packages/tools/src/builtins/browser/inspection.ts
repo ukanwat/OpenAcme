@@ -21,6 +21,9 @@ registry.register({
   toolset: "browser",
   emoji: "🖼️",
   parallelSafe: false,
+  // base64 PNG isn't grep-friendly — skip spill-to-file, the bytes go
+  // straight to the model as an image.
+  binaryResult: true,
   description:
     "Capture a PNG screenshot of the current page. Returns base64-encoded PNG. Use when text snapshots miss the relevant visual (captchas, image content, complex layouts) — vision-capable models will see the image directly.",
   parameters: ScreenshotParams,
@@ -97,7 +100,7 @@ const EvaluateParams = z.object({
     .string()
     .min(1)
     .describe(
-      "JavaScript expression evaluated in the page context. Like the DevTools console — full DOM/window access. Examples: 'document.title', '[...document.images].length', 'JSON.stringify(window.__NEXT_DATA__)'. Return values are JSON-serialized."
+      "A JS expression OR a function/arrow that runs in the page context. Functions are auto-invoked (sync or async). Examples: 'document.title', '[...document.images].length', '() => document.querySelector(\"textarea\")?.offsetTop', '() => { const t = document.querySelector(\".x\"); return t ? t.textContent : null }', 'async () => (await fetch(\"/api\")).status'. For multi-statement code use the arrow form ('() => { ...; return X; }') — a bare statement like 'const x = ...; x.foo' isn't a valid expression. Return value is JSON-serialized; undefined comes back as null."
     ),
   tabId: z.string().optional(),
 });
@@ -108,7 +111,7 @@ registry.register({
   emoji: "🔬",
   parallelSafe: false,
   description:
-    "Evaluate a JavaScript expression in the page context. Use for DOM inspection, reading page state, or extracting structured data the aria-snapshot doesn't capture.",
+    "Evaluate JavaScript in the page context. Use for DOM inspection, reading page state, or extracting data the aria-snapshot doesn't capture. Pass a single expression or an arrow function (see param doc for shapes).",
   parameters: EvaluateParams,
   maxResultSizeChars: 12_000,
   handler: async (args) => {

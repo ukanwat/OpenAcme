@@ -1,18 +1,21 @@
 import type { Page } from "playwright-core";
 
-export const SNAPSHOT_CHAR_CAP = 8000;
-const TRUNCATION_FOOTER =
-  "\n... truncated (interact then call browser_snapshot again)";
-
 /**
  * Capture the page's aria-snapshot in the AI-optimized YAML-with-refs
  * format. Mode "ai" emits `[ref=eN]` markers resolvable via
- * `page.locator("aria-ref=eN")`. Verified against `playwright-core` 1.59
- * (`ariaSnapshot({ mode: "ai" })`).
+ * `page.locator("aria-ref=eN")`. Verified against `playwright-core` 1.59.
+ *
+ * `selector` scopes the snapshot to a subtree (any Playwright locator
+ * string, e.g. `form[data-testid="reply"]`, `role=main`). Lets the agent
+ * bypass page chrome when the whole body is too noisy.
+ *
+ * No size cap here — the registry's spill-to-file wrapper catches big
+ * results across every tool, so this can return the full tree and the
+ * agent can grep / read_file against the spilled copy.
  */
-export async function ariaSnapshot(page: Page): Promise<string> {
-  const text = await page.locator("body").ariaSnapshot({ mode: "ai" });
-  if (text.length <= SNAPSHOT_CHAR_CAP) return text;
-  const room = SNAPSHOT_CHAR_CAP - TRUNCATION_FOOTER.length;
-  return text.slice(0, Math.max(0, room)) + TRUNCATION_FOOTER;
+export async function ariaSnapshot(
+  page: Page,
+  selector?: string
+): Promise<string> {
+  return page.locator(selector ?? "body").ariaSnapshot({ mode: "ai" });
 }

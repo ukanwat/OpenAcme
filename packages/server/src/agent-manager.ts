@@ -38,6 +38,8 @@ import {
   bindPingUser,
   bindDeferSession,
   closeAllShellSessions,
+  sweepOverflow,
+  deleteSessionToolCalls,
   SYSTEM_TOOLS,
 } from "@openacme/tools";
 import * as fs from "node:fs";
@@ -141,8 +143,14 @@ export class AgentManager {
     this.config = config;
     this.db = createDatabase(config);
     this.attachmentsRoot = path.join(config.dataDir, "attachments");
+    // agentsDir is computed below too; resolve it early so the SessionStore
+    // delete hook can cascade per-session tool-call spill files.
+    const agentsDirEarly = path.join(config.dataDir, "agents");
     this.sessionStore = createSessionStore(this.db, {
       attachmentsRoot: this.attachmentsRoot,
+      onAfterDelete: (session) => {
+        deleteSessionToolCalls(agentsDirEarly, session.agentId, session.id);
+      },
     });
     this.messageStore = createMessageStore(this.db);
     this.commentStore = createCommentStore(this.db);
@@ -388,6 +396,21 @@ export class AgentManager {
     // on healthy installs; existing installs with orphans get a clean
     // sweep here.
     this.purgeOrphans();
+
+    // Drop tool-overflow spill files older than 30 days from every
+    // agent's workspace. One-shot at boot; cheap walk that prevents
+    // unbounded growth in `.tool-overflow/` for long-lived agents.
+    try {
+      const swept = sweepOverflow(this.agentsDir);
+      if (swept.removed > 0) {
+        log.info(
+          { removed: swept.removed, bytes: swept.bytes },
+          "removed stale tool-overflow spill files"
+        );
+      }
+    } catch (e) {
+      log.warn({ err: e }, "tool-overflow sweep failed");
+    }
   }
 
   /**
