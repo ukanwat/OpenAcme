@@ -60,6 +60,11 @@ function sseResponse(
           // controller closed
         }
       };
+      // Initial flush: Cloudflare / cloudflared and some other reverse proxies
+      // hold the response until the body starts. Without an initial byte, the
+      // client sees a hung connection until the first event (or keepalive
+      // 25s later). Comment lines are valid SSE no-ops.
+      write(": connected\n\n");
       const unsubscribe = start(write);
       const keepalive = setInterval(() => write(": keepalive\n\n"), KEEPALIVE_MS);
       signal.addEventListener("abort", () => {

@@ -71,6 +71,17 @@ export function authMiddleware(opts: AuthOptions): MiddlewareHandler {
     if (path === "/login" || path === "/login.html" || path.startsWith("/api/auth/")) {
       return next();
     }
+    // Static assets referenced by the login page itself must bypass auth,
+    // otherwise the login HTML loads but its CSS/JS bundles get redirected
+    // to /login — page renders unstyled and React never hydrates so the
+    // submit button stays disabled forever.
+    if (
+      path.startsWith("/_next/") ||
+      path === "/favicon.ico" ||
+      path.startsWith("/favicon")
+    ) {
+      return next();
+    }
     if (isLoopbackHost(c.req.header("host"))) return next();
 
     if (!opts.secretSha256) {
