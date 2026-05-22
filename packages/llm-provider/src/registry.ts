@@ -106,7 +106,7 @@ function anthropicSupportsFineGrainedToolStreaming(model: string): boolean {
  */
 let anthropic1mDisabled = false;
 const ANTHROPIC_NO_1M_ENTITLEMENT_RX =
-  /extra usage is required for long context|context_1m|long.?context.*not.*enabled/i;
+  /extra usage is required for long context|usage credits are required for long context|context_1m|long.?context.*not.*enabled/i;
 
 /**
  * Public read of the 1M-entitlement latch. Returns true when this process
@@ -337,17 +337,15 @@ const providerFactories: Record<
             if (anthropicSupportsFineGrainedToolStreaming(config.model)) {
               betas.add("fine-grained-tool-streaming-2025-05-14");
             }
-            // 1M context: try by default on capable models. If the API
-            // rejects it (account lacks the entitlement) the fetch
-            // wrapper below latches `anthropic1mDisabled`, persists
-            // the cap, retries without the beta, and subsequent
-            // requests skip it from the start.
-            if (
-              !anthropic1mDisabled &&
-              anthropicSupports1mContext(config.model)
-            ) {
-              betas.add("context-1m-2025-08-07");
-            }
+            // 1M context: do NOT opt in on OAuth. The 1M context window
+            // is an account-level entitlement that ships with API-credit
+            // billing tiers, not Claude Pro / Max subscriptions. Sending
+            // the beta on a subscription account causes Anthropic to
+            // reject every request with "Usage credits are required for
+            // long context requests" (or the older "extra usage is
+            // required" wording — error strings drift). 200K is plenty
+            // for agent workflows; if a request genuinely needs 1M,
+            // route it through api_key auth instead.
             const existing = headers.get("anthropic-beta");
             if (existing) for (const b of existing.split(",")) betas.add(b.trim());
             headers.set(
