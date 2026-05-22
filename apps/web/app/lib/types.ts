@@ -130,6 +130,12 @@ export interface ProviderInfo {
   envVar?: string;
   defaultBaseUrl?: string;
   supportsOAuth?: boolean;
+  /** Live: an env-var or stored API key is set for this provider. */
+  apiKeyConfigured: boolean;
+  /** Live: a usable OAuth access token is stored in auth.json for
+   *  this provider. Only ever true for providers where
+   *  supportsOAuth === true. */
+  oauthConfigured: boolean;
   models: ModelPreset[];
 }
 

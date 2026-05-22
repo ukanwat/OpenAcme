@@ -27,6 +27,7 @@ import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { Textarea } from "@/app/components/ui/textarea";
 import { Label } from "@/app/components/ui/label";
+import { RadioGroup, RadioGroupItem } from "@/app/components/ui/radio-group";
 import { Badge } from "@/app/components/ui/badge";
 import {
   Card,
@@ -63,7 +64,12 @@ interface Agent {
   id: string;
   name: string;
   role: string;
-  model: { provider: string; model: string; cacheTtl?: CacheTtl };
+  model: {
+    provider: string;
+    model: string;
+    auth?: "api_key" | "oauth";
+    cacheTtl?: CacheTtl;
+  };
   persona: string;
   tools: string[];
   skills: string[];
@@ -95,7 +101,12 @@ interface CatalogTemplate {
     persona: string;
     tools: string[];
     skills: string[];
-    model?: { provider: string; model: string; cacheTtl?: CacheTtl };
+    model?: {
+      provider: string;
+      model: string;
+      auth?: "api_key" | "oauth";
+      cacheTtl?: CacheTtl;
+    };
     mcpServers?: Record<string, MCPServerConfigDto>;
     mcpDisabled?: string[];
   };
@@ -123,6 +134,7 @@ interface FormState {
   role: string;
   provider: string;
   model: string;
+  auth: "api_key" | "oauth";
   cacheTtl: CacheTtl;
   persona: string;
   tools: string[];
@@ -139,6 +151,7 @@ const FALLBACK_FORM: FormState = {
   role: "",
   provider: "openrouter",
   model: "",
+  auth: "api_key",
   cacheTtl: "5m",
   persona: "You are a helpful AI assistant.",
   tools: [],
@@ -289,13 +302,17 @@ function AgentsPageInner() {
 
   // ── Form helpers ─────────────────────────────────────────────────────────
   const onProviderChange = (provider: string) => {
-    const newPresets =
-      providers.find((p) => p.id === provider)?.models ?? [];
+    const nextProvider = providers.find((p) => p.id === provider);
+    const newPresets = nextProvider?.models ?? [];
     const stillValid = newPresets.some((m) => m.id === formData.model);
+    // Auto-fallback OAuth → api_key if the new provider doesn't
+    // support OAuth (Google, OpenRouter, Ollama, custom).
+    const supportsOAuth = nextProvider?.supportsOAuth === true;
     setFormData((prev) => ({
       ...prev,
       provider,
       model: stillValid ? prev.model : newPresets[0]?.id ?? "",
+      auth: prev.auth === "oauth" && !supportsOAuth ? "api_key" : prev.auth,
     }));
     setIsCustomModel(stillValid ? isCustomModel : newPresets.length === 0);
   };
@@ -332,6 +349,7 @@ function AgentsPageInner() {
     model: {
       provider: formData.provider,
       model: formData.model,
+      auth: formData.auth,
       cacheTtl: formData.cacheTtl,
     },
     persona: formData.persona,
@@ -533,6 +551,7 @@ function AgentsPageInner() {
       role: selectedAgent.role ?? "",
       provider: selectedAgent.model.provider,
       model: selectedAgent.model.model,
+      auth: selectedAgent.model.auth ?? "api_key",
       cacheTtl: selectedAgent.model.cacheTtl ?? "5m",
       persona: selectedAgent.persona,
       tools: selectedAgent.tools,
@@ -622,6 +641,7 @@ function AgentsPageInner() {
             role: tpl.agentFields.role ?? "",
             provider,
             model,
+            auth: tpl.agentFields.model?.auth ?? "api_key",
             cacheTtl: tpl.agentFields.model?.cacheTtl ?? "5m",
             persona: tpl.agentFields.persona,
             tools: tpl.agentFields.tools,
@@ -685,6 +705,7 @@ function AgentsPageInner() {
           role: found.role ?? "",
           provider: found.model.provider,
           model: found.model.model,
+          auth: found.model.auth ?? "api_key",
           cacheTtl: found.model.cacheTtl ?? "5m",
           persona: found.persona,
           tools: found.tools,
@@ -927,6 +948,83 @@ function AgentsPageInner() {
                           />
                         )}
                       </div>
+
+                      {/* Authentication — OAuth hidden when the selected
+                          provider doesn't support it. "Set it up" link goes
+                          to Settings where the actual sign-in lives. */}
+                      {(() => {
+                        const p = providers.find(
+                          (x) => x.id === formData.provider
+                        );
+                        if (!p) return null;
+                        const supportsOAuth = p.supportsOAuth === true;
+                        const apiKeyConfigured = p.apiKeyConfigured === true;
+                        const oauthConfigured = p.oauthConfigured === true;
+                        const groupId = `agent-auth-${formData.id || "new"}`;
+                        return (
+                          <div className="grid gap-2 md:col-span-2">
+                            <Label>Authentication</Label>
+                            <RadioGroup
+                              value={formData.auth}
+                              onValueChange={(v) =>
+                                setFormData({
+                                  ...formData,
+                                  auth: v as "api_key" | "oauth",
+                                })
+                              }
+                            >
+                              <label
+                                htmlFor={`${groupId}-api_key`}
+                                className="flex items-start gap-2 text-sm cursor-pointer"
+                              >
+                                <RadioGroupItem
+                                  value="api_key"
+                                  id={`${groupId}-api_key`}
+                                  className="mt-1"
+                                />
+                                <span className="flex-1">
+                                  <span>API key</span>
+                                  <span className="ml-2 font-mono text-[11px] text-ink-faint">
+                                    {apiKeyConfigured
+                                      ? "configured"
+                                      : p.envVar
+                                        ? `not configured (set ${p.envVar})`
+                                        : "no key needed"}
+                                  </span>
+                                </span>
+                              </label>
+                              {supportsOAuth && (
+                                <label
+                                  htmlFor={`${groupId}-oauth`}
+                                  className="flex items-start gap-2 text-sm cursor-pointer"
+                                >
+                                  <RadioGroupItem
+                                    value="oauth"
+                                    id={`${groupId}-oauth`}
+                                    className="mt-1"
+                                  />
+                                  <span className="flex-1">
+                                    <span>OAuth subscription</span>
+                                    <span className="ml-2 font-mono text-[11px] text-ink-faint">
+                                      {oauthConfigured
+                                        ? "signed in"
+                                        : "not signed in"}
+                                    </span>
+                                    {!oauthConfigured && (
+                                      <a
+                                        href="/settings"
+                                        className="ml-2 text-[11px] text-plot-red underline hover:no-underline"
+                                      >
+                                        Set up in Settings
+                                      </a>
+                                    )}
+                                  </span>
+                                </label>
+                              )}
+                            </RadioGroup>
+                          </div>
+                        );
+                      })()}
 
                       {isClaudeModel && (
                         <div className="grid gap-2 md:col-span-2">

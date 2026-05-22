@@ -616,9 +616,18 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
   // is also enriched with `inputModalities` from the bundled registry so
   // the client can disable the file picker on text-only models.
   app.get("/api/models", (c) => {
+    // Availability bits drive the auth picker in Settings → Model and
+    // the per-agent editor. Both flags are independent — a provider
+    // with BOTH an env-var key and an OAuth token reports both as
+    // true, even though the runtime tie-break in `shouldUseOAuth`
+    // would pick api_key. The picker needs to know what the user
+    // *could* pick, not which one would currently win.
+    const creds = detectProviderCredentials(config.dataDir);
     return c.json(
       listProviders().map((p) => ({
         ...p,
+        apiKeyConfigured: creds.apiKeyConfigured[p.id] === true,
+        oauthConfigured: creds.oauthConfigured[p.id] === true,
         models: (MODEL_PRESETS[p.id] ?? []).map((m) => {
           const meta = lookupModelMetadata({
             provider: p.id,

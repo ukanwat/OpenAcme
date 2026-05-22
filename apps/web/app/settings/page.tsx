@@ -29,6 +29,7 @@ import {
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
+import { RadioGroup, RadioGroupItem } from "@/app/components/ui/radio-group";
 import { Textarea } from "@/app/components/ui/textarea";
 import { LoadingHairline } from "@/app/components/ui/loading-hairline";
 import { Badge } from "@/app/components/ui/badge";
@@ -77,6 +78,9 @@ interface Provider {
   requiresApiKey: boolean;
   envVar?: string;
   defaultBaseUrl?: string;
+  supportsOAuth?: boolean;
+  apiKeyConfigured?: boolean;
+  oauthConfigured?: boolean;
   models?: Array<{ id: string; label: string; hint?: string }>;
 }
 
@@ -360,6 +364,8 @@ export default function SettingsPage() {
         data.email ? `Signed in as ${data.email}` : "ChatGPT subscription linked"
       );
       setConfiguredKeys((prev) => ({ ...prev, openai: true }));
+      // Refetch providers so the auth picker's "not signed in" flips.
+      void loadProviders();
     } catch (e) {
       toast.error("Sign-in failed", {
         description: e instanceof Error ? e.message : String(e),
@@ -386,6 +392,7 @@ export default function SettingsPage() {
       if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
       toast.success("Imported from Claude Code");
       setConfiguredKeys((prev) => ({ ...prev, anthropic: true }));
+      void loadProviders();
     } catch (e) {
       toast.error("Import failed", {
         description: e instanceof Error ? e.message : String(e),
@@ -451,6 +458,7 @@ export default function SettingsPage() {
         toast.success(`${provider} key saved`);
         setApiKeyInputs({ ...apiKeyInputs, [provider]: "" });
         setConfiguredKeys({ ...configuredKeys, [provider]: true });
+        void loadProviders();
       } else {
         const data = await res.json();
         toast.error("Failed to save API key", { description: data.error });
@@ -1038,18 +1046,27 @@ export default function SettingsPage() {
                             <Select
                               value={modelDraft.provider ?? ""}
                               onValueChange={(v) => {
-                                const newPresets =
-                                  providers.find((p) => p.id === v)?.models ??
-                                  [];
+                                const nextProvider = providers.find(
+                                  (p) => p.id === v
+                                );
+                                const newPresets = nextProvider?.models ?? [];
                                 const stillValid = newPresets.some(
                                   (m) => m.id === modelDraft.model
                                 );
+                                // Auto-fallback to api_key if the user's prior
+                                // OAuth selection isn't available on the new
+                                // provider — saving an unsupported mode would
+                                // fail at first turn.
+                                const oauthOk =
+                                  modelDraft.auth !== "oauth" ||
+                                  nextProvider?.supportsOAuth === true;
                                 setModelDraft({
                                   ...modelDraft,
                                   provider: v,
                                   model: stillValid
                                     ? modelDraft.model
                                     : newPresets[0]?.id ?? "",
+                                  auth: oauthOk ? modelDraft.auth : "api_key",
                                 });
                               }}
                             >
@@ -1111,6 +1128,103 @@ export default function SettingsPage() {
                             })()}
                           </div>
                         </div>
+
+                        {/* Authentication — radio group; OAuth hidden when
+                            the provider doesn't support it. Inline action
+                            offers to sign in / set up the missing side. */}
+                        {(() => {
+                          const p = providers.find(
+                            (x) => x.id === modelDraft.provider
+                          );
+                          if (!p) return null;
+                          const supportsOAuth = p.supportsOAuth === true;
+                          const apiKeyConfigured = p.apiKeyConfigured === true;
+                          const oauthConfigured = p.oauthConfigured === true;
+                          const auth = modelDraft.auth;
+                          const subBusy = subAction === p.id;
+                          const oauthAction =
+                            p.id === "openai"
+                              ? signInWithOpenAI
+                              : p.id === "anthropic"
+                                ? importClaudeCode
+                                : null;
+                          const oauthActionLabel =
+                            p.id === "openai"
+                              ? "Sign in with ChatGPT"
+                              : p.id === "anthropic"
+                                ? "Import from Claude Code"
+                                : "Sign in";
+                          return (
+                            <div className="grid gap-2">
+                              <Label>Authentication</Label>
+                              <RadioGroup
+                                value={auth}
+                                onValueChange={(v) =>
+                                  setModelDraft({
+                                    ...modelDraft,
+                                    auth: v as "api_key" | "oauth",
+                                  })
+                                }
+                              >
+                                <label
+                                  htmlFor="default-auth-api_key"
+                                  className="flex items-start gap-2 text-sm cursor-pointer"
+                                >
+                                  <RadioGroupItem
+                                    value="api_key"
+                                    id="default-auth-api_key"
+                                    className="mt-1"
+                                  />
+                                  <span className="flex-1">
+                                    <span className="text-ink">API key</span>
+                                    <span className="ml-2 font-mono text-[11px] text-ink-faint">
+                                      {apiKeyConfigured
+                                        ? "configured"
+                                        : p.envVar
+                                          ? `not configured (set ${p.envVar})`
+                                          : "no key needed"}
+                                    </span>
+                                  </span>
+                                </label>
+                                {supportsOAuth && (
+                                  <label
+                                    htmlFor="default-auth-oauth"
+                                    className="flex items-start gap-2 text-sm cursor-pointer"
+                                  >
+                                    <RadioGroupItem
+                                      value="oauth"
+                                      id="default-auth-oauth"
+                                      className="mt-1"
+                                    />
+                                    <span className="flex-1">
+                                      <span className="text-ink">
+                                        OAuth subscription
+                                      </span>
+                                      <span className="ml-2 font-mono text-[11px] text-ink-faint">
+                                        {oauthConfigured
+                                          ? "signed in"
+                                          : "not signed in"}
+                                      </span>
+                                      {!oauthConfigured && oauthAction && (
+                                        <button
+                                          type="button"
+                                          className="ml-2 text-[11px] text-plot-red underline hover:no-underline disabled:opacity-50"
+                                          disabled={subBusy}
+                                          onClick={(e) => {
+                                            e.preventDefault();
+                                            void oauthAction();
+                                          }}
+                                        >
+                                          {subBusy ? "…" : oauthActionLabel}
+                                        </button>
+                                      )}
+                                    </span>
+                                  </label>
+                                )}
+                              </RadioGroup>
+                            </div>
+                          );
+                        })()}
 
                         {/* Cache TTL — Anthropic-only. Same gating as the per-agent form. */}
                         {(() => {
