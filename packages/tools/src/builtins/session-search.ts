@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { registry } from "../registry.js";
-import { getCurrentSessionId } from "../session-context.js";
+import { getCurrentAgentId, getCurrentSessionId } from "../session-context.js";
 
 export interface SessionSearchHit {
   content: string;
@@ -11,7 +11,8 @@ export interface SessionSearchHit {
 
 export type SessionSearchFn = (
   query: string,
-  limit?: number
+  limit?: number,
+  agentId?: string
 ) => SessionSearchHit[];
 
 export type ResolveRootFn = (sessionId: string) => string;
@@ -52,10 +53,11 @@ registry.register({
   name: "session_search",
   toolset: "memory",
   description:
-    "Full-text search across all prior conversation messages (FTS5/BM25). " +
-    "Use to recall earlier context the user mentioned in another session. " +
-    "The current conversation's lineage is excluded automatically — this is " +
-    "long-term memory, not a re-read of your own context.",
+    "Full-text search across your prior conversation messages (FTS5/BM25). " +
+    "Scoped to this agent — never returns hits from coworkers' sessions. " +
+    "Use to recall earlier context the user mentioned in another session " +
+    "with you. The current conversation's lineage is excluded automatically " +
+    "— this is long-term memory, not a re-read of your own context.",
   parameters: z.object({
     query: z
       .string()
@@ -86,6 +88,7 @@ registry.register({
     const limit = rawLimit ?? 10;
 
     const currentSessionId = getCurrentSessionId();
+    const currentAgentId = getCurrentAgentId();
     const currentRoot = currentSessionId
       ? bindings.resolveRoot(currentSessionId)
       : null;
@@ -98,7 +101,16 @@ registry.register({
       Math.max(limit * FTS_OVERFETCH_FACTOR, limit),
       FTS_FETCH_CAP
     );
-    const raw = bindings.search(query, fetchLimit);
+    // Scope to the current agent. Tool calls always run inside a turn that
+    // had its ALS set by `Agent.runStream`, so `currentAgentId` is non-null
+    // in practice. Defensive guard: if somehow null, fall back to unscoped
+    // search rather than silently returning nothing — a wider net is less
+    // surprising than empty results.
+    const raw = bindings.search(
+      query,
+      fetchLimit,
+      currentAgentId ?? undefined
+    );
 
     const byRoot = new Map<string, DedupedHit>();
     for (const hit of raw) {

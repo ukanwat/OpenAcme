@@ -61,7 +61,7 @@ describe("session_search — full DB integration", () => {
     sessions = createSessionStore(db);
     messages = createMessageStore(db);
     bindSessionSearch({
-      search: (q, l) => messages.search(q, l),
+      search: (q, l, agentId) => messages.search(q, l, agentId),
       resolveRoot: (id) => sessions.getRoot(id),
     });
   });
@@ -129,6 +129,57 @@ describe("session_search — full DB integration", () => {
     const ids = res.results.map((r) => r.sessionId);
     expect(new Set(ids).size).toBe(3);
     expect(ids[0]).toBe("b");
+  });
+
+  it("scopes results to the calling agent — coworker sessions excluded", async () => {
+    // Agent A: two sessions with the keyword
+    sessions.create("agent-a", { id: "a-sess-1" });
+    messages.append(
+      "a-sess-1",
+      userMsg("m-a1", "uniquekw browser disconnect fixed")
+    );
+    sessions.create("agent-a", { id: "a-sess-2" });
+    messages.append(
+      "a-sess-2",
+      userMsg("m-a2", "uniquekw timeout bumped to 60 minutes")
+    );
+
+    // Agent B: a session that also matches the keyword
+    sessions.create("agent-b", { id: "b-sess-1" });
+    messages.append(
+      "b-sess-1",
+      userMsg("m-b1", "uniquekw seen here in agent-b's session")
+    );
+
+    // Agent A's current session (will be excluded from its own results)
+    sessions.create("agent-a", { id: "a-current" });
+
+    const tools = registry.getVercelTools(new Set(["session_search"])) as {
+      session_search: {
+        execute: (args: Record<string, unknown>) => Promise<string>;
+      };
+    };
+
+    // Agent A searching: should see a-sess-1 + a-sess-2, NOT b-sess-1.
+    const aOut = await toolCallContext.run(
+      { sessionId: "a-current", agentId: "agent-a" } as never,
+      () => tools.session_search.execute({ query: "uniquekw", limit: 10 })
+    );
+    const aRes = JSON.parse(aOut) as SearchResult;
+    const aIds = new Set(aRes.results.map((r) => r.sessionId));
+    expect(aIds.has("a-sess-1")).toBe(true);
+    expect(aIds.has("a-sess-2")).toBe(true);
+    expect(aIds.has("b-sess-1")).toBe(false);
+
+    // Agent B searching: should ONLY see b-sess-1, not agent-a's sessions.
+    sessions.create("agent-b", { id: "b-current" });
+    const bOut = await toolCallContext.run(
+      { sessionId: "b-current", agentId: "agent-b" } as never,
+      () => tools.session_search.execute({ query: "uniquekw", limit: 10 })
+    );
+    const bRes = JSON.parse(bOut) as SearchResult;
+    expect(bRes.count).toBe(1);
+    expect(bRes.results[0]!.sessionId).toBe("b-sess-1");
   });
 
   it("tool dispatched via Vercel-style tools registry sees ALS context", async () => {

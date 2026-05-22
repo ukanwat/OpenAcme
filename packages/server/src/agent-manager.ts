@@ -173,7 +173,8 @@ export class AgentManager {
     // @openacme/db. `resolveRoot` lets the tool collapse compression chains
     // back to one root and exclude the current conversation's lineage.
     bindSessionSearch({
-      search: (query, limit) => this.messageStore.search(query, limit),
+      search: (query, limit, agentId) =>
+        this.messageStore.search(query, limit, agentId),
       resolveRoot: (sessionId) => this.sessionStore.getRoot(sessionId),
     });
 

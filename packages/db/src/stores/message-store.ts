@@ -46,6 +46,19 @@ export function createMessageStore(db: Database.Database) {
      ORDER BY rank LIMIT ?`
   );
 
+  // Per-agent variant: join through sessions to filter on agent_id.
+  // Sessions are agent-scoped, messages are session-scoped, so we can
+  // reach agent_id with one join. The compression-fork chain (parent_session_id)
+  // stays inside the same agent_id by construction, so a plain equality
+  // filter is sufficient — no recursive walk needed.
+  const ftsSearchByAgentStmt = db.prepare(
+    `SELECT fm.content AS content, fm.session_id AS sessionId, fm.role AS role, fm.rank AS rank
+     FROM fts_messages fm
+     JOIN sessions s ON s.id = fm.session_id
+     WHERE fts_messages MATCH ? AND s.agent_id = ?
+     ORDER BY fm.rank LIMIT ?`
+  );
+
   function rowToMessage(row: {
     id: string;
     role: string;
@@ -129,12 +142,21 @@ export function createMessageStore(db: Database.Database) {
     },
 
     /**
-     * Full-text search across all messages using FTS5 with BM25 ranking.
-     * The triggers on `messages` extract text from `parts` JSON, so search
-     * hits the semantic content of every UIMessage's text-parts.
+     * Full-text search using FTS5 with BM25 ranking. Pass `agentId` to scope
+     * results to one agent's sessions (workforce-isolation default for the
+     * `session_search` tool — an agent's long-term memory should not leak
+     * coworkers' conversations). Omit to search across all sessions
+     * (admin / cross-agent use only).
      */
-    search(query: string, limit = 20): SearchResult[] {
+    search(query: string, limit = 20, agentId?: string): SearchResult[] {
       try {
+        if (agentId) {
+          return ftsSearchByAgentStmt.all(
+            query,
+            agentId,
+            limit
+          ) as SearchResult[];
+        }
         return ftsSearchStmt.all(query, limit) as SearchResult[];
       } catch {
         return [];
