@@ -1364,6 +1364,30 @@ function MessageBubble({
               </div>
             );
           }
+          if ((part as { type?: unknown }).type === "data-upstream-error") {
+            const d = (part as { data: {
+              provider?: string;
+              statusCode?: number;
+              message: string;
+            } }).data;
+            return (
+              <div
+                key={i}
+                className="border border-destructive bg-paper-sunk p-3 rounded-sm"
+              >
+                <div className="flex items-center gap-2 text-[11px] font-mono uppercase tracking-[0.08em] text-destructive">
+                  <span>Provider error</span>
+                  {d.statusCode != null && (
+                    <span className="opacity-70">· {d.statusCode}</span>
+                  )}
+                  {d.provider && <span className="opacity-70">· {d.provider}</span>}
+                </div>
+                <pre className="mt-2 whitespace-pre-wrap text-[12px] text-ink break-words font-mono">
+                  {d.message}
+                </pre>
+              </div>
+            );
+          }
           // reasoning / file / source / other data-* — ignored in v1.
           return null;
         })}

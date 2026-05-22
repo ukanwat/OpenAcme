@@ -18,6 +18,8 @@ import {
 } from "ai";
 import {
   ensureStepBoundaries,
+  extractErrorText,
+  extractStatusCode,
   finalizeOrphanToolParts,
   sanitizeStoredHistory,
   type OpenAcmeUIMessage,
@@ -1482,6 +1484,31 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
  * onFinish assembly — the wrapper's stream output is drained and
  * discarded since the POST already returned.
  */
+const UPSTREAM_ERROR_MAX_CHARS = 4096;
+
+function buildUpstreamErrorPart(
+  err: unknown,
+  agentId: string,
+  manager: AgentManager
+) {
+  const statusCode = extractStatusCode(err);
+  const raw = extractErrorText(err);
+  const message =
+    raw.length > UPSTREAM_ERROR_MAX_CHARS
+      ? raw.slice(0, UPSTREAM_ERROR_MAX_CHARS)
+      : raw;
+  let provider: string | undefined;
+  try {
+    provider = manager.getAgent(agentId).config.model.provider;
+  } catch {
+    /* agent gone — render without provider chip */
+  }
+  return {
+    type: "data-upstream-error" as const,
+    data: { provider, statusCode, message },
+  };
+}
+
 async function runChatTurn(args: {
   manager: AgentManager;
   agentId: string;
@@ -1552,7 +1579,26 @@ async function runChatTurn(args: {
     });
   }
 
+  // `createUIMessageStream` doesn't reject the consumer when execute()
+  // or the underlying stream errors — it routes through `onError` and
+  // still calls `onFinish` with whatever parts assembled so far (often
+  // empty). Capture the error here so `onFinish` can persist a stub
+  // message with a `data-upstream-error` part instead of a 0-parts
+  // assistant row. The outer drain catch below stays as a safety net
+  // for synchronous throws that bypass this hook.
+  // `streamText.onError` (set on `agent.runStream` below) gets the
+  // raw APICallError with `.statusCode` + `.responseBody`. By the time
+  // an error reaches the UI-message-stream wrapper's onError, the SDK
+  // has stripped those down to a plain `Error.message`. So we capture
+  // here, and use that captured error in `onFinish`. The wrapper's own
+  // onError is just a fallback path for errors that never went through
+  // streamText (e.g. recall, prompt-building).
+  let capturedError: unknown = null;
   const wrapper = createUIMessageStream<OpenAcmeUIMessage>({
+    onError: (err) => {
+      if (!capturedError) capturedError = err;
+      return extractErrorText(err);
+    },
     execute: async ({ writer }) => {
       const agent = manager.getAgent(agentId);
 
@@ -1581,6 +1627,9 @@ async function runChatTurn(args: {
         sessionId,
         history,
         signal,
+        onError: ({ error }) => {
+          capturedError = error;
+        },
       });
       // Synthetic start so SSE assemblers and `onFinish`'s
       // `responseMessage.id` agree on the same row.
@@ -1679,15 +1728,27 @@ async function runChatTurn(args: {
     onFinish: ({ responseMessage }) => {
       manager.dispatcher.clearInteractiveBusy(sessionId);
       try {
-        const sanitizedParts = ensureStepBoundaries(
-          finalizeOrphanToolParts(
-            responseMessage.parts as UIMessage["parts"]
-          )
-        );
+        // Error branch: stream failed mid-turn (provider 4xx/5xx, network
+        // drop, etc.). Append an upstream-error part so the user sees what
+        // failed; preserve whatever assembled before the failure.
+        const parts = !capturedError || signal.aborted
+          ? ensureStepBoundaries(
+              finalizeOrphanToolParts(
+                responseMessage.parts as UIMessage["parts"]
+              )
+            )
+          : [
+              ...ensureStepBoundaries(
+                finalizeOrphanToolParts(
+                  responseMessage.parts as UIMessage["parts"]
+                )
+              ),
+              buildUpstreamErrorPart(capturedError, agentId, manager),
+            ];
         manager.messageStore.append(sessionId, {
           id: responseMessage.id,
           role: responseMessage.role as "user" | "assistant",
-          parts: sanitizedParts as unknown[],
+          parts: parts as unknown[],
         });
         // Final canonical broadcast — chunks already produced the live
         // assembly; this settles late subscribers + applies sanitization
@@ -1698,7 +1759,7 @@ async function runChatTurn(args: {
             {
               id: responseMessage.id,
               role: responseMessage.role as "user" | "assistant",
-              parts: sanitizedParts as unknown[],
+              parts: parts as unknown[],
             },
           ],
         });
@@ -1745,14 +1806,15 @@ async function runChatTurn(args: {
       if (r.done) break;
     }
   } catch (e) {
-    // execute() threw before onFinish ran — emit idle so observers
-    // unstick. Chunks up to the failure point already broadcast.
+    // Safety net for synchronous throws that bypass onError (rare —
+    // most provider errors route through onError → onFinish, which
+    // persists the upstream-error part). Just unstick observers.
     manager.dispatcher.clearInteractiveBusy(sessionId);
+    log.warn({ err: e, sessionId }, "runChatTurn drain errored");
     manager.broadcaster.broadcast(sessionId, {
       kind: "session_state",
       state: "idle",
     });
-    log.warn({ err: e, sessionId }, "runChatTurn errored");
   } finally {
     try {
       drainReader.releaseLock();

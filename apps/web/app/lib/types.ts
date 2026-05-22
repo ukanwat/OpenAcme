@@ -27,6 +27,13 @@ export interface OpenAcmeDataParts {
     }>;
     modelContent: string;
   };
+  /** Appended to the assistant message when streamText fails. Renders
+   *  as a destructive block in MessageBubble. */
+  "upstream-error": {
+    provider?: string;
+    statusCode?: number;
+    message: string;
+  };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   [key: string]: any;
 }

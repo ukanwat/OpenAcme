@@ -56,7 +56,11 @@ export {
   SUMMARY_FAILURE_COOLDOWN_MS,
 } from "./compression.js";
 export type { CompressOpts, CompressResult } from "./compression.js";
-export { classifyError } from "./error-classifier.js";
+export {
+  classifyError,
+  extractStatusCode,
+  extractErrorText,
+} from "./error-classifier.js";
 export type { ClassifiedError, CompressionReason } from "./error-classifier.js";
 export {
   applyAnthropicCacheControl,

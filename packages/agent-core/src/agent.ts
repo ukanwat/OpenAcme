@@ -318,6 +318,11 @@ export class Agent {
     /** Hook between LLM steps — used by `runAutonomous` to inject events
      *  that arrived mid-turn. Forwarded to `streamText` unchanged. */
     prepareStep?: Parameters<typeof streamText>[0]["prepareStep"];
+    /** Forwarded to `streamText.onError`. Receives the raw error
+     *  (APICallError, etc.) before the SDK wraps it for downstream
+     *  stream consumers — use this to capture full error context
+     *  (`statusCode`, `responseBody`) that wrapper layers strip. */
+    onError?: Parameters<typeof streamText>[0]["onError"];
   }): Promise<StreamTextResult<ToolSet, never>> {
     const effectiveToolNames = opts.toolFilter
       ? this.config.tools.filter((t) => opts.toolFilter!.has(t))
@@ -351,6 +356,7 @@ export class Agent {
       maxOutputTokens: this.config.maxOutputTokens,
       abortSignal: opts.signal,
       prepareStep: opts.prepareStep,
+      onError: opts.onError,
       // Anthropic native cache-control requires the system prompt to live
       // in `messages` as a `role: "system"` entry; SDK warns by default.
       allowSystemInMessages: true,

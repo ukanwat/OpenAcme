@@ -66,7 +66,7 @@ const CONTEXT_OVERFLOW_PATTERNS = [
   "exceeds the maximum number of input tokens",
 ];
 
-function extractStatus(err: unknown): number | undefined {
+export function extractStatusCode(err: unknown): number | undefined {
   if (APICallError.isInstance(err)) return err.statusCode;
   if (err && typeof err === "object") {
     const e = err as { status?: number; statusCode?: number; cause?: unknown };
@@ -75,28 +75,40 @@ function extractStatus(err: unknown): number | undefined {
       return e.status;
     }
     // One-hop cause walk for wrapped APICallErrors.
-    if (e.cause && e.cause !== err) return extractStatus(e.cause);
+    if (e.cause && e.cause !== err) return extractStatusCode(e.cause);
   }
   return undefined;
 }
 
-function extractText(err: unknown): string {
-  if (typeof err === "string") return err.toLowerCase();
+/** Original-case error text for surfacing to humans. Concatenates
+ *  `message` + `responseBody` so OpenRouter's `metadata.raw` wrapping
+ *  of upstream provider errors is included verbatim. Walks one-hop
+ *  `.cause` chain to find a wrapped APICallError — `streamText` often
+ *  hands `onError` a generic Error whose `cause` is the real
+ *  APICallError with the response body attached. */
+export function extractErrorText(err: unknown): string {
+  if (typeof err === "string") return err;
   if (APICallError.isInstance(err)) {
-    // Substring matching `responseBody` directly catches OpenRouter's
-    // `error.metadata.raw` wrapping of upstream provider messages without
-    // having to parse the JSON.
-    return `${err.message ?? ""} ${err.responseBody ?? ""}`.toLowerCase();
+    const parts = [err.message ?? "", err.responseBody ?? ""].filter(Boolean);
+    return parts.join("\n").trim();
   }
   if (err && typeof err === "object") {
-    const m = (err as { message?: string }).message;
-    return (m ?? String(err)).toLowerCase();
+    const e = err as { message?: string; cause?: unknown };
+    if (e.cause && e.cause !== err) {
+      const inner = extractErrorText(e.cause);
+      if (inner) return inner;
+    }
+    return e.message ?? String(err);
   }
-  return String(err).toLowerCase();
+  return String(err);
+}
+
+function extractText(err: unknown): string {
+  return extractErrorText(err).toLowerCase();
 }
 
 export function classifyError(err: unknown): ClassifiedError {
-  const statusCode = extractStatus(err);
+  const statusCode = extractStatusCode(err);
   const text = extractText(err);
 
   if (statusCode === 413) return { compressionReason: "payload_too_large" };

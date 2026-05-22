@@ -54,6 +54,16 @@ export interface OpenAcmeDataParts {
     }>;
     modelContent: string;
   };
+  /** Upstream provider error surfaced into the chat. Appended to the
+   *  assistant message when `streamText` fails so the user sees what
+   *  the provider returned and the failure survives reload. `data-*`
+   *  parts are skipped by `convertToModelMessages`, so this never leaks
+   *  back into the model input on the next turn. */
+  "upstream-error": {
+    provider?: string;
+    statusCode?: number;
+    message: string;
+  };
   // SDK-required index signature for unknown data-* keys.
   // `any` (not `unknown`) so named keys still narrow on a discriminated union.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
