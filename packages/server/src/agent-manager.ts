@@ -236,19 +236,37 @@ export class AgentManager {
       broadcaster: this.broadcaster,
     });
     // Event fan-out has two branches now:
-    //   1. Inbox delivery — every event for an agent that isn't the
-    //      actor becomes a `system_notice` inbox row addressed to that
-    //      agent. Echo suppression lives HERE, at the delivery boundary,
-    //      not at emit sites — so emits can carry the honest actor for
-    //      audit purposes and inbox routing still ignores self-actions.
-    //      The dispatcher's periodic tick discovers the inbox row on
-    //      its next pass (or immediately on the post-interactive tick).
+    //   1. Inbox delivery — each event is delivered to every *relevant*
+    //      agent minus the actor. For task events that means both the
+    //      assignee and the creator (when they differ); for non-task
+    //      events the recipient is `event.agentId`. Echo suppression
+    //      lives at this boundary, not at emit sites, so emits can carry
+    //      the honest actor for audit purposes. Without the dual-recipient
+    //      step the task creator never hears about the assignee's done /
+    //      result-comment events (the assignee's `agentId === actor`
+    //      collapses the only previous route).
     //   2. Broadcaster — SSE fan-out to subscribed UI tabs.
     this.eventStore.onEmit((event) => {
-      if (event.agentId && event.actor !== event.agentId) {
+      const recipients = new Set<string>();
+      if (event.taskId) {
+        const task = this.taskStore.get(event.taskId);
+        if (task) {
+          if (task.assignee) recipients.add(task.assignee);
+          if (task.created_by) recipients.add(task.created_by);
+        } else if (event.agentId) {
+          // Task already deleted (e.g. on `task_deleted`); fall back to
+          // the event's declared agentId so the signal isn't lost.
+          recipients.add(event.agentId);
+        }
+      } else if (event.agentId) {
+        recipients.add(event.agentId);
+      }
+      if (event.actor) recipients.delete(event.actor);
+
+      for (const agentId of recipients) {
         try {
           this.inboxStore.deliver({
-            agentId: event.agentId,
+            agentId,
             kind: "system_notice",
             source: "system",
             sourceId: event.actor ?? null,
@@ -262,7 +280,7 @@ export class AgentManager {
           });
         } catch (e) {
           log.warn(
-            { err: e, eventId: event.id },
+            { err: e, eventId: event.id, agentId },
             "inboxStore.deliver failed — signal lost for this agent"
           );
         }
