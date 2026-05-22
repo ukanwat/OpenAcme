@@ -10,7 +10,11 @@ import {
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { getModel, getEffectiveContextWindow } from "@openacme/llm-provider";
+import {
+  getModel,
+  getEffectiveContextWindow,
+  supportsToolResultMedia,
+} from "@openacme/llm-provider";
 import { createLogger } from "@openacme/config/logger";
 import { toolCallContext, type ToolRegistry } from "@openacme/tools";
 import {
@@ -336,6 +340,10 @@ export class Agent {
       sessionId: opts.sessionId,
       agentId: this.config.id,
       workspaceDir: this.config.workspaceDir,
+      toolResultMediaSupport: {
+        image: supportsToolResultMedia(this.config.model, "image"),
+        pdf: supportsToolResultMedia(this.config.model, "pdf"),
+      },
     });
 
     const messages = await uiToModelMessages(opts.history, {

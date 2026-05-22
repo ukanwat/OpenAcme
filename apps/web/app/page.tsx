@@ -19,6 +19,7 @@ import { useLiveSession } from "./lib/useLiveSession";
 import { navigateClient } from "./lib/navigate";
 import { Markdown } from "./components/Markdown";
 import { AttachmentChip } from "./components/AttachmentChip";
+import { MediaPreview } from "./components/MediaPreview";
 import { ToolBlock } from "./components/ToolBlock";
 import { API_BASE } from "./lib/api";
 import Link from "next/link";
@@ -1248,9 +1249,13 @@ function MessageBubble({
     const images = files.filter(
       (f) => (f as { mediaType: string }).mediaType.startsWith("image/")
     );
-    const others = files.filter(
-      (f) => !(f as { mediaType: string }).mediaType.startsWith("image/")
+    const pdfs = files.filter(
+      (f) => (f as { mediaType: string }).mediaType === "application/pdf"
     );
+    const others = files.filter((f) => {
+      const mt = (f as { mediaType: string }).mediaType;
+      return !mt.startsWith("image/") && mt !== "application/pdf";
+    });
     return (
       <section className="section-enter border-t border-paper-rule py-5 first:border-t-0 first:pt-0">
         <MessageHeader
@@ -1284,6 +1289,24 @@ function MessageBubble({
                     className="max-h-64 max-w-sm object-contain"
                   />
                 </a>
+              );
+            })}
+          </div>
+        )}
+        {pdfs.length > 0 && (
+          <div className="mt-3 space-y-3">
+            {pdfs.map((f, i) => {
+              const part = f as unknown as {
+                url: string;
+                mediaType: string;
+                filename?: string;
+              };
+              return (
+                <MediaPreview
+                  key={i}
+                  url={`${API_BASE}${part.url}`}
+                  mediaType={part.mediaType}
+                />
               );
             })}
           </div>

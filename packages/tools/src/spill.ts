@@ -20,7 +20,7 @@ export const TOOL_CALLS_DIR = "tool-calls";
 /** Resolve `<agentDir>/sessions/<sessionId>/tool-calls` for the active tool
  *  call. `workspaceDir` is `<agentDir>/workspace`, so the agent dir is its
  *  parent. Returns null if no workspace context (test/script paths). */
-function resolveToolCallsDir(): string | null {
+export function resolveToolCallsDir(): string | null {
   const ctx = toolCallContext.getStore();
   if (!ctx?.workspaceDir) return null;
   const agentDir = path.dirname(ctx.workspaceDir);

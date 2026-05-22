@@ -38,6 +38,7 @@ vi.mock("ai", async () => {
 vi.mock("@openacme/llm-provider", () => ({
   getModel: getModelMock,
   getEffectiveContextWindow: getEffectiveContextWindowMock,
+  supportsToolResultMedia: () => false,
 }));
 
 function freshDb() {

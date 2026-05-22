@@ -20,6 +20,25 @@ export interface ToolCallContext {
   agentId: string;
   /** Default cwd for filesystem/shell tools — the agent's workspace dir. */
   workspaceDir: string;
+  /** Current tool-call id. Set by `Agent.runStream` via the SDK's
+   *  `tool.execute({toolCallId})` hook, threaded through here so tools
+   *  that produce browser-fetchable media (`read_file` on image/PDF,
+   *  `browser_take_screenshot`) can namespace their output filenames
+   *  under `<agentDir>/sessions/<sessionId>/tool-calls/<toolCallId>-<basename>`
+   *  for serving via the `/api/files/...` route. */
+  toolCallId?: string;
+  /**
+   * Whether the active provider's adapter accepts media of each type
+   * inside `tool_result.content`. Populated by `Agent.runStream` from
+   * `supportsToolResultMedia(config.model, ...)`. Tools' `toModelOutput`
+   * reads this to decide between emitting an AI-SDK content array
+   * (native path, cache-friendly) and returning text-only (so the
+   * synthetic-user-message injector picks up).
+   */
+  toolResultMediaSupport?: {
+    image: boolean;
+    pdf: boolean;
+  };
 }
 
 export const toolCallContext = new AsyncLocalStorage<ToolCallContext>();
@@ -34,4 +53,14 @@ export function getCurrentAgentId(): string | null {
 
 export function getCurrentWorkspaceDir(): string | null {
   return toolCallContext.getStore()?.workspaceDir ?? null;
+}
+
+export function getCurrentToolCallId(): string | null {
+  return toolCallContext.getStore()?.toolCallId ?? null;
+}
+
+export function supportsCurrentToolResultMedia(
+  mediaType: "image" | "pdf"
+): boolean {
+  return toolCallContext.getStore()?.toolResultMediaSupport?.[mediaType] ?? false;
 }

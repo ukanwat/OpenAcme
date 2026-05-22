@@ -28,6 +28,7 @@ import { AgentManager } from "./agent-manager.js";
 import { authMiddleware } from "./middleware/auth.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerUploadsRoutes, type UploadsContext } from "./routes/uploads.js";
+import { registerFilesRoutes } from "./routes/files.js";
 import { registerTaskRoutes } from "./routes/tasks.js";
 import { registerSetupRoutes, setDefaultModelIfUnset } from "./routes/setup.js";
 import { registerSkillsHubRoutes } from "./routes/skills-hub.js";
@@ -140,6 +141,11 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
   // shared with /api/chat below so we can resolve `attachmentId` parts
   // back to a path on disk.
   const uploads: UploadsContext = registerUploadsRoutes(app, manager);
+
+  // Static-style serve for agent-side binary content (read_file on
+  // image/PDF, screenshots). Sibling to /api/attachments — see
+  // routes/files.ts for the trust-model distinction.
+  registerFilesRoutes(app, manager);
 
   // Tasks: founder read/edit/delete. POST is intentionally absent — task
   // creation is agent-only via the `task_create` tool.

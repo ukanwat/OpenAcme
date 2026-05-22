@@ -2,7 +2,13 @@ import { z } from 'zod';
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { registry } from "../registry.js";
-import { getCurrentWorkspaceDir } from "../session-context.js";
+import {
+  getCurrentWorkspaceDir,
+  getCurrentSessionId,
+  getCurrentToolCallId,
+  supportsCurrentToolResultMedia,
+} from "../session-context.js";
+import { resolveToolCallsDir } from "../spill.js";
 
 /**
  * File tools — read, write, list, search files.
@@ -13,6 +19,22 @@ const MAX_LINES_LIMIT = 10000;
 const MAX_DEPTH_LIMIT = 10;
 const MAX_SEARCH_RESULTS = 500;
 
+const MAX_TEXT_BYTES = 5 * 1024 * 1024;
+
+/** Per-media-kind size caps + the marker the prepareStep injector keys
+ *  off. Image is broader than PDF because models tend to charge per-image
+ *  at a flat token rate regardless of size, while PDFs are cheap but can
+ *  be much longer. */
+export type MediaKind = "image" | "pdf";
+
+const MEDIA_BY_MIME: Record<string, { kind: MediaKind; max: number }> = {
+  "image/png": { kind: "image", max: 5 * 1024 * 1024 },
+  "image/jpeg": { kind: "image", max: 5 * 1024 * 1024 },
+  "image/gif": { kind: "image", max: 5 * 1024 * 1024 },
+  "image/webp": { kind: "image", max: 5 * 1024 * 1024 },
+  "application/pdf": { kind: "pdf", max: 10 * 1024 * 1024 },
+};
+
 /** Relative paths resolve against the agent's workspace dir (when an
  *  agent context is active) or `process.cwd()` (for unit tests / other
  *  no-context callers). */
@@ -21,19 +43,171 @@ function resolveAgainstWorkspace(p: string): string {
   return path.resolve(base, p);
 }
 
-// ── read_file ──
+/** Magic-byte MIME sniff for the binary types we support as vision /
+ *  document input. Returns null for anything we won't materialize as a
+ *  user-message ImagePart/FilePart — the caller falls back to UTF-8 text
+ *  reads (or an unknown-binary error). Mirrors `sniffMime` in
+ *  packages/server/src/routes/uploads.ts (kept inline to avoid a
+ *  cross-package dep). */
+function sniffMime(head: Buffer): string | null {
+  if (head.length >= 8 && head[0] === 0x89 && head[1] === 0x50 && head[2] === 0x4e && head[3] === 0x47) {
+    return "image/png";
+  }
+  if (head.length >= 3 && head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff) {
+    return "image/jpeg";
+  }
+  if (head.length >= 6 && head[0] === 0x47 && head[1] === 0x49 && head[2] === 0x46 && head[3] === 0x38) {
+    return "image/gif";
+  }
+  if (
+    head.length >= 12 &&
+    head[0] === 0x52 && head[1] === 0x49 && head[2] === 0x46 && head[3] === 0x46 &&
+    head[8] === 0x57 && head[9] === 0x45 && head[10] === 0x42 && head[11] === 0x50
+  ) {
+    return "image/webp";
+  }
+  if (head.length >= 5 && head[0] === 0x25 && head[1] === 0x50 && head[2] === 0x44 && head[3] === 0x46 && head[4] === 0x2d) {
+    return "application/pdf";
+  }
+  return null;
+}
+
+function readHead(filePath: string, n: number): Buffer {
+  const fd = fs.openSync(filePath, "r");
+  try {
+    const buf = Buffer.alloc(n);
+    const bytesRead = fs.readSync(fd, buf, 0, n, 0);
+    return buf.subarray(0, bytesRead);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/**
+ * Build an AI-SDK `ToolResultOutput` from a media-pointer handler return.
+ *
+ *   - Native paths (Anthropic, OpenAI Responses, Google for images):
+ *     emit a `content` array with image-data / file-data so the model
+ *     sees the bytes inline in `tool_result.content`. Cache-friendly:
+ *     the bytes become part of the prefix on cache hits.
+ *
+ *   - Non-supporting paths (OpenAI Chat Completions, openai-compatible
+ *     incl. OpenRouter; Google for PDFs): emit a text descriptor
+ *     ("[image: foo.png, image/png, 804B, saved at /...]") so the model
+ *     at least knows the file exists, its type, and where it is — same
+ *     pattern Hermes uses to downgrade when the adapter can't carry
+ *     list-content. No synthetic user message; the human reviewer
+ *     still sees the actual image in the chat via the tool block's
+ *     MediaPreview render.
+ *
+ * Adapter dispatch (verified per `@ai-sdk/*`):
+ *   - `@ai-sdk/anthropic`           image ✓ PDF ✓
+ *   - `@ai-sdk/openai` Responses    image ✓ PDF ✓
+ *   - `@ai-sdk/google`              image ✓ PDF ✗ (drops with warning)
+ *   - `@ai-sdk/openai` Chat         ✗ (stringifies)
+ *   - `@ai-sdk/openai-compatible`   ✗ (stringifies)
+ */
+export function buildMediaToolModelOutput(opts: {
+  toolCallId: string;
+  input: Record<string, unknown>;
+  output: string;
+}): unknown {
+  const { output } = opts;
+  if (typeof output !== "string") return { type: "text", value: String(output) };
+  let parsed: {
+    _media?: "image" | "pdf";
+    path?: string;
+    mediaType?: string;
+    bytes?: number;
+  };
+  try {
+    parsed = JSON.parse(output) as never;
+  } catch {
+    return { type: "text", value: output };
+  }
+  if (!parsed._media || !parsed.path || !parsed.mediaType) {
+    return { type: "text", value: output };
+  }
+  const basename = path.basename(parsed.path);
+  const sizeLabel = parsed.bytes != null ? `${parsed.bytes}B` : "?";
+
+  if (!supportsCurrentToolResultMedia(parsed._media)) {
+    // Provider can't carry media in tool_result content. Tell the
+    // model what we got (kind, type, location) so it can reason about
+    // the file even without seeing it; the bytes stay on disk and
+    // render in the human-facing UI via the tool block.
+    return {
+      type: "text",
+      value: `[${parsed._media}: ${basename}, ${parsed.mediaType}, ${sizeLabel}, saved at ${parsed.path}; the active model does not support inline media in tool results — the bytes are available on disk but not visually attached to this turn]`,
+    };
+  }
+
+  let bytes: Buffer;
+  try {
+    bytes = fs.readFileSync(parsed.path);
+  } catch {
+    return { type: "text", value: output };
+  }
+  const data = bytes.toString("base64");
+  const summary = `Read ${parsed.path} (${parsed.mediaType}, ${parsed.bytes ?? bytes.length}B)`;
+  const mediaPart =
+    parsed._media === "image"
+      ? { type: "image-data", data, mediaType: parsed.mediaType }
+      : { type: "file-data", data, mediaType: parsed.mediaType, filename: basename };
+  return {
+    type: "content",
+    value: [{ type: "text", text: summary }, mediaPart],
+  };
+}
+
+/** Copy bytes from a source path into the per-session tool-calls dir so
+ *  the chat UI can fetch them via the `/api/files/...` route. On-disk
+ *  layout: `<agentDir>/sessions/<sessionId>/tool-calls/<toolCallId>-<basename>`
+ *  — flat naming preserves the existing `sweepOverflow` /
+ *  `deleteSessionToolCalls` cleanup semantics. Tries `linkSync` first
+ *  (free hardlink on the same filesystem) and falls back to `copyFileSync`
+ *  on EXDEV. Returns the public URL or null if no session/call context
+ *  is set (tests, scripts). */
+function exposeAsSessionFile(srcPath: string, basename: string): string | null {
+  const dir = resolveToolCallsDir();
+  const sessionId = getCurrentSessionId();
+  const callId = getCurrentToolCallId();
+  if (!dir || !sessionId || !callId) return null;
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    const dest = path.join(dir, `${callId}-${basename}`);
+    try {
+      fs.linkSync(srcPath, dest);
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code === "EEXIST") {
+        // Same call retried — already exposed. Idempotent.
+      } else {
+        fs.copyFileSync(srcPath, dest);
+      }
+    }
+    return `/api/files/${encodeURIComponent(sessionId)}/${encodeURIComponent(callId)}/${encodeURIComponent(basename)}`;
+  } catch {
+    return null;
+  }
+}
+
 registry.register({
   name: "read_file",
   toolset: "filesystem",
   description:
-    "Read the contents of a file at the given path. Relative paths resolve " +
-    "against your agent's workspace dir.",
+    "Read a file by path. Handles text, images (PNG/JPEG/GIF/WebP), and PDFs. " +
+    "Image and PDF content is delivered as a vision input on multimodal models " +
+    "(inline in the tool result on Anthropic / OpenAI Responses / Google-images; " +
+    "via a synthetic user message on OpenRouter / OpenAI Chat Completions). " +
+    "Relative paths resolve against your agent's workspace dir.",
   parameters: z.object({
     path: z.string().describe("Absolute or relative path to the file"),
-    maxLines: z.number().min(1).max(MAX_LINES_LIMIT).optional().describe("Maximum number of lines to read (max 10000)"),
+    maxLines: z.number().min(1).max(MAX_LINES_LIMIT).optional().describe("Max lines to read (text files only; ignored for images/PDFs)."),
   }),
   emoji: "📄",
   parallelSafe: true,
+  toModelOutput: buildMediaToolModelOutput,
   handler: async (args) => {
     const { path: filePath, maxLines } = args as {
       path: string;
@@ -41,6 +215,54 @@ registry.register({
     };
     try {
       const resolved = resolveAgainstWorkspace(filePath);
+      const st = fs.statSync(resolved);
+      if (!st.isFile()) {
+        return JSON.stringify({ error: "not a regular file", path: resolved });
+      }
+
+      const head = readHead(resolved, 16);
+      const mime = sniffMime(head);
+      const media = mime ? MEDIA_BY_MIME[mime] : undefined;
+
+      if (media) {
+        if (st.size > media.max) {
+          return JSON.stringify({
+            error: `${media.kind} too large: ${st.size} bytes (cap ${media.max})`,
+            path: resolved,
+            bytes: st.size,
+          });
+        }
+        const url = exposeAsSessionFile(resolved, path.basename(resolved));
+        return JSON.stringify({
+          success: true,
+          path: resolved,
+          mediaType: mime,
+          bytes: st.size,
+          _media: media.kind,
+          ...(url ? { url } : {}),
+        });
+      }
+
+      // Unknown magic — best-effort UTF-8 decode. Detect binary by
+      // scanning for NUL bytes in the head; refuse if found (likely not
+      // text).
+      if (head.includes(0x00)) {
+        return JSON.stringify({
+          error:
+            "binary file with unrecognized type — only PNG/JPEG/GIF/WebP/PDF are recognized as media. Use shell to inspect.",
+          path: resolved,
+          bytes: st.size,
+        });
+      }
+
+      if (st.size > MAX_TEXT_BYTES) {
+        return JSON.stringify({
+          error: `text file too large: ${st.size} bytes (cap ${MAX_TEXT_BYTES}). Use shell head/tail or pass maxLines.`,
+          path: resolved,
+          bytes: st.size,
+        });
+      }
+
       const content = fs.readFileSync(resolved, "utf-8");
       if (maxLines) {
         const lines = content.split("\n").slice(0, maxLines).join("\n");

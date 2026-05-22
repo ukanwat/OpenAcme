@@ -40,6 +40,9 @@ vi.mock("@openacme/llm-provider", () => ({
   // Returning null disables the size-guard in flushMemoryBeforeCompression
   // so existing tests don't accidentally exercise that branch.
   getEffectiveContextWindow: () => null,
+  // Default: no tool-result media support. Tests don't exercise this
+  // path; the injector handles delivery via synthetic user messages.
+  supportsToolResultMedia: () => false,
 }));
 
 function freshDb() {

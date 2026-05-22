@@ -180,14 +180,9 @@ export function buildHomePayload(manager: AgentManager): HomePayload {
 
   for (const session of sessions) {
     const tasks = tasksBySession.get(session.id) ?? [];
-    // Hide sessions whose every task is terminal — they've settled.
-    // Operator-initiated chat sessions with no task at all stay
-    // visible until they're explicitly deleted (they're the user's
-    // ad-hoc threads, not autonomous-driven work).
     const nonTerminal = tasks.filter(
       (t) => t.status !== "done" && t.status !== "canceled"
     );
-    if (tasks.length > 0 && nonTerminal.length === 0) continue;
 
     const inProgress = nonTerminal.find((t) => t.status === "in_progress");
     const ping = pingBySession.get(session.id);

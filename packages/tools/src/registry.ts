@@ -3,6 +3,7 @@ import { createLogger } from "@openacme/config/logger";
 import type { ToolEntry, ToolDefinition, ToolInfo } from "./types.js";
 import { SYSTEM_TOOLS } from "./system.js";
 import { maybeSpill } from "./spill.js";
+import { toolCallContext } from "./session-context.js";
 
 const log = createLogger("tools.registry");
 
@@ -118,14 +119,32 @@ export class ToolRegistry {
       if (toolNames && !toolNames.has(entry.name)) continue;
       if (entry.checkFn && !entry.checkFn()) continue;
 
-      tools[entry.name] = {
+      const toolDef: Record<string, unknown> = {
         description: entry.description,
         inputSchema: entry.parameters,
-        execute: async (args: Record<string, unknown>) => {
-          const result = await entry.handler(args);
-          return maybeSpill(result, entry);
+        execute: async (
+          args: Record<string, unknown>,
+          opts: { toolCallId?: string } = {}
+        ) => {
+          // Thread the per-call id into the ALS context so handlers
+          // (read_file image/PDF, browser_take_screenshot) can namespace
+          // their tool-files-dir copies without changing tool signatures.
+          const store = toolCallContext.getStore();
+          if (store && opts.toolCallId) {
+            store.toolCallId = opts.toolCallId;
+          }
+          try {
+            const result = await entry.handler(args);
+            return maybeSpill(result, entry);
+          } finally {
+            if (store) store.toolCallId = undefined;
+          }
         },
       };
+      if (entry.toModelOutput) {
+        toolDef.toModelOutput = entry.toModelOutput;
+      }
+      tools[entry.name] = toolDef;
     }
     return tools;
   }

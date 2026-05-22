@@ -174,6 +174,43 @@ function shouldUseOAuth(
   }
 }
 
+/**
+ * Whether the active model's adapter accepts media (image / PDF) inside
+ * `tool_result.content`. Derived by reading every installed adapter:
+ *
+ *   - Anthropic (native + OAuth): image ✓ and PDF ✓
+ *   - OpenAI Responses API (ChatGPT OAuth / Codex): image ✓ and PDF ✓
+ *   - OpenAI Chat Completions (API key path): silently stringifies
+ *   - Google: image ✓; explicitly drops non-image file-data (so PDF ✗)
+ *   - openai-compatible (OpenRouter, Ollama, custom): silently stringifies
+ *
+ * The synthetic-user-message injector in agent-core handles the fallback
+ * paths — tools' `toModelOutput` checks this and only emits a content
+ * array on the supported combos so the injector can do its job for the
+ * rest without double-delivering.
+ */
+export function supportsToolResultMedia(
+  config: ModelConfig,
+  mediaType: "image" | "pdf"
+): boolean {
+  const dataDir = resolveDataDir();
+  switch (config.provider) {
+    case "anthropic":
+      return true;
+    case "openai":
+      // Only the Responses API path (OAuth) accepts list-content in tool
+      // results. The API-key path uses Chat Completions which stringifies.
+      return shouldUseOAuth("openai", config, "OPENAI_API_KEY", dataDir);
+    case "google":
+      return mediaType === "image";
+    case "openrouter":
+    case "ollama":
+    case "custom":
+    default:
+      return false;
+  }
+}
+
 /** Strip temperature/top_p/top_k from an Anthropic body (Claude 4.7+ contract). */
 function stripAnthropicSamplingParams(body: unknown): unknown {
   if (typeof body !== "string") return body;

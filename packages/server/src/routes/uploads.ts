@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import { createLogger } from "@openacme/config/logger";
 import type { AgentManager } from "../agent-manager.js";
+import { serveBinaryFile } from "./_serve-helpers.js";
 
 const log = createLogger("server.uploads");
 
@@ -244,36 +245,10 @@ export function registerUploadsRoutes(
       const filename = c.req.param("filename");
       const rel = path.join(sessionId, attachmentId, filename);
       const abs = path.resolve(path.join(attachmentsRoot, rel));
-      // Defense in depth: ensure the resolved path is inside the root.
       if (!abs.startsWith(path.resolve(attachmentsRoot) + path.sep)) {
         return c.json({ error: "Path escapes root" }, 400);
       }
-      if (!fs.existsSync(abs)) return c.json({ error: "Not found" }, 404);
-      const stat = fs.statSync(abs);
-      const stream = fs.createReadStream(abs);
-      // Content-Disposition is HTTP header-safe = ASCII only. Filenames may
-      // contain non-ASCII (e.g. macOS screenshots use U+202F before AM/PM);
-      // emit RFC 5987 filename*= for the precise name plus an ASCII-only
-      // fallback. Without this, Response throws on non-ASCII header bytes.
-      const asciiName = filename.replace(/[^\x20-\x7E]/g, "_").replace(/"/g, "");
-      c.header("Content-Length", String(stat.size));
-      c.header(
-        "Content-Disposition",
-        `inline; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(filename)}`
-      );
-      const webStream = new ReadableStream<Uint8Array>({
-        start(controller) {
-          stream.on("data", (chunk: Buffer | string) =>
-            controller.enqueue(typeof chunk === "string" ? Buffer.from(chunk) : chunk)
-          );
-          stream.on("end", () => controller.close());
-          stream.on("error", (e) => controller.error(e));
-        },
-        cancel() {
-          stream.destroy();
-        },
-      });
-      return c.body(webStream);
+      return serveBinaryFile(c, abs, filename);
     }
   );
 

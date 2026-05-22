@@ -1,6 +1,14 @@
 import { z } from "zod";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { registry } from "../../registry.js";
-import { getCurrentAgentId } from "../../session-context.js";
+import {
+  getCurrentAgentId,
+  getCurrentSessionId,
+  getCurrentToolCallId,
+} from "../../session-context.js";
+import { resolveToolCallsDir } from "../../spill.js";
+import { buildMediaToolModelOutput } from "../file.js";
 import {
   getBrowserBindings,
   notBoundError,
@@ -21,12 +29,14 @@ registry.register({
   toolset: "browser",
   emoji: "🖼️",
   parallelSafe: false,
-  // base64 PNG isn't grep-friendly — skip spill-to-file, the bytes go
-  // straight to the model as an image.
-  binaryResult: true,
   description:
-    "Capture a PNG screenshot of the current page. Returns base64-encoded PNG. Use when text snapshots miss the relevant visual (captchas, image content, complex layouts) — vision-capable models will see the image directly.",
+    "Capture a PNG screenshot of the current page and save it to the session's tool-calls dir. " +
+    "Returns the file path; the bytes are delivered as a vision input on multimodal models " +
+    "(inline in the tool result on Anthropic / OpenAI Responses / Google; via a synthetic user " +
+    "message on OpenRouter / OpenAI Chat Completions). Use when text snapshots miss the relevant " +
+    "visual (captchas, image content, complex layouts).",
   parameters: ScreenshotParams,
+  toModelOutput: buildMediaToolModelOutput,
   handler: async (args) => {
     const p = args as z.infer<typeof ScreenshotParams>;
     const b = getBrowserBindings();
@@ -36,7 +46,39 @@ registry.register({
     if (guard) return guard;
     try {
       const r = await b.manager.takeScreenshot(agentId!, p);
-      return JSON.stringify(r);
+      const bytes = Buffer.from(r.pngBase64, "base64");
+      const ts = new Date()
+        .toISOString()
+        .replace(/[:.]/g, "-")
+        .replace("T", "_")
+        .replace("Z", "");
+      const baseFilename = `screenshot-${ts}-${r.tabId}.png`;
+
+      // Save under the session's tool-calls dir, prefixed with the
+      // toolCallId so the `/api/tool-files/...` route can resolve and
+      // serve it. Flat naming (no subdir) keeps the existing
+      // sweepOverflow / deleteSessionToolCalls cleanup intact.
+      const dir = resolveToolCallsDir();
+      if (!dir) return JSON.stringify(r);
+      const sessionId = getCurrentSessionId();
+      const callId = getCurrentToolCallId();
+      fs.mkdirSync(dir, { recursive: true });
+      const onDiskName = callId ? `${callId}-${baseFilename}` : baseFilename;
+      const absPath = path.join(dir, onDiskName);
+      fs.writeFileSync(absPath, bytes);
+      const url =
+        sessionId && callId
+          ? `/api/files/${encodeURIComponent(sessionId)}/${encodeURIComponent(callId)}/${encodeURIComponent(baseFilename)}`
+          : undefined;
+      return JSON.stringify({
+        success: true,
+        tabId: r.tabId,
+        path: absPath,
+        mediaType: r.mediaType,
+        bytes: bytes.length,
+        _media: "image",
+        ...(url ? { url } : {}),
+      });
     } catch (e) {
       return toolError("browser_take_screenshot", e);
     }

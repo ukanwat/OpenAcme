@@ -36,6 +36,21 @@ export interface ToolEntry {
   /** Result isn't grep-friendly text (base64 PNG, opaque binary). Skips the
    *  spill-to-file intercept; the handler's own result flows through. */
   binaryResult?: boolean;
+  /**
+   * Optional translator that converts the handler's string result into
+   * the AI SDK's `ToolResultOutput` shape. Use to emit vision / document
+   * content parts that the active provider can deliver natively (image
+   * inside `tool_result.content` on Anthropic, OpenAI Responses, Google
+   * for images). When unset, the SDK's default kicks in (text/json).
+   *
+   * Returns `unknown` to keep `@ai-sdk/provider-utils` out of the tools
+   * package; the SDK validates the runtime shape downstream.
+   */
+  toModelOutput?: (opts: {
+    toolCallId: string;
+    input: Record<string, unknown>;
+    output: string;
+  }) => unknown;
 }
 
 /**

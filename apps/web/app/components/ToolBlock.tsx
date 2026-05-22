@@ -5,6 +5,7 @@ import { ArrowUpRight, ChevronRight, Bell, Clock } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/app/lib/utils";
 import { Markdown } from "./Markdown";
+import { MediaPreview } from "./MediaPreview";
 
 /*
  * Renders a tool-${name} UIMessagePart.
@@ -618,10 +619,20 @@ function renderBody({
       // The duration + next_check_at are already in the summary; no
       // separate body content.
       return null;
+    case "read_file":
+    case "browser_take_screenshot": {
+      const out = parseJsonish(output);
+      if (!out) return null;
+      const url = str(out.url);
+      const mediaType = str(out.mediaType);
+      if (!url || !mediaType) return null;
+      return <MediaPreview url={url} mediaType={mediaType} />;
+    }
     default:
       return null;
   }
 }
+
 
 // Body for shell / execute_code — output only. The command/code is already
 // shown as the header summary; repeating it here is noise.

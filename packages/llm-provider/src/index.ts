@@ -3,6 +3,7 @@ export {
   listProviders,
   getEffectiveContextWindow,
   isAnthropicLongContextDisabled,
+  supportsToolResultMedia,
   type ProviderInfo,
 } from "./registry.js";
 export {
