@@ -55,7 +55,15 @@ async function runBrowserFlow(opts: OpenAILoginOptions): Promise<OpenAILoginResu
   authorizeUrl.searchParams.set("code_challenge_method", "S256");
   authorizeUrl.searchParams.set("id_token_add_organizations", "true");
   authorizeUrl.searchParams.set("codex_cli_simplified_flow", "true");
-  authorizeUrl.searchParams.set("originator", "openacme");
+  // Identify as Codex CLI to OpenAI's auth UI. We're already using the
+  // Codex client_id and the Codex loopback port (1455) — matching the
+  // originator string lines us up with the well-trodden path on OpenAI's
+  // side. A custom originator (e.g. "openacme") falls into a generic
+  // fallback path that intermittently throws "Unexpected token '<' ...
+  // not valid JSON" inside OpenAI's own UI after the user clicks
+  // Authorize. Same client surface, just the marker OpenAI's UI is
+  // tested against.
+  authorizeUrl.searchParams.set("originator", "codex_cli");
 
   const url = authorizeUrl.toString();
   opts.onAuthUrl?.(url);

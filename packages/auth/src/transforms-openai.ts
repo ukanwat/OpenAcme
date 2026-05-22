@@ -7,6 +7,9 @@
  *    the input array)
  *  - `store` MUST be `false`
  *  - sampling params (`temperature`, `top_p`) are rejected
+ *  - `max_output_tokens` is rejected ("Unsupported parameter") —
+ *    ChatGPT-subscription tier caps output server-side, so the parameter
+ *    isn't accepted
  *  - model name must be in the Codex namespace (gpt-5.1-codex, etc.)
  *
  * Vendored & adapted from:
@@ -41,6 +44,7 @@ interface CodexBody {
   store?: boolean;
   temperature?: number;
   top_p?: number;
+  max_output_tokens?: number;
   [k: string]: unknown;
 }
 
@@ -54,10 +58,11 @@ export function transformCodexOAuthBody(body: unknown): unknown {
     return body;
   }
 
-  // Required: store: false, no sampling params.
+  // Required: store: false, no sampling params, no output cap.
   parsed.store = false;
   delete parsed.temperature;
   delete parsed.top_p;
+  delete parsed.max_output_tokens;
 
   // Normalize model name.
   parsed.model = normalizeCodexModel(parsed.model);
