@@ -679,9 +679,11 @@ export class AgentManager {
     if (provider === "firecrawl") {
       return this.ensureFirecrawlProfile(def);
     }
-    // local + browserbase don't need an upfront / stamped profile here:
-    //   - local uses per-agent dirs auto-created at agent build time
-    //   - browserbase profile binding isn't wired yet (separate follow-up)
+    if (provider === "browserbase") {
+      return this.ensureBrowserbaseContext(def);
+    }
+    // local doesn't need an upfront / stamped profile — it uses per-agent
+    // dirs auto-created at agent build time.
     return def;
   }
 
@@ -775,6 +777,115 @@ export class AgentManager {
   }
 
   /**
+   * Browserbase Contexts are UUID-bound persistent stores (cookies,
+   * localStorage, IndexedDB). One per agent — sessions hydrate from the
+   * context at start and write deltas back on release. Failure-tolerant.
+   */
+  private async ensureBrowserbaseContext(
+    def: AgentDefinition
+  ): Promise<AgentDefinition> {
+    if (def.browser?.browserbase?.contextId) return def;
+    const apiKey = process.env.BROWSERBASE_API_KEY;
+    const projectId = process.env.BROWSERBASE_PROJECT_ID;
+    if (!apiKey || !projectId) return def;
+
+    const baseUrl = (
+      process.env.BROWSERBASE_BASE_URL ?? "https://api.browserbase.com"
+    ).replace(/\/+$/, "");
+    try {
+      const res = await fetch(`${baseUrl}/v1/contexts`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-BB-API-Key": apiKey,
+        },
+        body: JSON.stringify({ projectId }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!res.ok) {
+        log.warn(
+          { status: res.status, agentId: def.id },
+          "browserbase context auto-create failed; agent will use ephemeral sessions"
+        );
+        return def;
+      }
+      const data = (await res.json()) as { id?: string };
+      if (!data.id) {
+        log.warn(
+          { agentId: def.id },
+          "browserbase context auto-create response missing id"
+        );
+        return def;
+      }
+      log.info(
+        { agentId: def.id, contextId: data.id },
+        "browserbase context auto-provisioned"
+      );
+      return {
+        ...def,
+        browser: {
+          ...def.browser,
+          browserbase: { ...def.browser?.browserbase, contextId: data.id },
+        },
+      };
+    } catch (e) {
+      log.warn(
+        { err: e, agentId: def.id },
+        "browserbase context auto-create errored"
+      );
+      return def;
+    }
+  }
+
+  /**
+   * Tear down cloud-side browser identity on agent delete. Called from
+   * deleteAgent before the def is removed from disk so the UUID is still
+   * readable. Failure-tolerant — a failed cleanup logs a warn but never
+   * blocks local deletion.
+   *
+   * Browser Use: their public API does not expose a delete-profile
+   * endpoint (verified 2026-05-22), so profiles linger in their dashboard
+   * until the user removes them manually. Firecrawl: name-bound profiles
+   * are server-managed; no explicit delete needed.
+   */
+  private async releaseAgentBrowserIdentity(
+    def: AgentDefinition
+  ): Promise<void> {
+    const provider = this.config.browser.provider;
+    if (provider === "browserbase" && def.browser?.browserbase?.contextId) {
+      const apiKey = process.env.BROWSERBASE_API_KEY;
+      if (!apiKey) return;
+      const baseUrl = (
+        process.env.BROWSERBASE_BASE_URL ?? "https://api.browserbase.com"
+      ).replace(/\/+$/, "");
+      const contextId = def.browser.browserbase.contextId;
+      try {
+        const res = await fetch(`${baseUrl}/v1/contexts/${contextId}`, {
+          method: "DELETE",
+          headers: { "X-BB-API-Key": apiKey },
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (!res.ok) {
+          log.warn(
+            { status: res.status, agentId: def.id, contextId },
+            "browserbase context delete failed; orphan left in dashboard"
+          );
+        } else {
+          log.info(
+            { agentId: def.id, contextId },
+            "browserbase context released"
+          );
+        }
+      } catch (e) {
+        log.warn(
+          { err: e, agentId: def.id, contextId },
+          "browserbase context delete errored; orphan left in dashboard"
+        );
+      }
+    }
+  }
+
+  /**
    * Lazy-provision hook for BrowserManager. If the agent has no profile
    * for the active provider, create one now and persist it back to the
    * agent store so subsequent acquires skip this work. Failure-tolerant —
@@ -787,10 +898,17 @@ export class AgentManager {
   ): Promise<AgentBrowserOverrides | undefined> {
     const provider = this.config.browser.provider;
     // Already-set guards per provider — cheap shortcut to avoid a store read
-    // on every acquire after the first.
-    if (provider === "browser-use" && current?.browserUse?.profileId) return current;
-    if (provider === "firecrawl" && current?.firecrawl?.profileName) return current;
-    if (provider !== "browser-use" && provider !== "firecrawl") return current;
+    // on every acquire after the first. Unknown / "local" providers don't
+    // need provisioning, so fall through to return current.
+    if (provider === "browser-use") {
+      if (current?.browserUse?.profileId) return current;
+    } else if (provider === "firecrawl") {
+      if (current?.firecrawl?.profileName) return current;
+    } else if (provider === "browserbase") {
+      if (current?.browserbase?.contextId) return current;
+    } else {
+      return current;
+    }
     const def = this.agentStore.get(agentId);
     if (!def) return current;
     const provisioned = await this.ensureAgentBrowserProfile(def);
@@ -884,6 +1002,14 @@ export class AgentManager {
           "deleteAgent: failed to drop session"
         );
       }
+    }
+
+    // Release cloud-side browser identity (Browserbase context, etc.) so
+    // the user's dashboard doesn't accumulate orphans. Must run while the
+    // def is still on disk (we need the UUID); failure-tolerant — never
+    // blocks local cleanup.
+    if (existing) {
+      await this.releaseAgentBrowserIdentity(existing);
     }
 
     // Tasks: anything assigned to or created by this agent. We delete

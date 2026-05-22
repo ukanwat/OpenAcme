@@ -15,12 +15,15 @@ export type TabId = string;
  *       profileId: 6c0cbf15-...
  *     firecrawl:
  *       profileName: redditor
+ *     browserbase:
+ *       contextId: 9af1...
  *
  * Only the sub-block matching the workforce-active provider is consulted.
  */
 export interface AgentBrowserOverrides {
   browserUse?: { profileId?: string };
   firecrawl?: { profileName?: string };
+  browserbase?: { contextId?: string };
 }
 
 export interface BrowserConfig {

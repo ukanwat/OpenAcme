@@ -172,6 +172,17 @@ export const AgentBrowserOverridesSchema = z
       })
       .strict()
       .optional(),
+    browserbase: z
+      .object({
+        contextId: z
+          .string()
+          .optional()
+          .describe(
+            "Browserbase Context UUID for THIS agent. Sessions inherit the context's cookies / saved logins. Auto-provisioned on agent creation when BROWSERBASE_API_KEY + BROWSERBASE_PROJECT_ID are set; lazily on first acquire otherwise."
+          ),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 export type AgentBrowserOverrides = z.infer<typeof AgentBrowserOverridesSchema>;

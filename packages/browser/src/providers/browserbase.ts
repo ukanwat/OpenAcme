@@ -1,4 +1,4 @@
-import type { AcquiredBrowser, BrowserProvider } from "./base.js";
+import type { AcquireOptions, AcquiredBrowser, BrowserProvider } from "./base.js";
 
 interface BrowserbaseConfig {
   apiKey: string;
@@ -49,18 +49,18 @@ export class BrowserbaseProvider implements BrowserProvider {
     };
   }
 
-  async acquire(agentId: string): Promise<AcquiredBrowser> {
+  async acquire(agentId: string, opts?: AcquireOptions): Promise<AcquiredBrowser> {
     if (!agentId) throw new Error("BrowserbaseProvider.acquire requires an agentId");
     const existing = this.sessions.get(agentId);
     if (existing) return this.handleFor(agentId, existing);
     const inflight = this.acquiring.get(agentId);
     if (inflight) return inflight;
-    const p = this.createFor(agentId).finally(() => this.acquiring.delete(agentId));
+    const p = this.createFor(agentId, opts).finally(() => this.acquiring.delete(agentId));
     this.acquiring.set(agentId, p);
     return p;
   }
 
-  private async createFor(agentId: string): Promise<AcquiredBrowser> {
+  private async createFor(agentId: string, opts?: AcquireOptions): Promise<AcquiredBrowser> {
     const cfg = this.getConfig();
     const enableProxies = (process.env.BROWSERBASE_PROXIES ?? "true").toLowerCase() !== "false";
     const enableAdvancedStealth = (process.env.BROWSERBASE_ADVANCED_STEALTH ?? "false").toLowerCase() === "true";
@@ -74,7 +74,14 @@ export class BrowserbaseProvider implements BrowserProvider {
       if (Number.isFinite(t) && t > 0) body.timeout = t;
     }
     if (enableProxies) body.proxies = true;
-    if (enableAdvancedStealth) body.browserSettings = { advancedStealth: true };
+    // Per-agent context (cookies / login state). Provisioned upstream by
+    // AgentManager.ensureBrowserbaseContext; persist=true writes session
+    // deltas back so the next session inherits them.
+    const browserSettings: Record<string, unknown> = {};
+    if (enableAdvancedStealth) browserSettings.advancedStealth = true;
+    const contextId = opts?.overrides?.browserbase?.contextId;
+    if (contextId) browserSettings.context = { id: contextId, persist: true };
+    if (Object.keys(browserSettings).length > 0) body.browserSettings = browserSettings;
 
     let res = await this.postSession(cfg, body);
     if (res.status === 402 && enableKeepAlive) {
