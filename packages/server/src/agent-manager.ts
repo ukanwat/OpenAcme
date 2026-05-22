@@ -697,8 +697,16 @@ export class AgentManager {
     const apiKey = process.env.BROWSER_USE_API_KEY;
     if (!apiKey) return def;
 
+    // Profiles live on /api/v2 even though sessions are on /api/v3. Derive
+    // from BROWSER_USE_BASE_URL by swapping the version segment so a single
+    // env var still controls the endpoint host; an explicit
+    // BROWSER_USE_PROFILES_BASE_URL wins for internal/proxied deployments.
     const baseUrl = (
-      process.env.BROWSER_USE_BASE_URL ?? "https://api.browser-use.com/api/v3"
+      process.env.BROWSER_USE_PROFILES_BASE_URL ??
+      (process.env.BROWSER_USE_BASE_URL ?? "https://api.browser-use.com/api/v3").replace(
+        /\/api\/v\d+\/?$/,
+        "/api/v2"
+      )
     ).replace(/\/+$/, "");
     try {
       const res = await fetch(`${baseUrl}/profiles`, {
@@ -707,9 +715,9 @@ export class AgentManager {
           "Content-Type": "application/json",
           "X-Browser-Use-API-Key": apiKey,
         },
-        // user_id tags the profile with the agent id so it's findable in the
-        // Browser Use dashboard. Body is otherwise optional.
-        body: JSON.stringify({ user_id: def.id }),
+        // userId tags the profile with the agent id so it's findable in the
+        // Browser Use dashboard. name surfaces the same identifier in their UI.
+        body: JSON.stringify({ userId: def.id, name: def.id }),
         signal: AbortSignal.timeout(15_000),
       });
       if (!res.ok) {
