@@ -268,10 +268,21 @@ export function buildSystemPrompt(options: {
 
   // Tool usage guidance
   if (options.toolNames.length > 0) {
+    // Surface MCP-namespace prefix explicitly when MCP tools are in the
+    // list. Models trained on Claude Desktop / Cursor conventions reach for
+    // bare names (e.g. `arxiv__search_papers`); our registry exposes them
+    // as `mcp_<server>__<tool>` and a bare-name call returns
+    // `Model tried to call unavailable tool` with the truncated system-tool
+    // suggestions — costs a turn each. The note is cheap and only emitted
+    // when an MCP tool is actually available.
+    const hasMcpTool = options.toolNames.some((n) => n.startsWith("mcp_"));
+    const mcpNote = hasMcpTool
+      ? ` MCP tools are namespaced \`mcp_<server>__<tool>\` — call them with that exact prefix, not the bare name.`
+      : "";
     parts.push(
       `\n## Available Tools\nYou have access to the following tools: ${options.toolNames.join(", ")}.\n` +
         `Use tools proactively to gather information and complete tasks. ` +
-        `When a task requires multiple steps, use tools sequentially until complete.`
+        `When a task requires multiple steps, use tools sequentially until complete.${mcpNote}`
     );
   }
 
