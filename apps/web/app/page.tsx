@@ -5,10 +5,11 @@ import {
   useState,
   useRef,
   useEffect,
+  useLayoutEffect,
   useCallback,
   useMemo,
 } from "react";
-import { ArrowUp, Square, Paperclip } from "lucide-react";
+import { ArrowDown, ArrowUp, Square, Paperclip } from "lucide-react";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
 import type { UIMessage } from "ai";
@@ -130,6 +131,7 @@ function ChatPageInner() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const atBottomRef = useRef(true);
+  const [showScrollDown, setShowScrollDown] = useState(false);
   const justSentRef = useRef(false);
   const activeAgentIdRef = useRef("");
   const activeSessionIdRef = useRef("");
@@ -451,18 +453,61 @@ function ChatPageInner() {
     return () => ctrl.abort();
   }, [activeSessionId, setMessages]);
 
-  useEffect(() => {
+  // Layout-effect (not useEffect) so the scroll lands BEFORE paint —
+  // without this, opening a session paints scrollTop=0 for one frame
+  // before the effect fires, briefly flashing the top of the conversation.
+  useLayoutEffect(() => {
     if (!atBottomRef.current && !justSentRef.current) return;
     const behavior: ScrollBehavior = justSentRef.current ? "smooth" : "auto";
     messagesEndRef.current?.scrollIntoView({ behavior });
     justSentRef.current = false;
   }, [messages]);
 
+  // Markdown + images keep growing the content after the initial paint;
+  // stick to the bottom while the user hasn't scrolled away. Observe the
+  // inner content wrapper (not the scroll container itself) so we catch
+  // content growth independently of viewport resizes.
+  const hasMessages = messages.length > 0;
+  useEffect(() => {
+    if (!hasMessages) return;
+    const el = messagesContainerRef.current;
+    const inner = el?.firstElementChild as HTMLElement | null;
+    if (!el || !inner) return;
+    const ro = new ResizeObserver(() => {
+      if (atBottomRef.current) el.scrollTop = el.scrollHeight;
+    });
+    ro.observe(inner);
+    return () => ro.disconnect();
+  }, [hasMessages]);
+
+  // While a programmatic "go to latest" smooth scroll is in flight, the
+  // intermediate onScroll events would re-flip showScrollDown back on
+  // and flicker the button. Suppress state writes for the duration.
+  const scrollingToBottomRef = useRef(false);
   const handleScroll = () => {
     const el = messagesContainerRef.current;
     if (!el) return;
-    atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+    const fromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    atBottomRef.current = fromBottom < 60;
+    if (scrollingToBottomRef.current) return;
+    // Larger threshold for the button than for stick-to-bottom — a few
+    // pixels of drift from the sticky path shouldn't pop a CTA up.
+    setShowScrollDown(fromBottom > 200);
   };
+
+  const scrollToBottom = useCallback(() => {
+    const el = messagesContainerRef.current;
+    if (!el) return;
+    scrollingToBottomRef.current = true;
+    setShowScrollDown(false);
+    atBottomRef.current = true;
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    // Smooth scroll completes asynchronously; release the suppression
+    // after a window long enough for any conversation length.
+    window.setTimeout(() => {
+      scrollingToBottomRef.current = false;
+    }, 700);
+  }, []);
 
   const activeAgent = agents.find((a) => a.id === activeAgentId);
 
@@ -951,10 +996,11 @@ function ChatPageInner() {
             </div>
           )
         ) : (
+          <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
           <div
             ref={messagesContainerRef}
             onScroll={handleScroll}
-            className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden"
+            className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden"
           >
             <div className="mx-auto max-w-3xl px-3 py-4 md:px-6 md:py-6">
               {messages.map((msg, i) => (
@@ -997,6 +1043,17 @@ function ChatPageInner() {
               ))}
               <div ref={messagesEndRef} />
             </div>
+          </div>
+          {showScrollDown && (
+            <button
+              type="button"
+              onClick={scrollToBottom}
+              aria-label="Scroll to latest"
+              className="absolute bottom-3 right-3 z-10 flex size-9 items-center justify-center border border-paper-rule bg-paper text-ink-soft shadow-md transition-colors hover:border-plot-red hover:text-plot-red md:bottom-4 md:right-4"
+            >
+              <ArrowDown className="size-4" aria-hidden />
+            </button>
+          )}
           </div>
         )}
 

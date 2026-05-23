@@ -86,5 +86,27 @@ export function useHomeStream(): {
     };
   }, [refresh]);
 
+  // PWAs have no browser refresh button, and iOS suspends the standalone
+  // app aggressively — when the OS resumes us the EventSource is often
+  // dead but no event tells us. Force a snapshot refetch whenever the
+  // document becomes visible; the EventSource auto-reconnect handles
+  // ongoing deltas once that's done.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        void refresh({ force: true });
+      }
+    };
+    const onPageShow = (e: PageTransitionEvent) => {
+      if (e.persisted) void refresh({ force: true });
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("pageshow", onPageShow);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("pageshow", onPageShow);
+    };
+  }, [refresh]);
+
   return { payload, loading, error, refresh };
 }
