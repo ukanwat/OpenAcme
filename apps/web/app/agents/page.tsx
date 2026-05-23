@@ -756,28 +756,38 @@ function AgentsPageInner() {
     : formData.model || (presets[0]?.id ?? CUSTOM_MODEL);
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden">
+    <div className="flex h-[100dvh] w-full overflow-hidden pb-[calc(3.5rem+env(safe-area-inset-bottom))] md:pb-0">
       <Sidebar />
 
       <main className="flex flex-1 flex-col overflow-hidden bg-paper">
-        <header className="flex h-12 shrink-0 items-center justify-between border-b border-paper-rule px-6">
-          <div className="flex items-center gap-3">
+        <header className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-paper-rule px-3 md:px-6">
+          <div className="flex items-center gap-2 md:gap-3">
             <h1 className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-faint">
               Agents
             </h1>
-            <span className="h-3 w-px bg-paper-rule" aria-hidden />
-            <span className="font-mono text-[12px] text-ink-soft">
+            <span className="hidden h-3 w-px bg-paper-rule sm:inline" aria-hidden />
+            <span className="hidden font-mono text-[12px] text-ink-soft sm:inline">
               <TabularTick value={agents.length} /> configured
             </span>
           </div>
           <Button size="sm" onClick={startCreate}>
             <Plus className="size-4" />
-            New agent
+            <span className="hidden sm:inline">New agent</span>
           </Button>
         </header>
 
-        <div className="flex flex-1 overflow-hidden">
-          <aside className="w-72 shrink-0 overflow-y-auto border-r border-paper-rule">
+        <div className="flex flex-1 flex-col overflow-hidden md:flex-row">
+          {/* Mobile: when an agent is selected or we're creating, hide the
+              roster so the detail/form gets the whole viewport. The detail
+              renders a back-to-roster link. Desktop keeps the side rail. */}
+          <aside
+            className={cn(
+              "shrink-0 overflow-y-auto border-paper-rule md:w-72 md:border-r",
+              selectedAgent || isCreating
+                ? "hidden md:block"
+                : "block border-b md:border-b-0"
+            )}
+          >
             <div className="border-b border-paper-rule px-4 py-2 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
               Roster
             </div>
@@ -826,7 +836,35 @@ function AgentsPageInner() {
             })}
           </aside>
 
-          <div className="flex-1 overflow-y-auto p-6">
+          <div
+            className={cn(
+              "flex-1 overflow-y-auto p-4 md:p-6",
+              !selectedAgent && !isCreating ? "hidden md:block" : ""
+            )}
+          >
+            {(selectedAgent || isCreating) && (
+              <button
+                type="button"
+                onClick={() => router.push("/agents")}
+                className="mb-3 inline-flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-[0.08em] text-ink-soft hover:text-plot-red md:hidden"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden
+                >
+                  <path d="M15 18l-6-6 6-6" />
+                </svg>
+                Back to roster
+              </button>
+            )}
             {showView && selectedAgent ? (
               <AgentDetail
                 agent={selectedAgent}
@@ -1810,8 +1848,8 @@ function NoAgentPicked() {
     <div className="mx-auto max-w-2xl">
       <SectionEyebrow>Select an agent</SectionEyebrow>
       <p className="mt-3 text-[13px] leading-relaxed text-ink-soft">
-        Pick a row from the roster on the left to view its model, persona,
-        tools, and resources.
+        Pick a row from the roster to view its model, persona, tools, and
+        resources.
       </p>
     </div>
   );

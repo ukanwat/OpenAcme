@@ -263,21 +263,21 @@ function TasksPageInner() {
   );
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden">
+    <div className="flex h-[100dvh] w-full overflow-hidden pb-[calc(3.5rem+env(safe-area-inset-bottom))] md:pb-0">
       <Sidebar />
 
       <main className="paper-surface flex flex-1 flex-col overflow-hidden bg-paper">
-        <header className="flex h-12 shrink-0 items-center justify-between border-b border-paper-rule px-6">
-          <div className="flex items-center gap-3">
+        <header className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-paper-rule px-3 md:px-6">
+          <div className="flex items-center gap-2 md:gap-3">
             <h1 className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-faint">
               Tasks
             </h1>
-            <span className="h-3 w-px bg-paper-rule" aria-hidden />
-            <span className="font-mono text-[12px] text-ink-soft">
+            <span className="hidden h-3 w-px bg-paper-rule sm:inline" aria-hidden />
+            <span className="hidden font-mono text-[12px] text-ink-soft sm:inline">
               <TabularTick value={tasks.length} /> filed
             </span>
-            <span className="h-3 w-px bg-paper-rule" aria-hidden />
-            <span className="font-mono text-[12px] text-ink-soft">
+            <span className="hidden h-3 w-px bg-paper-rule md:inline" aria-hidden />
+            <span className="hidden font-mono text-[12px] text-ink-soft md:inline">
               <TabularTick value={inProgressCount} /> in progress
             </span>
           </div>
@@ -334,7 +334,13 @@ function TasksPageInner() {
             >
               <DialogContent
                 showCloseButton={false}
-                className="paper-surface h-[94vh] max-h-[94vh] w-[min(72rem,96vw)] max-w-none overflow-hidden sm:max-w-none"
+                // Mobile: full-takeover above the bottom tab bar. The
+                // Dialog primitive centers via top-50/left-50 + translate;
+                // override to top-0/left-0/no-translate so the dialog
+                // pins to the top edge and we can subtract the tab-bar
+                // height from the dialog height cleanly. Desktop: revert
+                // to the centered floating dialog at 94vh × 72rem max.
+                className="paper-surface overflow-hidden left-0 top-0 translate-x-0 translate-y-0 h-[calc(100dvh-3.5rem-env(safe-area-inset-bottom))] w-screen max-w-none md:left-[50%] md:top-[50%] md:translate-x-[-50%] md:translate-y-[-50%] md:h-[94vh] md:max-h-[94vh] md:w-[min(72rem,96vw)] sm:max-w-none"
               >
                 <VisuallyHidden.Root>
                   <DialogTitle>{selected?.title ?? "Task"}</DialogTitle>
@@ -361,8 +367,13 @@ function TasksPageInner() {
             </Dialog>
           </>
         ) : (
-          <div className="flex flex-1 overflow-hidden">
-            <aside className="flex w-96 shrink-0 flex-col overflow-y-auto border-r border-paper-rule">
+          <div className="flex flex-1 flex-col overflow-hidden md:flex-row">
+            <aside
+              className={cn(
+                "flex shrink-0 flex-col overflow-y-auto border-paper-rule md:w-96 md:border-r",
+                selected ? "hidden md:flex" : "flex border-b md:border-b-0"
+              )}
+            >
               {STATUS_ORDER.map((status) => {
                 const items = grouped.get(status) ?? [];
                 if (items.length === 0) return null;
@@ -436,7 +447,35 @@ function TasksPageInner() {
               })}
             </aside>
 
-            <section className="flex flex-1 flex-col overflow-hidden">
+            <section
+              className={cn(
+                "flex flex-1 flex-col overflow-hidden",
+                !selected ? "hidden md:flex" : "flex"
+              )}
+            >
+              {selected && draft && (
+                <button
+                  type="button"
+                  onClick={() => router.push("/tasks?view=list")}
+                  className="mx-3 mt-3 inline-flex w-fit items-center gap-1.5 font-mono text-[11px] uppercase tracking-[0.08em] text-ink-soft hover:text-plot-red md:hidden"
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden
+                  >
+                    <path d="M15 18l-6-6 6-6" />
+                  </svg>
+                  Back to tasks
+                </button>
+              )}
               {!selected || !draft ? (
                 <div className="flex flex-1 items-start justify-center pt-24 px-6">
                   <div className="max-w-sm">

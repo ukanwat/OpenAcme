@@ -95,138 +95,172 @@ export function Sidebar({ children }: { children?: React.ReactNode }) {
   return (
     <aside
       className={cn(
-        "relative flex shrink-0 flex-col border-r border-paper-rule bg-sidebar text-sidebar-foreground",
-        collapsed ? "w-14" : "w-60"
+        // Mobile uses a fixed bottom tab bar (see MobileTabBar); this rail
+        // hides under md. Desktop keeps the persistent left rail with the
+        // collapse toggle.
+        "hidden shrink-0 flex-col border-r border-paper-rule bg-sidebar text-sidebar-foreground md:flex",
+        collapsed ? "md:w-14" : "md:w-60"
       )}
     >
-      <div
-        className={cn(
-          "flex items-center border-b border-paper-rule py-5",
-          collapsed ? "justify-center px-3" : "justify-between px-4"
-        )}
-      >
-        {collapsed ? (
-          <button
-            onClick={toggle}
-            title="Expand sidebar"
-            aria-label="Expand sidebar"
-            className="group/logo relative flex size-7 items-center justify-center text-ink transition-colors hover:text-plot-red focus:outline-none focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-1 focus-visible:outline-plot-red"
-          >
-            <Logomark className="size-5 group-hover/logo:hidden" />
-            <PanelLeftOpen className="hidden size-4 group-hover/logo:block" />
-          </button>
-        ) : (
-          <>
-            <Logotype className="h-6 w-auto text-ink" />
-            <button
-              onClick={toggle}
-              title="Collapse sidebar"
-              aria-label="Collapse sidebar"
-              className="-mr-1 flex size-6 items-center justify-center text-ink-soft hover:bg-paper hover:text-ink focus:outline-none focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-1 focus-visible:outline-plot-red"
-            >
-              <PanelLeftClose className="size-4" />
-            </button>
-          </>
-        )}
-      </div>
-
-      <nav className="flex flex-col">
-        {!collapsed && (
-          <div className="px-4 pt-4 pb-2 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
-            Console
-          </div>
-        )}
-        {navItems.map((item) => {
-          const isActive =
-            item.href === "/"
-              ? pathname === "/"
-              : pathname.startsWith(item.href);
-          const Icon = item.icon;
-          // Home → "/" is a same-route change ONLY when we're already
-          // on the root route (e.g. clearing `?session=X` from the chat
-          // page). In static-export mode Next's <Link> silently no-ops
-          // that case, so we intercept and use `navigateClient`. But
-          // when we're on a different route entirely (`/tasks`,
-          // `/agents`, etc.) the Home link IS a real cross-route nav
-          // and Next's <Link> handles it correctly — don't intercept,
-          // or the page won't re-mount.
-          const interceptHome = item.href === "/" && pathname === "/";
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              title={collapsed ? item.label : undefined}
-              onClick={
-                interceptHome
-                  ? (e) => {
-                      e.preventDefault();
-                      navigateClient("/");
-                    }
-                  : undefined
-              }
-              className={cn(
-                "group relative flex items-center gap-3 text-sm transition-colors",
-                collapsed ? "justify-center py-2.5" : "px-4 py-2",
-                isActive
-                  ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                  : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-              )}
-            >
-              <ActiveMarker active={isActive} />
-              <Icon className="size-4 shrink-0" />
-              {!collapsed && <span className="font-medium">{item.label}</span>}
-            </Link>
-          );
-        })}
-      </nav>
-
-      {!collapsed && (
-        <div className="flex-1 overflow-y-auto">{children}</div>
-      )}
-      {collapsed && <div className="flex-1" />}
-
-      <div
-        className={cn(
-          "flex items-center border-t border-paper-rule",
-          collapsed
-            ? "flex-col justify-center gap-1 px-2 py-3"
-            : "justify-between gap-2 px-4 py-3"
-        )}
-      >
-        {!collapsed && (
-          <div className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
-            {version ? `v${version}` : "v—"}
-          </div>
-        )}
         <div
           className={cn(
-            "flex items-center",
-            collapsed ? "flex-col gap-1" : "gap-1"
+            "flex items-center border-b border-paper-rule py-5",
+            // Drawer mode (mobile or expanded desktop) keeps the expanded
+            // layout; only the desktop-collapsed rail centers its single button.
+            collapsed
+              ? "justify-between px-4 md:justify-center md:px-3"
+              : "justify-between px-4"
           )}
         >
-          <button
-            type="button"
-            onClick={() =>
-              window.dispatchEvent(new CustomEvent("openacme:open-palette"))
-            }
-            title="Open command palette (⌘K)"
-            aria-label="Open command palette"
-            aria-keyshortcuts="Meta+K Control+K"
+          {collapsed ? (
+            <button
+              onClick={toggle}
+              title="Expand sidebar"
+              aria-label="Expand sidebar"
+              className="group/logo relative flex size-7 items-center justify-center text-ink transition-colors hover:text-plot-red focus:outline-none focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-1 focus-visible:outline-plot-red"
+            >
+              <Logomark className="size-5 group-hover/logo:hidden" />
+              <PanelLeftOpen className="hidden size-4 group-hover/logo:block" />
+            </button>
+          ) : (
+            <>
+              <Logotype className="h-6 w-auto text-ink" />
+              <button
+                onClick={toggle}
+                title="Collapse sidebar"
+                aria-label="Collapse sidebar"
+                className="-mr-1 flex size-6 items-center justify-center text-ink-soft hover:bg-paper hover:text-ink focus:outline-none focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-1 focus-visible:outline-plot-red"
+              >
+                <PanelLeftClose className="size-4" />
+              </button>
+            </>
+          )}
+        </div>
+
+        <nav className="flex flex-col">
+          {/* Drawer mode renders nav labels even when desktop sidebar is
+              collapsed — the drawer is full-width. The "Console" header
+              hides only when the desktop rail is in icon-only mode. */}
+          <div
             className={cn(
-              "flex items-center gap-1.5 text-ink-soft transition-colors hover:text-ink focus:outline-none focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-1 focus-visible:outline-plot-red",
-              collapsed ? "size-6 justify-center" : "px-1"
+              "px-4 pt-4 pb-2 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint",
+              collapsed ? "md:hidden" : ""
             )}
           >
-            <Command className="size-3.5 shrink-0" aria-hidden />
-            {!collapsed && (
-              <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
+            Console
+          </div>
+          {navItems.map((item) => {
+            const isActive =
+              item.href === "/"
+                ? pathname === "/"
+                : pathname.startsWith(item.href);
+            const Icon = item.icon;
+            // Home → "/" is a same-route change ONLY when we're already
+            // on the root route (e.g. clearing `?session=X` from the chat
+            // page). In static-export mode Next's <Link> silently no-ops
+            // that case, so we intercept and use `navigateClient`. But
+            // when we're on a different route entirely (`/tasks`,
+            // `/agents`, etc.) the Home link IS a real cross-route nav
+            // and Next's <Link> handles it correctly — don't intercept,
+            // or the page won't re-mount.
+            const interceptHome = item.href === "/" && pathname === "/";
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                title={collapsed ? item.label : undefined}
+                onClick={
+                  interceptHome
+                    ? (e) => {
+                        e.preventDefault();
+                        navigateClient("/");
+                      }
+                    : undefined
+                }
+                className={cn(
+                  "group relative flex items-center gap-3 text-sm transition-colors",
+                  // Mobile drawer + expanded desktop = labeled rows. Desktop
+                  // collapsed rail = centered icons only.
+                  "px-4 py-3 md:py-2",
+                  collapsed && "md:justify-center md:px-0 md:py-2.5",
+                  isActive
+                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                    : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                )}
+              >
+                <ActiveMarker active={isActive} />
+                <Icon className="size-4 shrink-0" />
+                <span
+                  className={cn(
+                    "font-medium",
+                    collapsed ? "md:hidden" : ""
+                  )}
+                >
+                  {item.label}
+                </span>
+              </Link>
+            );
+          })}
+        </nav>
+
+        <div
+          className={cn(
+            "flex-1 overflow-y-auto",
+            collapsed ? "hidden md:block" : ""
+          )}
+        >
+          {children}
+        </div>
+
+        <div
+          className={cn(
+            "flex items-center border-t border-paper-rule",
+            // Desktop-collapsed = stacked column; everything else = row.
+            collapsed
+              ? "justify-between gap-2 px-4 py-3 md:flex-col md:justify-center md:gap-1 md:px-2"
+              : "justify-between gap-2 px-4 py-3"
+          )}
+        >
+          <div
+            className={cn(
+              "font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint",
+              collapsed ? "md:hidden" : ""
+            )}
+          >
+            {version ? `v${version}` : "v—"}
+          </div>
+          <div
+            className={cn(
+              "flex items-center gap-1",
+              collapsed ? "md:flex-col" : ""
+            )}
+          >
+            <button
+              type="button"
+              onClick={() =>
+                window.dispatchEvent(new CustomEvent("openacme:open-palette"))
+              }
+              title="Open command palette (⌘K)"
+              aria-label="Open command palette"
+              aria-keyshortcuts="Meta+K Control+K"
+              className={cn(
+                "flex items-center gap-1.5 text-ink-soft transition-colors hover:text-ink focus:outline-none focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-1 focus-visible:outline-plot-red",
+                collapsed ? "px-1 md:size-6 md:justify-center md:px-0" : "px-1"
+              )}
+            >
+              <Command className="size-3.5 shrink-0" aria-hidden />
+              <span
+                className={cn(
+                  "font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint",
+                  collapsed ? "md:hidden" : ""
+                )}
+              >
                 K
               </span>
-            )}
-          </button>
-          <ThemeToggle compact={collapsed} />
+            </button>
+            <ThemeToggle compact={collapsed} />
+          </div>
         </div>
-      </div>
-    </aside>
+      </aside>
   );
 }

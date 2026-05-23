@@ -16,9 +16,11 @@ import {
   FileText,
   Search,
   Globe2,
+  Bell,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Sidebar } from "../components/Sidebar";
+import { NotificationsTab } from "../components/NotificationsTab";
 import { API_BASE } from "../lib/api";
 import type { ModelDefaultsView, ModelDefaultsUpdate } from "../lib/types";
 import {
@@ -828,55 +830,61 @@ export default function SettingsPage() {
   const providersNeedingKeys = providers.filter((p) => p.requiresApiKey && p.envVar);
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden">
+    <div className="flex h-[100dvh] w-full overflow-hidden pb-[calc(3.5rem+env(safe-area-inset-bottom))] md:pb-0">
       <Sidebar />
 
       <main className="flex flex-1 flex-col overflow-hidden bg-paper">
-        <header className="flex h-12 shrink-0 items-center border-b border-paper-rule px-6">
+        <header className="flex h-12 shrink-0 items-center gap-2 border-b border-paper-rule px-3 md:px-6">
           <div className="flex items-center gap-3">
             <h1 className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-faint">
               Settings
             </h1>
-            <span className="h-3 w-px bg-paper-rule" aria-hidden />
-            <span className="font-mono text-[12px] text-ink-soft">
+            <span className="hidden h-3 w-px bg-paper-rule sm:inline" aria-hidden />
+            <span className="hidden font-mono text-[12px] text-ink-soft sm:inline">
               Providers · Server · MCP
             </span>
           </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto p-6">
+        <div className="flex-1 overflow-y-auto p-3 md:p-6">
           <div className="mx-auto max-w-3xl">
             <Tabs defaultValue="api-keys" className="space-y-6">
-              <TabsList>
-                <TabsTrigger value="api-keys">
-                  <Key className="size-3.5" />
-                  API Keys
-                </TabsTrigger>
-                <TabsTrigger value="server">
-                  <Server className="size-3.5" />
-                  Server
-                </TabsTrigger>
-                <TabsTrigger value="providers">
-                  <Cpu className="size-3.5" />
-                  Providers
-                </TabsTrigger>
-                <TabsTrigger value="mcp">
-                  <Boxes className="size-3.5" />
-                  MCP
-                </TabsTrigger>
-                <TabsTrigger value="web-search">
-                  <Search className="size-3.5" />
-                  Web Search
-                </TabsTrigger>
-                <TabsTrigger value="browser">
-                  <Globe2 className="size-3.5" />
-                  Browser
-                </TabsTrigger>
-                <TabsTrigger value="context">
-                  <FileText className="size-3.5" />
-                  Context
-                </TabsTrigger>
-              </TabsList>
+              <div className="-mx-3 overflow-x-auto px-3 md:mx-0 md:overflow-visible md:px-0">
+                <TabsList>
+                  <TabsTrigger value="api-keys">
+                    <Key className="size-3.5" />
+                    API Keys
+                  </TabsTrigger>
+                  <TabsTrigger value="server">
+                    <Server className="size-3.5" />
+                    Server
+                  </TabsTrigger>
+                  <TabsTrigger value="providers">
+                    <Cpu className="size-3.5" />
+                    Providers
+                  </TabsTrigger>
+                  <TabsTrigger value="mcp">
+                    <Boxes className="size-3.5" />
+                    MCP
+                  </TabsTrigger>
+                  <TabsTrigger value="web-search">
+                    <Search className="size-3.5" />
+                    Web Search
+                  </TabsTrigger>
+                  <TabsTrigger value="browser">
+                    <Globe2 className="size-3.5" />
+                    Browser
+                  </TabsTrigger>
+                  <TabsTrigger value="notifications">
+                    <Bell className="size-3.5" />
+                    Notifications
+                  </TabsTrigger>
+                  <TabsTrigger value="context">
+                    <FileText className="size-3.5" />
+                    Context
+                  </TabsTrigger>
+                </TabsList>
+              </div>
 
               <TabsContent value="api-keys">
                 <Card>
@@ -2019,6 +2027,10 @@ export default function SettingsPage() {
                     </div>
                   </CardContent>
                 </Card>
+              </TabsContent>
+
+              <TabsContent value="notifications">
+                <NotificationsTab />
               </TabsContent>
             </Tabs>
           </div>

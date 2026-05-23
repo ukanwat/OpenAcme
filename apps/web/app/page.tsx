@@ -826,13 +826,41 @@ function ChatPageInner() {
   // activeAgentId.
   const chatOpen = !!activeSessionId || !!agentFromUrl;
   return (
-    <div className="flex h-screen w-screen overflow-hidden">
+    <div className="flex h-[100dvh] w-full overflow-hidden pb-[calc(3.5rem+env(safe-area-inset-bottom))] md:pb-0">
       <Sidebar />
-      <HomeView compact={chatOpen} />
+      {/* On mobile, hide the HomeView rail when a chat is open — there's
+          no room for three columns under 768px. Tapping the hamburger
+          opens the sidebar drawer with the nav; back-out to Home is
+          via the back arrow in the chat header. */}
+      <div className={chatOpen ? "hidden md:contents" : "contents"}>
+        <HomeView compact={chatOpen} />
+      </div>
       {chatOpen && (
-      <main className="flex flex-1 flex-col overflow-hidden bg-paper">
-        <header className="flex h-12 shrink-0 items-center justify-between border-b border-paper-rule px-6">
-          <div className="flex items-center gap-4">
+      <main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-paper">
+        <header className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-paper-rule px-3 md:px-6">
+          <div className="flex min-w-0 items-center gap-2 md:gap-4">
+            <button
+              type="button"
+              onClick={() => navigateClient("/")}
+              title="Back to home"
+              aria-label="Back to home"
+              className="flex size-11 items-center justify-center text-ink-soft hover:text-ink focus:outline-none focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-1 focus-visible:outline-plot-red md:hidden"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden
+              >
+                <path d="M15 18l-6-6 6-6" />
+              </svg>
+            </button>
             <div className="flex items-center gap-2">
               <span
                 className={cn(
@@ -841,17 +869,17 @@ function ChatPageInner() {
                 )}
                 aria-hidden
               />
-              <span className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-soft">
+              <span className="hidden font-mono text-[11px] uppercase tracking-[0.08em] text-ink-soft sm:inline">
                 {statusLabel(submitting, isLiveRunning, !!activeAgent)}
               </span>
             </div>
-            <span className="h-3 w-px bg-paper-rule" aria-hidden />
+            <span className="hidden h-3 w-px bg-paper-rule sm:inline" aria-hidden />
             <span className="min-w-0 truncate text-sm font-medium text-ink">
               {activeSessionTitle ||
                 (activeSessionId ? "Untitled session" : "New chat")}
             </span>
             {activeAgent && (
-              <span className="font-mono text-[11px] text-ink-faint">
+              <span className="hidden font-mono text-[11px] text-ink-faint md:inline">
                 · {activeAgent.name}
               </span>
             )}
@@ -926,9 +954,9 @@ function ChatPageInner() {
           <div
             ref={messagesContainerRef}
             onScroll={handleScroll}
-            className="flex-1 overflow-y-auto"
+            className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden"
           >
-            <div className="mx-auto max-w-3xl px-6 py-6">
+            <div className="mx-auto max-w-3xl px-3 py-4 md:px-6 md:py-6">
               {messages.map((msg, i) => (
                 <MessageBubble
                   key={msg.id}
@@ -972,8 +1000,8 @@ function ChatPageInner() {
           </div>
         )}
 
-        <div className="shrink-0 border-t border-paper-rule bg-paper">
-          <div className="mx-auto max-w-3xl px-6 py-4">
+        <div className="shrink-0 border-t border-paper-rule bg-paper pb-[env(safe-area-inset-bottom)]">
+          <div className="mx-auto max-w-3xl px-3 py-3 md:px-6 md:py-4">
             {queuedMessages.length > 0 && (
               <div className="mb-2 border border-paper-rule bg-paper-sunk px-3 py-2">
                 <div className="mb-1.5 flex items-center justify-between font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
@@ -1002,7 +1030,7 @@ function ChatPageInner() {
                         <span className="line-clamp-2 break-words">{summary}</span>
                         <button
                           type="button"
-                          className="ml-auto shrink-0 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint hover:text-plot-red"
+                          className="ml-auto flex min-h-11 min-w-11 shrink-0 items-center justify-center font-mono text-[12px] uppercase tracking-[0.08em] text-ink-faint hover:text-plot-red md:min-h-0 md:min-w-0 md:text-[10px]"
                           aria-label="Cancel queued message"
                           onClick={() => void cancelQueued(q.id)}
                           title="Cancel — drops the queued message before the next turn picks it up"
@@ -1036,7 +1064,7 @@ function ChatPageInner() {
               onDrop={onDrop}
             >
               {pendingAttachments.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 border-b border-paper-rule bg-paper-sunk px-3 py-2">
+                <div className="flex flex-nowrap gap-1.5 overflow-x-auto border-b border-paper-rule bg-paper-sunk px-3 py-2 md:flex-wrap md:overflow-visible">
                   {pendingAttachments.map((p) => (
                     <AttachmentChip
                       key={p.localId}
@@ -1097,7 +1125,11 @@ function ChatPageInner() {
                   }
                   disabled={!activeAgentId}
                   rows={1}
-                  className="min-h-[44px] max-h-48 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 focus-visible:outline-none font-sans text-sm"
+                  autoCapitalize="sentences"
+                  autoCorrect="on"
+                  spellCheck
+                  enterKeyHint="send"
+                  className="min-h-[44px] max-h-48 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 focus-visible:outline-none font-sans text-base md:text-sm"
                 />
                 {/* When the agent is mid-turn we show BOTH Stop and Send.
                     Send queues the message (server writes it to chat + to
@@ -1286,7 +1318,7 @@ function MessageBubble({
                   <img
                     src={`${API_BASE}${part.url}`}
                     alt={part.filename ?? "attachment"}
-                    className="max-h-64 max-w-sm object-contain"
+                    className="max-h-64 max-w-full object-contain md:max-w-sm"
                   />
                 </a>
               );

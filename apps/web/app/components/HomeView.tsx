@@ -35,6 +35,7 @@ import { API_BASE } from "@/app/lib/api";
 import type { SessionSummary } from "@/app/lib/types";
 import { cn } from "@/app/lib/utils";
 import { navigateClient } from "@/app/lib/navigate";
+import { InstallHint } from "@/app/components/InstallHint";
 import { Button } from "@/app/components/ui/button";
 import {
   Popover,
@@ -125,8 +126,11 @@ function SessionRow({ s, onClick, onDelete, compact, active }: RowProps) {
       }}
       aria-label="Delete session"
       title="Delete session"
+      // Hover-to-reveal on pointer devices, always-visible on touch:
+      // group-hover doesn't fire on tap, so opacity-100 under
+      // @media(hover:none) keeps the delete reachable on phones.
       className={cn(
-        "shrink-0 p-1 text-ink-faint opacity-0 transition-opacity hover:bg-paper-rule/60 hover:text-plot-red focus-visible:opacity-100 focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-1 focus-visible:outline-plot-red group-hover:opacity-100",
+        "shrink-0 p-1 text-ink-faint opacity-0 transition-opacity hover:bg-paper-rule/60 hover:text-plot-red focus-visible:opacity-100 focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-1 focus-visible:outline-plot-red group-hover:opacity-100 [@media(hover:none)]:opacity-60",
         size === "compact" ? "size-6" : "size-7"
       )}
     >
@@ -193,11 +197,14 @@ function SessionRow({ s, onClick, onDelete, compact, active }: RowProps) {
       onClick={onClick}
       onKeyDown={activateOnKey(onClick)}
       className={cn(
-        "group flex w-full items-start gap-4 border-b border-paper-rule px-6 py-3 text-left transition-colors cursor-pointer",
+        "group flex w-full items-start gap-3 border-b border-paper-rule px-4 py-3 text-left transition-colors cursor-pointer last:border-b-0 md:gap-4 md:px-6 md:last:border-b",
         "hover:bg-sidebar-accent/40"
       )}
     >
-      <div className="flex w-32 shrink-0 items-center gap-2 pt-0.5">
+      {/* Desktop: status block with dot + label. Mobile: section header
+          already conveys the bucket (waiting/running/idle), so the
+          per-row status indicator is redundant noise — drop it entirely. */}
+      <div className="hidden shrink-0 items-center gap-2 pt-0.5 md:flex md:w-32">
         <span className={cn("status-dot", statusDot)} aria-hidden />
         <span
           className={cn(
@@ -209,7 +216,10 @@ function SessionRow({ s, onClick, onDelete, compact, active }: RowProps) {
         </span>
       </div>
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2 text-sm">
+        {/* Desktop: agent · title on one line. Mobile: title prominent on
+            line 1, agent + relative time on line 2 (closer to phone
+            conventions and gives the title room to breathe). */}
+        <div className="hidden items-center gap-2 text-sm md:flex">
           <Bot className="size-3.5 shrink-0 text-ink-soft" aria-hidden />
           <Link
             href={`/agents?id=${encodeURIComponent(s.agentId)}`}
@@ -223,6 +233,22 @@ function SessionRow({ s, onClick, onDelete, compact, active }: RowProps) {
             {s.title || "Untitled session"}
           </span>
         </div>
+        <div className="truncate text-sm font-medium text-ink md:hidden">
+          {s.title || "Untitled session"}
+        </div>
+        <div className="mt-1 flex items-center gap-2 truncate text-[12px] text-ink-soft md:hidden">
+          <Link
+            href={`/agents?id=${encodeURIComponent(s.agentId)}`}
+            onClick={(e) => e.stopPropagation()}
+            className="truncate hover:underline"
+          >
+            {s.agentName}
+          </Link>
+          <span className="text-ink-faint">·</span>
+          <span className="shrink-0 font-mono tabular-nums text-ink-faint">
+            {formatRelative(s.lastActivity)}
+          </span>
+        </div>
         {s.currentTaskTitle && (
           <div className="mt-1 truncate text-[12px] text-ink-soft">
             on: {s.currentTaskTitle}
@@ -234,8 +260,27 @@ function SessionRow({ s, onClick, onDelete, compact, active }: RowProps) {
             {s.pingMessage}
           </div>
         )}
+        {/* Mobile-only meta line — quiet timer + task count badges. The
+            relative timestamp already lives next to the agent line above. */}
+        {(wakeLabel || s.pendingTaskCount > 0) && (
+          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[10px] uppercase tracking-[0.08em] md:hidden">
+            {wakeLabel && (
+              <span className="flex items-center gap-1 text-signal-blue">
+                <Clock className="size-3" aria-hidden />
+                {wakeLabel}
+              </span>
+            )}
+            {s.pendingTaskCount > 0 && (
+              <span className="text-signal-blue">
+                {s.pendingTaskCount} task{s.pendingTaskCount === 1 ? "" : "s"}
+              </span>
+            )}
+          </div>
+        )}
       </div>
-      <div className="flex w-40 shrink-0 flex-col items-end gap-1 pt-1 text-right">
+      {/* Right meta column — desktop only. Mobile pushes the same data
+          into the title block's secondary lines. */}
+      <div className="hidden w-40 shrink-0 flex-col items-end gap-1 pt-1 text-right md:flex">
         <span className="font-mono text-[11px] tabular-nums text-ink-faint">
           {formatRelative(s.lastActivity)}
         </span>
@@ -293,7 +338,7 @@ function Section({
       <div
         className={cn(
           "flex items-center justify-between border-b border-paper-rule pb-2 pt-3",
-          compact ? "px-3" : "px-6"
+          compact ? "px-3" : "px-4 md:px-6"
         )}
       >
         <h2
@@ -308,7 +353,9 @@ function Section({
           <span className="font-mono text-ink-faint">{sessions.length}</span>
         </h2>
         {hint && !compact && (
-          <span className="font-mono text-[10px] text-ink-faint">{hint}</span>
+          <span className="hidden font-mono text-[10px] text-ink-faint md:inline">
+            {hint}
+          </span>
         )}
       </div>
       {sessions.map((s) => (
@@ -786,7 +833,7 @@ function SearchBar({
     <div
       className={cn(
         "flex items-center gap-2",
-        compact ? "px-3 py-2" : "px-6 py-3"
+        compact ? "px-3 py-2" : "px-4 py-3 md:px-6"
       )}
     >
       <div
@@ -858,7 +905,7 @@ function SearchResultRow({
       onClick={() => onPick(entry.sessionId)}
       className={cn(
         "group relative flex w-full items-start gap-3 border-b border-paper-rule text-left transition-colors",
-        compact ? "px-3 py-2" : "px-6 py-2.5",
+        compact ? "px-3 py-2" : "px-4 py-2.5 md:px-6",
         active ? "bg-paper-sunk" : "hover:bg-paper-sunk/60"
       )}
     >
@@ -1190,7 +1237,7 @@ export function HomeView({ compact = false }: { compact?: boolean } = {}) {
     return (
       <div
         className={cn(
-          "px-6 py-8 text-sm text-ink-soft",
+          "px-4 py-8 text-sm text-ink-soft md:px-6",
           compact
             ? "w-[340px] shrink-0 border-r border-paper-rule"
             : "flex-1"
@@ -1216,13 +1263,21 @@ export function HomeView({ compact = false }: { compact?: boolean } = {}) {
           : "flex-1"
       )}
     >
+      {/* iOS install hint — mobile-only, self-gates on platform +
+          standalone + dismissed flag. Lives at the top of the home page
+          since that's the landing route on mobile. */}
+      {!compact && (
+        <div className="md:hidden">
+          <InstallHint />
+        </div>
+      )}
       <div
         className={cn(
           "flex items-center justify-between gap-3",
-          compact ? "px-3 py-3" : "px-6 py-4"
+          compact ? "px-3 py-3" : "px-3 py-3 md:px-6 md:py-4"
         )}
       >
-        <div className="flex min-w-0 items-center gap-3">
+        <div className="flex min-w-0 items-center gap-2 md:gap-3">
           <h1
             className={cn(
               "text-ink",
@@ -1324,7 +1379,7 @@ export function HomeView({ compact = false }: { compact?: boolean } = {}) {
           <div
             className={cn(
               "text-center font-mono text-[11px] uppercase tracking-[0.08em] text-ink-faint",
-              compact ? "px-3 py-8" : "px-6 py-12"
+              compact ? "px-3 py-8" : "px-4 py-12 md:px-6"
             )}
           >
             No matches.
@@ -1364,7 +1419,7 @@ export function HomeView({ compact = false }: { compact?: boolean } = {}) {
             <div
               className={cn(
                 "text-center font-mono text-[11px] uppercase tracking-[0.08em] text-ink-faint",
-                compact ? "px-3 py-8" : "px-6 py-12"
+                compact ? "px-3 py-8" : "px-4 py-12 md:px-6"
               )}
             >
               No active sessions for {name}.

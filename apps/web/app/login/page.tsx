@@ -8,6 +8,11 @@ import { Label } from "@/app/components/ui/label";
 import { LoadingHairline } from "@/app/components/ui/loading-hairline";
 import { ScribedRule } from "@/app/components/ui/scribed-rule";
 import { Logotype } from "@/app/components/Logotype";
+import {
+  setStoredAuthToken,
+  readStoredAuthToken,
+  clearStoredAuthToken,
+} from "@/app/components/auth-fetch";
 import { API_BASE } from "../lib/api";
 
 const HEADLINE = "OPENACME · DAEMON READY";
@@ -16,6 +21,10 @@ export default function LoginPage() {
   const [secret, setSecret] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [next, setNext] = useState("/");
+  // While we try to silently re-authenticate from localStorage, hide the
+  // form so the user doesn't see a flash of "type your secret" on a
+  // legitimately-already-logged-in PWA reopen.
+  const [autoTrying, setAutoTrying] = useState(true);
 
   useEffect(() => {
     // Pull the `next` param if present so we redirect back where the
@@ -25,26 +34,62 @@ export default function LoginPage() {
     if (n) setNext(n);
 
     // If auth isn't required (loopback), skip the form entirely.
-    fetch(`${API_BASE}/api/auth/status`, { credentials: "include" })
+    const statusPromise = fetch(`${API_BASE}/api/auth/status`, {
+      credentials: "include",
+    })
       .then((r) => r.json())
       .then((data: { authRequired?: boolean }) => {
         if (data && data.authRequired === false) {
           window.location.href = n || "/";
+          return true; // navigating away
         }
+        return false;
       })
-      .catch(() => undefined);
+      .catch(() => false);
+
+    // Auto-relogin path: iOS standalone PWAs evict cookies between
+    // launches. If localStorage carries a secret from a previous
+    // session, re-set the cookie automatically so the user lands back
+    // in the app without retyping. On 401 we clear the stale token
+    // and fall back to the form.
+    statusPromise.then(async (skipped) => {
+      if (skipped) return;
+      const stored = readStoredAuthToken();
+      if (!stored) {
+        setAutoTrying(false);
+        return;
+      }
+      try {
+        const res = await fetch(`${API_BASE}/api/auth/login`, {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ secret: stored }),
+        });
+        if (res.ok) {
+          window.location.href = n || "/";
+          return;
+        }
+        // 401 / stale — drop it so the form can take over.
+        clearStoredAuthToken();
+      } catch {
+        // network blip — show the form rather than wedging on the splash.
+      }
+      setAutoTrying(false);
+    });
   }, []);
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!secret.trim()) return;
     setSubmitting(true);
+    const trimmed = secret.trim();
     try {
       const res = await fetch(`${API_BASE}/api/auth/login`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ secret: secret.trim() }),
+        body: JSON.stringify({ secret: trimmed }),
       });
       if (!res.ok) {
         let message = "Login failed";
@@ -58,11 +103,31 @@ export default function LoginPage() {
         setSubmitting(false);
         return;
       }
+      // Persist the secret in localStorage as a bearer-token fallback.
+      // iOS standalone PWAs run in a separate cookie jar from Safari and
+      // sometimes evict cookies between launches; localStorage is the
+      // layer that survives. The fetch wrapper injects `Authorization:
+      // Bearer <token>` on every API call.
+      setStoredAuthToken(trimmed);
       window.location.href = next || "/";
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err));
       setSubmitting(false);
     }
+  }
+
+  if (autoTrying) {
+    return (
+      <main className="paper-surface relative flex min-h-screen items-center justify-center bg-paper px-4">
+        <div className="flex flex-col items-center gap-3">
+          <Logotype className="h-7 w-auto text-ink" />
+          <LoadingHairline aria-label="Resuming session" />
+          <p className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-faint">
+            Resuming session
+          </p>
+        </div>
+      </main>
+    );
   }
 
   return (

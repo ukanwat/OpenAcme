@@ -215,17 +215,17 @@ function SkillsPageInner() {
   );
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden">
+    <div className="flex h-[100dvh] w-full overflow-hidden pb-[calc(3.5rem+env(safe-area-inset-bottom))] md:pb-0">
       <Sidebar />
 
       <main className="flex flex-1 flex-col overflow-hidden bg-paper">
-        <header className="flex h-12 shrink-0 items-center justify-between border-b border-paper-rule px-6">
-          <div className="flex items-center gap-3">
+        <header className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-paper-rule px-3 md:px-6">
+          <div className="flex items-center gap-2 md:gap-3">
             <h1 className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-faint">
               Skills
             </h1>
-            <span className="h-3 w-px bg-paper-rule" aria-hidden />
-            <span className="font-mono text-[12px] tabular-nums text-ink-soft">
+            <span className="hidden h-3 w-px bg-paper-rule sm:inline" aria-hidden />
+            <span className="hidden font-mono text-[12px] tabular-nums text-ink-soft sm:inline">
               {skills.length} loaded
             </span>
           </div>
@@ -233,7 +233,7 @@ function SkillsPageInner() {
             <div className="flex items-center gap-2">
               <Button size="sm" onClick={() => router.push("/skills?create=1")}>
                 <Plus className="size-4" />
-                New skill
+                <span className="hidden sm:inline">New skill</span>
               </Button>
             </div>
           )}
@@ -261,8 +261,19 @@ function SkillsPageInner() {
             </TabsList>
           </div>
 
-          <TabsContent value="skills" className="flex flex-1 overflow-hidden m-0 pt-0">
-          <aside className="flex w-80 shrink-0 flex-col border-r border-paper-rule">
+          <TabsContent value="skills" className="flex flex-1 flex-col overflow-hidden m-0 pt-0 md:flex-row">
+          {/* On mobile we stack: index, then detail. To avoid showing two
+              panes squished side-by-side we hide the index when a skill is
+              picked, and the detail offers a back link to return. Desktop
+              keeps the side-by-side layout. */}
+          <aside
+            className={cn(
+              "flex shrink-0 flex-col border-paper-rule md:w-80 md:border-r",
+              selectedSkill || isCreating
+                ? "hidden md:flex"
+                : "flex border-b md:border-b-0"
+            )}
+          >
             <div className="border-b border-paper-rule px-4 py-2 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-faint">
               Index
             </div>
@@ -341,7 +352,35 @@ function SkillsPageInner() {
             </div>
           </aside>
 
-          <div className="flex-1 overflow-y-auto p-6">
+          <div
+            className={cn(
+              "flex-1 overflow-y-auto p-4 md:p-6",
+              !selectedSkill && !isCreating ? "hidden md:block" : ""
+            )}
+          >
+            {(selectedSkill || isCreating) && (
+              <button
+                type="button"
+                onClick={() => router.push("/skills")}
+                className="mb-3 inline-flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-[0.08em] text-ink-soft hover:text-plot-red md:hidden"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden
+                >
+                  <path d="M15 18l-6-6 6-6" />
+                </svg>
+                Back to index
+              </button>
+            )}
             {isCreating ? (
               <Card className="mx-auto max-w-3xl">
                 <CardHeader>
@@ -607,8 +646,8 @@ function NoSkillPicked() {
     <div className="mx-auto max-w-2xl">
       <SectionEyebrow>Select a skill</SectionEyebrow>
       <p className="mt-3 text-[13px] leading-relaxed text-ink-soft">
-        Pick a row from the index on the left to view its full markdown
-        body and edit frontmatter.
+        Pick a row from the index to view its full markdown body and edit
+        frontmatter.
       </p>
     </div>
   );

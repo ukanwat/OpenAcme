@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import "./globals.css";
 import { Toaster } from "@/app/components/ui/sonner";
@@ -6,6 +6,8 @@ import { TooltipProvider } from "@/app/components/ui/tooltip";
 import { AuthFetch } from "@/app/components/auth-fetch";
 import { HelpOverlay } from "@/app/components/HelpOverlay";
 import { CommandPalette } from "@/app/components/CommandPalette";
+import { RegisterServiceWorker } from "@/app/components/RegisterServiceWorker";
+import { MobileTabBar } from "@/app/components/MobileTabBar";
 
 const geistSans = localFont({
   src: "./fonts/GeistVF.woff",
@@ -23,6 +25,29 @@ export const metadata: Metadata = {
   title: "OpenAcme — AI Agent Platform",
   description:
     "Multi-LLM agent platform with tool calling, MCP support, and multi-agent orchestration.",
+  manifest: "/manifest.webmanifest",
+  appleWebApp: {
+    capable: true,
+    title: "OpenAcme",
+    statusBarStyle: "default",
+  },
+  icons: {
+    icon: [
+      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: { url: "/apple-touch-icon.png", sizes: "180x180" },
+  },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#f9f7f4" },
+    { media: "(prefers-color-scheme: dark)", color: "#1f1f24" },
+  ],
 };
 
 export default function RootLayout({
@@ -49,10 +74,12 @@ export default function RootLayout({
       >
         <TooltipProvider delayDuration={200}>
           <AuthFetch />
+          <RegisterServiceWorker />
           {children}
           <HelpOverlay />
           <CommandPalette />
           <Toaster />
+          <MobileTabBar />
         </TooltipProvider>
       </body>
     </html>
