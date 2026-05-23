@@ -25,10 +25,10 @@
  * Caps:
  *   - Per-file line cap = 999,999 (Anthropic spec verbatim).
  *   - MEMORY.md index has a write-time char cap (`memoryCharLimit`,
- *     default 2200 — Hermes default). Writes that would push it over
- *     return OpenAcme's existing guidance string ("Memory at X/Y
- *     chars. ...Replace or remove existing entries first.") so the
- *     agent has consolidation pressure rather than infinite append.
+ *     default 4000). Writes that would push it over return OpenAcme's
+ *     existing guidance string ("Memory at X/Y chars. ...Replace or
+ *     remove existing entries first.") so the agent has consolidation
+ *     pressure rather than infinite append.
  *   - Per-entry files have NO char cap (they're not auto-injected;
  *     only the per-file line cap applies).
  *
@@ -55,8 +55,10 @@ const TMP_PREFIX = ".mem_";
 /** Per-file line cap (Anthropic spec). */
 const MAX_FILE_LINES = 999_999;
 
-/** Hermes default. Single source of truth for the index char cap. */
-export const DEFAULT_MEMORY_CHAR_LIMIT = 2200;
+/** Single source of truth for the per-agent MEMORY.md index char cap.
+ *  Sized for ~40-80 tight one-liner entries; raise via per-agent
+ *  frontmatter when the agent's surface area genuinely needs more. */
+export const DEFAULT_MEMORY_CHAR_LIMIT = 4000;
 
 /** Same constraint agent-store uses; duplicated here so this module stays
  * independent of `@openacme/config`. */

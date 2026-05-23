@@ -8,7 +8,9 @@ import { toolCallContext } from "../src/session-context.js";
 import { bindMemory } from "../src/builtins/memory.js";
 
 const AGENT_ID = "test-agent";
-const CHAR_LIMIT = 2200;
+// Mirrors the platform default in @openacme/memory. Keep these in sync —
+// the memory tool reads DEFAULT_MEMORY_CHAR_LIMIT directly today.
+const CHAR_LIMIT = 4000;
 
 let agentsDir: string;
 let store: MemoryStore;
