@@ -266,23 +266,21 @@ export function buildSystemPrompt(options: {
     );
   }
 
-  // Tool usage guidance
+  // Tool usage guidance. The MCP-namespace line is unconditional —
+  // emitting it only when an MCP tool happens to be in scope makes the
+  // prompt byte-string change as MCP availability flips on/off, which
+  // would break the provider-side prefix cache for sessions that
+  // toggle. Always-on is byte-stable and the cost is a single sentence.
+  // Models trained on Claude Desktop / Cursor conventions habitually
+  // reach for bare MCP tool names (e.g. `arxiv__search_papers`); our
+  // registry exposes them as `mcp_<server>__<tool>` so a bare call hits
+  // the unknown-tool path and costs a turn.
   if (options.toolNames.length > 0) {
-    // Surface MCP-namespace prefix explicitly when MCP tools are in the
-    // list. Models trained on Claude Desktop / Cursor conventions reach for
-    // bare names (e.g. `arxiv__search_papers`); our registry exposes them
-    // as `mcp_<server>__<tool>` and a bare-name call returns
-    // `Model tried to call unavailable tool` with the truncated system-tool
-    // suggestions — costs a turn each. The note is cheap and only emitted
-    // when an MCP tool is actually available.
-    const hasMcpTool = options.toolNames.some((n) => n.startsWith("mcp_"));
-    const mcpNote = hasMcpTool
-      ? ` MCP tools are namespaced \`mcp_<server>__<tool>\` — call them with that exact prefix, not the bare name.`
-      : "";
     parts.push(
       `\n## Available Tools\nYou have access to the following tools: ${options.toolNames.join(", ")}.\n` +
         `Use tools proactively to gather information and complete tasks. ` +
-        `When a task requires multiple steps, use tools sequentially until complete.${mcpNote}`
+        `When a task requires multiple steps, use tools sequentially until complete. ` +
+        `MCP tools are namespaced \`mcp_<server>__<tool>\` — call them with that exact prefix, not the bare name.`
     );
   }
 
