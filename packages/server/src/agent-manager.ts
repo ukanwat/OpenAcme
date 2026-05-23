@@ -21,12 +21,16 @@ import {
   createCommentStore,
   createEventStore,
   createInboxStore,
+  createPushStore,
   type SessionStore,
   type MessageStore,
   type CommentStore,
   type EventStore,
   type InboxStore,
+  type PushStore,
 } from "@openacme/db";
+import { createPushDispatcher, type PushDispatcher } from "./push.js";
+import { loadOrCreateVapidKeys, type VapidKeys } from "./utils/vapid.js";
 import {
   registry as toolRegistry,
   bindSessionSearch,
@@ -78,6 +82,15 @@ import * as path from "node:path";
 // regex; the three must stay in sync.
 const PEER_ID_SAFE = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 
+/** Pull the operator-facing message out of a `ping_user` event payload.
+ *  Payload shape is `{ message: string }` per ping.ts but the column is
+ *  JSON-typed so we treat it as `unknown` and narrow defensively. */
+function readPingMessage(payload: unknown): string {
+  if (!payload || typeof payload !== "object") return "";
+  const msg = (payload as { message?: unknown }).message;
+  return typeof msg === "string" ? msg : "";
+}
+
 /** Read optional `<dataDir>/AGENTS.md`. Returns undefined when absent. */
 function readAgentsMd(dataDir: string): string | undefined {
   const file = path.join(dataDir, "AGENTS.md");
@@ -118,6 +131,9 @@ export class AgentManager {
   readonly commentStore: CommentStore;
   readonly eventStore: EventStore;
   readonly inboxStore: InboxStore;
+  readonly pushStore: PushStore;
+  readonly pushDispatcher: PushDispatcher;
+  readonly vapid: VapidKeys;
   readonly attachmentsRoot: string;
   readonly agentsDir: string;
   /** `<dataDir>/AGENTS.md` contents; restart to pick up edits. */
@@ -156,6 +172,21 @@ export class AgentManager {
     this.commentStore = createCommentStore(this.db);
     this.eventStore = createEventStore(this.db);
     this.inboxStore = createInboxStore(this.db);
+    this.pushStore = createPushStore(this.db);
+
+    // VAPID keys persist under `<dataDir>/push-vapid.json`, generated on
+    // first boot. The dispatcher fans out to every subscribed device on
+    // `ping_user`; without subscriptions it's a no-op so we initialize
+    // unconditionally rather than gating on config.
+    this.vapid = loadOrCreateVapidKeys(config.dataDir, null);
+    this.pushDispatcher = createPushDispatcher({
+      pushStore: this.pushStore,
+      vapid: this.vapid,
+      logger: {
+        info: (msg) => log.info(msg),
+        warn: (msg) => log.warn(msg),
+      },
+    });
 
     // Agents live as folders at <dataDir>/agents/<id>/AGENT.md — the
     // directory is the only source of truth, no DB mirror, no shadow
@@ -301,6 +332,26 @@ export class AgentManager {
             createdAt: event.createdAt,
           },
         });
+      }
+
+      // Web Push fan-out — only `ping_user` notifies today. Other events
+      // (status changes, task assignments) flow to the inbox and the SSE
+      // stream but stay off the lock screen unless the agent explicitly
+      // calls ping_user.
+      if (event.kind === "ping_user") {
+        const message = readPingMessage(event.payload);
+        const agentName = this.agentStore.get(event.agentId)?.name ?? event.agentId;
+        const url = sessionId ? `/?session=${encodeURIComponent(sessionId)}` : "/";
+        void this.pushDispatcher
+          .dispatch({
+            title: agentName,
+            body: message || "Agent is waiting on you.",
+            url,
+            tag: sessionId ?? `ping-${event.agentId}`,
+          })
+          .catch((err) => {
+            log.warn({ err, eventId: event.id }, "push dispatch failed");
+          });
       }
     });
     // `taskStore.setOnChange` used to drive scheduler cron-arm

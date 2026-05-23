@@ -82,6 +82,22 @@ export function authMiddleware(opts: AuthOptions): MiddlewareHandler {
     ) {
       return next();
     }
+    // PWA discovery assets must be reachable pre-login — iOS won't offer
+    // "Add to Home Screen" if it can't fetch the manifest, and the service
+    // worker's initial GET happens on tab load before any login cookie
+    // exists. Same-origin so still SOP-protected. Exact filenames only so
+    // a `prefix` match can't be abused (e.g. /icon-../foo.png paths —
+    // Hono normalizes, but defense-in-depth).
+    if (
+      path === "/manifest.webmanifest" ||
+      path === "/sw.js" ||
+      path === "/apple-touch-icon.png" ||
+      path === "/icon-192.png" ||
+      path === "/icon-512.png" ||
+      path === "/icon-maskable-512.png"
+    ) {
+      return next();
+    }
     if (isLoopbackHost(c.req.header("host"))) return next();
 
     if (!opts.secretSha256) {

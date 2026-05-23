@@ -36,6 +36,7 @@ import { registerAgentResourceRoutes } from "./routes/agent-resources.js";
 import { registerAgentCatalogRoutes } from "./routes/agent-catalog.js";
 import { registerStreamRoutes } from "./routes/streams.js";
 import { registerHomeRoutes } from "./routes/home.js";
+import { registerPushRoutes } from "./routes/push.js";
 import { SkillHub, HubError } from "@openacme/skills";
 import {
   AgentDefinitionSchema,
@@ -169,6 +170,11 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
   // Home page payload + workforce summary stream. The structured GET
   // is paired with the workforce stream above for live updates.
   registerHomeRoutes(app, manager);
+
+  // Web Push subscribe / unsubscribe / VAPID key / test. Inherits the
+  // shared authMiddleware so tunnel-exposed deployments require the
+  // same access secret as everything under /api/.
+  registerPushRoutes(app, manager);
 
   // Health check
   app.get("/api/health", (c) =>

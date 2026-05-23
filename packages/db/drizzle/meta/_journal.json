@@ -64,6 +64,13 @@
       "when": 1779300000000,
       "tag": "0008_drop_legacy_session_cursors",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1779400000000,
+      "tag": "0009_push_subscriptions",
+      "breakpoints": true
     }
   ]
 }

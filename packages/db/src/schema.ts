@@ -195,6 +195,31 @@ export const agentInbox = sqliteTable(
   (t) => [index("idx_inbox_agent").on(t.agentId, t.id)]
 );
 
+/**
+ * Web Push subscriptions. One row per device (browser endpoint). The
+ * deployment is single-operator, so no `user_id` — multi-device just
+ * means multiple rows. `endpoint` is unique so a re-subscribe upserts
+ * cleanly without orphaning the old row.
+ *
+ * Key material (p256dh + auth) is required by RFC 8291 to encrypt the
+ * push payload. Treat the row as a credential — readable only to the
+ * server process; never expose `p256dh` / `auth` in API responses.
+ */
+export const pushSubscriptions = sqliteTable(
+  "push_subscriptions",
+  {
+    id: text("id").primaryKey(),
+    endpoint: text("endpoint").notNull().unique(),
+    p256dh: text("p256dh").notNull(),
+    auth: text("auth").notNull(),
+    userAgent: text("user_agent"),
+    createdAt: integer("created_at")
+      .notNull()
+      .default(sql`(unixepoch())`),
+    lastUsedAt: integer("last_used_at"),
+  }
+);
+
 // Schema-derived types. `$inferSelect` is what comes out of a query;
 // `$inferInsert` is what callers pass in (defaults / nullables become
 // optional, the rest stay required). The `parts` column is JSON-stringified
@@ -211,3 +236,5 @@ export type TaskEventRow = typeof taskEvents.$inferSelect;
 export type NewTaskEventRow = typeof taskEvents.$inferInsert;
 export type AgentInboxRow = typeof agentInbox.$inferSelect;
 export type NewAgentInboxRow = typeof agentInbox.$inferInsert;
+export type PushSubscriptionRow = typeof pushSubscriptions.$inferSelect;
+export type NewPushSubscriptionRow = typeof pushSubscriptions.$inferInsert;
