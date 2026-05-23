@@ -54,6 +54,20 @@ function escapeXml(s: string): string {
 }
 
 function renderPlist(opts: InstallOpts, wrapper: string): string {
+  // Optional env vars: forward through when set on the caller's environment
+  // so the daemon picks them up on next launchd boot. Telemetry is the
+  // current opt-in; add more here if other dev/diag flags need to survive
+  // a `pnpm agent restart`. Without this passthrough, a manual plist edit
+  // would be overwritten on every restart.
+  const passthrough: Array<[string, string | undefined]> = [
+    ["OPENACME_TELEMETRY", process.env["OPENACME_TELEMETRY"]],
+    ["OPENACME_DEBUG", process.env["OPENACME_DEBUG"]],
+    ["OPENACME_LOG_FILE", process.env["OPENACME_LOG_FILE"]],
+  ];
+  const extraEnv = passthrough
+    .filter(([, v]) => typeof v === "string" && v.length > 0)
+    .map(([k, v]) => `    <key>${k}</key><string>${escapeXml(v!)}</string>`)
+    .join("\n");
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -66,7 +80,7 @@ function renderPlist(opts: InstallOpts, wrapper: string): string {
   <key>EnvironmentVariables</key>
   <dict>
     <key>OPENACME_DATA_DIR</key><string>${escapeXml(opts.dataDir)}</string>
-    <key>PATH</key><string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    <key>PATH</key><string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>${extraEnv ? "\n" + extraEnv : ""}
   </dict>
   <key>WorkingDirectory</key><string>${escapeXml(opts.dataDir)}</string>
   <key>RunAtLoad</key><true/>
