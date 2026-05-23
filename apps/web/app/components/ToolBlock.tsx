@@ -228,13 +228,19 @@ const STATUS_LABEL: Record<Status, string> = {
   interrupted: "Interrupted",
 };
 
-function computeStatus(part: ToolPart, isStreaming: boolean): Status {
+function computeStatus(part: ToolPart, _isStreaming: boolean): Status {
+  // True "interrupted" tool parts have been sanitized to `output-error` with
+  // errorText `[interrupted]` by `finalizeOrphanToolParts` server-side; any
+  // input-* state we render is necessarily an in-flight tool call. Don't
+  // gate it on isStreaming — that flag races with chunk arrival (e.g.,
+  // while the handler is executing and no chunks are landing), and a brief
+  // off-window would mis-flag a running write_file as interrupted.
   const interrupted =
     part.state === "output-error" && part.errorText === "[interrupted]";
   if (interrupted) return "interrupted";
   if (part.state === "output-error") return "error";
   if (part.state === "input-streaming" || part.state === "input-available") {
-    return isStreaming ? "running" : "interrupted";
+    return "running";
   }
   return "done";
 }
