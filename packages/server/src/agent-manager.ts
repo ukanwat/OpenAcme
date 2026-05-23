@@ -344,8 +344,11 @@ export class AgentManager {
         const url = sessionId ? `/?session=${encodeURIComponent(sessionId)}` : "/";
         void this.pushDispatcher
           .dispatch({
+            // Title = agent name; body = the actual ping message text.
+            // ping_user enforces message.min(1) so the fallback only fires
+            // if a historical event somehow has no message payload.
             title: agentName,
-            body: message || "Agent is waiting on you.",
+            body: message || "wants your attention",
             url,
             tag: sessionId ?? `ping-${event.agentId}`,
           })

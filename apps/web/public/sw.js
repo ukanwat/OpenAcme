@@ -29,7 +29,11 @@ self.addEventListener("push", (event) => {
     self.registration.showNotification(title, {
       body,
       tag,
-      renotify: false,
+      // renotify: true makes a same-tag replacement still alert the user
+      // (sound/vibration). Without this, sub-second updates are silent
+      // — fine for an active chat, but it makes the test ping flow
+      // confusing because the second test fires no audible alert.
+      renotify: true,
       icon: "/icon-192.png",
       badge: "/icon-192.png",
       data: { url },

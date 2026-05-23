@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Bell, BellOff, Trash2, Smartphone, Send } from "lucide-react";
+import { Bell, BellOff, Trash2, Smartphone } from "lucide-react";
 import { Button } from "@/app/components/ui/button";
 import {
   Card,
@@ -17,7 +17,6 @@ import {
   usePushSubscription,
   fetchDevices,
   deleteDevice,
-  sendTestPing,
   type PushDevice,
 } from "@/app/lib/push";
 
@@ -146,24 +145,6 @@ export function NotificationsTab() {
                     Disable on this device
                   </Button>
                 )}
-                <Button
-                  variant="outline"
-                  onClick={async () => {
-                    try {
-                      await sendTestPing();
-                      toast.success("Test ping sent");
-                    } catch (err) {
-                      toast.error("Test failed", {
-                        description:
-                          err instanceof Error ? err.message : String(err),
-                      });
-                    }
-                  }}
-                  disabled={!devices || devices.length === 0}
-                >
-                  <Send className="size-4" />
-                  Send test ping
-                </Button>
               </div>
 
               {iosBlocked && (

@@ -76,11 +76,14 @@ export function registerPushRoutes(app: Hono, manager: AgentManager): void {
   app.post("/api/push/test", async (c) => {
     const dispatcher = manager.pushDispatcher;
     if (!dispatcher) return c.json({ error: "Push not initialized" }, 503);
+    // Unique tag per test fire so each one alerts independently (same-tag
+    // notifications replace the previous silently even with renotify on
+    // some platforms).
     await dispatcher.dispatch({
       title: "OpenAcme test",
       body: "If you can read this, push notifications are working.",
       url: "/",
-      tag: "openacme-test",
+      tag: `openacme-test-${Date.now()}`,
     });
     return c.json({ ok: true });
   });

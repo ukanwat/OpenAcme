@@ -87,9 +87,12 @@ export function loadOrCreateVapidKeys(
 }
 
 /** Coerce arbitrary input to a valid `mailto:` URI. web-push requires
- *  either `mailto:` or `https:` and will throw at send time on garbage. */
+ *  either `mailto:` or `https:` and will throw at send time on garbage.
+ *  Apple's push service (apns.apple.com) also rejects with 403 when the
+ *  subject's domain is reserved (e.g. `.local`) — so the fallback uses
+ *  a real-looking domain. The operator can override via the config. */
 function normalizeSubject(input?: string | null): string {
-  const fallback = "mailto:operator@openacme.local";
+  const fallback = "mailto:openacme@example.com";
   if (!input) return fallback;
   const trimmed = input.trim();
   if (!trimmed) return fallback;

@@ -36,6 +36,7 @@ import type { SessionSummary } from "@/app/lib/types";
 import { cn } from "@/app/lib/utils";
 import { navigateClient } from "@/app/lib/navigate";
 import { InstallHint } from "@/app/components/InstallHint";
+import { NotificationsPrompt } from "@/app/components/NotificationsPrompt";
 import { Button } from "@/app/components/ui/button";
 import {
   Popover,
@@ -1263,12 +1264,14 @@ export function HomeView({ compact = false }: { compact?: boolean } = {}) {
           : "flex-1"
       )}
     >
-      {/* iOS install hint — mobile-only, self-gates on platform +
-          standalone + dismissed flag. Lives at the top of the home page
-          since that's the landing route on mobile. */}
+      {/* Mobile-only top-of-home prompts. Each self-gates on its own
+          conditions: InstallHint shows in Safari (not standalone) on iOS,
+          NotificationsPrompt shows once-installed-but-permission-default.
+          Only one ever shows at a time given the gates. */}
       {!compact && (
         <div className="md:hidden">
           <InstallHint />
+          <NotificationsPrompt />
         </div>
       )}
       <div

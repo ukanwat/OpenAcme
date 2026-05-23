@@ -192,8 +192,3 @@ export async function deleteDevice(id: string): Promise<void> {
   });
   if (!res.ok) throw new Error(`device delete ${res.status}`);
 }
-
-export async function sendTestPing(): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/push/test`, { method: "POST" });
-  if (!res.ok) throw new Error(`test ping ${res.status}`);
-}
