@@ -250,7 +250,7 @@ export function SourcesTab() {
   }
 
   return (
-    <div className="mx-auto max-w-3xl space-y-4 p-6">
+    <div className="max-w-3xl space-y-4 px-6 py-4">
       <div className="flex items-center justify-between">
         <p className="text-[13px] text-ink-soft">
           Taps are catalogs the hub searches when you browse skills — GitHub
@@ -286,7 +286,7 @@ export function SourcesTab() {
                 {taps.map((t) => (
                   <li
                     key={`${t.source}:${t.repo}`}
-                    className="flex items-center justify-between gap-3 border-b border-paper-rule last:border-b-0 px-3 py-2.5"
+                    className="flex items-center justify-between gap-3 border-b border-paper-rule/40 last:border-b-0 px-3 py-2.5"
                   >
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">

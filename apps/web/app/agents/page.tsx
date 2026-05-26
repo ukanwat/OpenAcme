@@ -803,7 +803,7 @@ function AgentsPageInner() {
                   key={agent.id}
                   onClick={() => selectAgent(agent)}
                   className={cn(
-                    "group relative flex w-full items-start gap-3 border-b border-paper-rule px-4 py-3 text-left transition-colors",
+                    "group relative flex w-full items-start gap-3 border-b border-paper-rule/40 px-4 py-3 text-left transition-colors last:border-b-0",
                     isActive
                       ? "bg-paper-sunk text-ink"
                       : "text-ink-soft hover:bg-paper-sunk hover:text-ink"
@@ -1357,7 +1357,7 @@ function AgentsPageInner() {
                         onClick={() => startImportFromModal(t.id)}
                         className={cn(
                           "flex w-full flex-col gap-2 px-5 py-4 text-left transition-colors hover:bg-paper-sunk",
-                          i < catalogTemplates.length - 1 && "border-b border-paper-rule"
+                          i < catalogTemplates.length - 1 && "border-b border-paper-rule/40"
                         )}
                       >
                         <div className="flex items-baseline justify-between gap-3">
@@ -1995,7 +1995,7 @@ function AgentDetail({
                 {inheritedServers.map(([name, cfg]) => (
                   <li
                     key={`g-${name}`}
-                    className="flex items-center gap-3 border-b border-paper-rule last:border-b-0 px-3 py-1.5"
+                    className="flex items-center gap-3 border-b border-paper-rule/40 last:border-b-0 px-3 py-1.5"
                   >
                     <Badge variant="outline" className="font-mono text-[10px]">
                       inherited
@@ -2013,7 +2013,7 @@ function AgentDetail({
                 {privateServers.map(([name, cfg]) => (
                   <li
                     key={`p-${name}`}
-                    className="flex items-center gap-3 border-b border-paper-rule last:border-b-0 px-3 py-1.5"
+                    className="flex items-center gap-3 border-b border-paper-rule/40 last:border-b-0 px-3 py-1.5"
                   >
                     <Badge variant="outline" className="font-mono text-[10px]">
                       private

@@ -26,7 +26,9 @@ function Tabs({
 }
 
 const tabsListVariants = cva(
-  "group/tabs-list inline-flex w-fit items-center justify-start gap-0 rounded-none border-b border-paper-rule p-0 text-ink-soft group-data-[orientation=horizontal]/tabs:h-9 group-data-[orientation=vertical]/tabs:h-fit group-data-[orientation=vertical]/tabs:flex-col",
+  // w-full so the bottom-border underline runs the full container width
+  // (otherwise it stops at the last tab label, which reads as a broken rule).
+  "group/tabs-list flex w-full items-center justify-start gap-0 rounded-none border-b border-paper-rule p-0 text-ink-soft group-data-[orientation=horizontal]/tabs:h-9 group-data-[orientation=vertical]/tabs:w-fit group-data-[orientation=vertical]/tabs:h-fit group-data-[orientation=vertical]/tabs:flex-col",
   {
     variants: {
       variant: {

@@ -264,7 +264,7 @@ export function AgentResourcesPanel({
           {resources.map((r) => (
             <li
               key={r.relPath}
-              className="flex items-center gap-3 border-b border-paper-rule last:border-b-0 px-3 py-1.5 text-ink-soft tabular-nums"
+              className="flex items-center gap-3 border-b border-paper-rule/40 last:border-b-0 px-3 py-1.5 text-ink-soft tabular-nums"
             >
               <span className="min-w-0 flex-1 truncate text-ink">
                 {r.relPath}

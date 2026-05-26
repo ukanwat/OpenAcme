@@ -774,7 +774,7 @@ function ProviderRow({
 }) {
   const info = PROVIDER_INFO[provider.id];
   return (
-    <div className="group relative flex w-full items-center gap-3 border-b border-paper-rule px-4 py-3 transition-colors last:border-b-0">
+    <div className="group relative flex w-full items-center gap-3 border-b border-paper-rule/40 px-4 py-3 transition-colors last:border-b-0">
       <ActiveMarker active={active} />
       <button
         type="button"

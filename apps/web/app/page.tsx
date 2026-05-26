@@ -1535,9 +1535,16 @@ function ModelQuickSwitch({
     (acc[opt.providerName] ??= []).push(opt);
     return acc;
   }, {});
-  const isKnown = options.some(
+  const currentOption = options.find(
     (o) => o.provider === agent.model.provider && o.id === agent.model.model
   );
+  const isKnown = !!currentOption;
+  // Single-line label for the trigger. Radix mirrors SelectItem children
+  // into SelectValue by default — the items render a two-line label+hint
+  // stack, which reads as shadcn-default in the chat header. Overriding
+  // SelectValue's children collapses to one mono line that fits the
+  // instrument register without losing the hint inside the dropdown.
+  const triggerLabel = currentOption?.label ?? value;
 
   return (
     <Select
@@ -1549,10 +1556,14 @@ function ModelQuickSwitch({
     >
       <SelectTrigger
         size="sm"
-        className="h-7 w-auto gap-1.5 border-dashed bg-muted/40 px-2 font-mono text-[11px]"
+        className="h-8 w-auto max-w-[60vw] gap-1.5 border border-paper-rule bg-paper px-2 font-mono text-[11px] text-ink transition-colors hover:border-plot-red data-[state=open]:border-plot-red [&_svg]:size-3 [&_svg]:opacity-60 md:max-w-none md:gap-2 md:px-2.5"
         aria-label="Switch model"
       >
-        <SelectValue placeholder={value} />
+        <SelectValue placeholder={value}>
+          <span className="truncate font-mono text-[11px] text-ink">
+            {triggerLabel}
+          </span>
+        </SelectValue>
       </SelectTrigger>
       <SelectContent className="max-h-80">
         {!isKnown && (

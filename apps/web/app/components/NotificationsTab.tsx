@@ -178,7 +178,7 @@ export function NotificationsTab() {
               No devices subscribed yet.
             </div>
           ) : (
-            <ul className="divide-y divide-paper-rule">
+            <ul className="divide-y divide-paper-rule/40">
               {devices.map((d) => (
                 <li
                   key={d.id}

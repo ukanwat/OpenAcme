@@ -333,7 +333,7 @@ function SkillsPageInner() {
                       key={skill.name}
                       onClick={() => router.push(`/skills?name=${encodeURIComponent(skill.name)}`)}
                       className={cn(
-                        "group relative flex w-full flex-col items-start gap-0.5 border-b border-paper-rule px-4 py-2.5 text-left transition-colors",
+                        "group relative flex w-full flex-col items-start gap-0.5 border-b border-paper-rule/40 px-4 py-2.5 text-left transition-colors last:border-b-0",
                         isActive
                           ? "bg-paper-sunk text-ink"
                           : "text-ink-soft hover:bg-paper-sunk hover:text-ink"
@@ -503,7 +503,7 @@ function SkillsPageInner() {
                           {selectedSkill.resources.map((r) => (
                             <li
                               key={r.relPath}
-                              className="flex justify-between gap-4 border-b border-paper-rule last:border-b-0 px-3 py-1 text-ink-soft tabular-nums"
+                              className="flex justify-between gap-4 border-b border-paper-rule/40 last:border-b-0 px-3 py-1 text-ink-soft tabular-nums"
                             >
                               <span className="truncate">{r.relPath}</span>
                               <span className="shrink-0 text-ink-faint">{r.size}B</span>
@@ -642,13 +642,41 @@ Always link to the relevant commit when possible.`}
 }
 
 function NoSkillPicked() {
+  // Pick-something prompt + a teaching aside on what a skill IS so the
+  // right pane carries weight even when nothing's selected. The format
+  // mini-reference doubles as documentation: a reader who lands here
+  // without selecting anything learns the SKILL.md contract.
   return (
     <div className="mx-auto max-w-2xl">
       <SectionEyebrow>Select a skill</SectionEyebrow>
-      <p className="mt-3 text-[13px] leading-relaxed text-ink-soft">
-        Pick a row from the index to view its full markdown body and edit
-        frontmatter.
+      <p className="mt-3 max-w-prose text-[13px] leading-relaxed text-ink-soft">
+        Pick a row from the index to view its body and edit frontmatter.
       </p>
+
+      <div className="mt-10">
+        <SectionEyebrow>Skill format</SectionEyebrow>
+        <p className="mt-3 max-w-prose text-[13px] leading-relaxed text-ink-soft">
+          A skill is a SKILL.md file under{" "}
+          <code className="font-mono text-[12px] text-ink">
+            ~/.openacme/skills/&lt;name&gt;/
+          </code>
+          . YAML frontmatter for{" "}
+          <span className="font-mono text-[12px] text-ink">name</span>,{" "}
+          <span className="font-mono text-[12px] text-ink">description</span>,{" "}
+          <span className="font-mono text-[12px] text-ink">tags</span>; the body
+          is the prose an agent reads on demand.
+        </p>
+        <pre className="mt-4 overflow-x-auto border border-paper-rule bg-paper-sunk px-4 py-3 font-mono text-[12px] leading-relaxed text-ink">
+{`---
+name: review-pr
+description: Read a GitHub PR and post a critique
+tags: [review, github]
+---
+
+# How to review a PR
+…body the agent reads when this skill loads.`}
+        </pre>
+      </div>
     </div>
   );
 }

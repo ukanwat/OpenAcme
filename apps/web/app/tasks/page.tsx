@@ -391,7 +391,7 @@ function TasksPageInner() {
                             key={t.id}
                             onClick={() => router.push(`/tasks?id=${t.id}`)}
                             className={cn(
-                              "group relative flex flex-col items-start gap-1 border-b border-paper-rule px-4 py-3 text-left transition-colors",
+                              "group relative flex flex-col items-start gap-1 border-b border-paper-rule/40 px-4 py-3 text-left transition-colors last:border-b-0",
                               isActive
                                 ? "bg-paper-sunk text-ink"
                                 : "text-ink-soft hover:bg-paper-sunk hover:text-ink"

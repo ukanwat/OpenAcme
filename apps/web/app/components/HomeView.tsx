@@ -147,10 +147,10 @@ function SessionRow({ s, onClick, onDelete, compact, active }: RowProps) {
         onClick={onClick}
         onKeyDown={activateOnKey(onClick)}
         className={cn(
-          "group relative flex w-full items-start gap-2 border-b border-paper-rule px-3 py-2 text-left transition-colors cursor-pointer",
+          "group relative flex w-full items-start gap-2 border-b border-paper-rule/40 px-3 py-2 text-left transition-colors cursor-pointer last:border-b-0",
           active
             ? "bg-paper text-ink"
-            : "hover:bg-sidebar-accent/40"
+            : "hover:bg-paper-sunk"
         )}
       >
         {active && (
@@ -198,8 +198,8 @@ function SessionRow({ s, onClick, onDelete, compact, active }: RowProps) {
       onClick={onClick}
       onKeyDown={activateOnKey(onClick)}
       className={cn(
-        "group flex w-full items-start gap-3 border-b border-paper-rule px-4 py-3 text-left transition-colors cursor-pointer last:border-b-0 md:gap-4 md:px-6 md:last:border-b",
-        "hover:bg-sidebar-accent/40"
+        "group flex w-full items-start gap-3 border-b border-paper-rule/40 px-4 py-3 text-left transition-colors cursor-pointer last:border-b-0 md:gap-4 md:px-6",
+        "hover:bg-paper-sunk"
       )}
     >
       {/* Desktop: status block with dot + label. Mobile: section header
@@ -483,7 +483,7 @@ function NewChatPopover({ compact }: { compact: boolean }) {
                     params.delete("session");
                     navigateClient(`/?${params.toString()}`);
                   }}
-                  className="group flex w-full items-start gap-3 border-b border-paper-rule px-3 py-2.5 text-left transition-colors last:border-b-0 hover:bg-paper-sunk"
+                  className="group flex w-full items-start gap-3 border-b border-paper-rule/40 px-3 py-2.5 text-left transition-colors last:border-b-0 hover:bg-paper-sunk"
                 >
                   <MessageSquarePlus
                     className="mt-0.5 size-4 shrink-0 text-ink-soft group-hover:text-plot-red"
@@ -598,7 +598,7 @@ function FilterByAgentPopover({
                 onPick(null);
               }}
               className={cn(
-                "flex w-full items-center justify-between gap-3 border-b border-paper-rule px-3 py-2 text-left text-[13px] transition-colors hover:bg-paper-sunk",
+                "flex w-full items-center justify-between gap-3 border-b border-paper-rule/40 px-3 py-2 text-left text-[13px] transition-colors hover:bg-paper-sunk",
                 !active && "bg-plot-red/10 text-plot-red"
               )}
             >
@@ -905,9 +905,9 @@ function SearchResultRow({
       type="button"
       onClick={() => onPick(entry.sessionId)}
       className={cn(
-        "group relative flex w-full items-start gap-3 border-b border-paper-rule text-left transition-colors",
+        "group relative flex w-full items-start gap-3 border-b border-paper-rule/40 text-left transition-colors last:border-b-0",
         compact ? "px-3 py-2" : "px-4 py-2.5 md:px-6",
-        active ? "bg-paper-sunk" : "hover:bg-paper-sunk/60"
+        active ? "bg-paper-sunk" : "hover:bg-paper-sunk"
       )}
     >
       {active && (
@@ -1264,15 +1264,19 @@ export function HomeView({ compact = false }: { compact?: boolean } = {}) {
           : "flex-1"
       )}
     >
-      {/* Mobile-only top-of-home prompts. Each self-gates on its own
-          conditions: InstallHint shows in Safari (not standalone) on iOS,
-          NotificationsPrompt shows once-installed-but-permission-default.
-          Only one ever shows at a time given the gates. */}
+      {/* Top-of-home prompts. Each self-gates on its own conditions:
+          InstallHint is iOS Safari only (mobile-only by viewport);
+          NotificationsPrompt shows on any platform that supports web push
+          (desktop Chrome/Edge/Firefox/Safari 16+, Android Chrome, and
+          installed iOS PWAs) when permission is "default" and the user
+          hasn't dismissed. */}
       {!compact && (
-        <div className="md:hidden">
-          <InstallHint />
+        <>
+          <div className="md:hidden">
+            <InstallHint />
+          </div>
           <NotificationsPrompt />
-        </div>
+        </>
       )}
       <div
         className={cn(
