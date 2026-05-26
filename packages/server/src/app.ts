@@ -473,7 +473,15 @@ export async function createApp(config: Config): Promise<{ app: Hono; manager: A
     }
 
     const lastUser = committed[committed.length - 1];
-    const inFlight = activeTurns.has(effectiveSessionId);
+    // Union of interactive (`activeTurns`) AND autonomous (dispatcher)
+    // turns. Without the dispatcher check, a POST landing during an
+    // autonomous turn falls through to the standard path and spawns a
+    // parallel `runChatTurn` — two assistant replies for one user
+    // message, the first ignoring the new message (its history snapshot
+    // predates the POST).
+    const inFlight =
+      activeTurns.has(effectiveSessionId) ||
+      manager.dispatcher.isRunning(effectiveSessionId);
 
     // Mid-turn send semantics: if a turn is already running for this
     // session, DON'T abort. Queue the user message to the inbox WITHOUT

@@ -144,6 +144,21 @@ export class Dispatcher {
   }
 
   /**
+   * True if EITHER an autonomous turn (tick-spawned) OR an interactive
+   * turn (`/api/chat`) is in flight for this session. `/api/chat` reads
+   * this to decide whether a new POST should queue to the inbox (so the
+   * in-flight turn drains it next) instead of spawning a parallel
+   * `runChatTurn` — without the union check, autonomous turns are
+   * invisible to the chat route and the two turns race.
+   */
+  isRunning(sessionId: string): boolean {
+    return (
+      this.runningSessions.has(sessionId) ||
+      this.interactiveBusy.has(sessionId)
+    );
+  }
+
+  /**
    * `/api/chat` calls this when it starts driving a turn directly
    * (via `runChatTurn`). The dispatcher's tick skips sessions in
    * this set so we don't try to spawn an autonomous turn into the
